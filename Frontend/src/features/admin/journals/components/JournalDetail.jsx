@@ -81,6 +81,33 @@ export default function JournalDetail({ journalId }) {
         journalService.getLicenses().catch(() => []),
       ]);
 
+      const editorialCatalog = Array.isArray(catData.editorials)
+        ? catData.editorials
+        : catData.editorials?.results || [];
+      const editorialId =
+        typeof data.editorial === "object" && data.editorial !== null
+          ? data.editorial.id ?? data.editorial.pk
+          : data.editorial;
+      const matchedEditorial = editorialCatalog.find(
+        (editorial) =>
+          Number(editorial.id ?? editorial.pk ?? editorial.value) ===
+          Number(editorialId)
+      );
+      const resolvedEditorialName =
+        data.editorial_name ||
+        (typeof data.editorial === "object" && data.editorial !== null
+          ? data.editorial.name || data.editorial.nombre
+          : matchedEditorial?.name || matchedEditorial?.nombre);
+
+      console.log("Editorial recibida desde el detalle (data.editorial):", data.editorial);
+      console.log("Contenido de catData.editorials:", catData.editorials);
+      console.log("Editoriales encontradas por el mismo ID:", editorialCatalog.filter(
+        (editorial) =>
+          Number(editorial.id ?? editorial.pk ?? editorial.value) ===
+          Number(editorialId)
+      ));
+      console.log("Resultado final de búsqueda de la editorial:", resolvedEditorialName || matchedEditorial || null);
+
       const auditUserIds = [...new Set(
         ["created_by", "updated_by", "validated_by", "deleted_by"]
           .map((field) => data[field])
@@ -100,6 +127,7 @@ export default function JournalDetail({ journalId }) {
       setUserNames(Object.fromEntries(resolvedUsers));
       setCatalogs({
         ...catData,
+        editorials: editorialCatalog,
         knowledgeAreas: kaData,
         licenses: Array.isArray(licData) ? licData : [],
       });
@@ -171,13 +199,20 @@ export default function JournalDetail({ journalId }) {
 
   const formatItemName = (item, catalogList = []) => {
     if (!item) return "";
+
     if (typeof item === "object" && item !== null) {
-      return capitalizeWords(item.name || item.nombre);
+      return capitalizeWords(item.name || item.nombre || "");
     }
-    const found = catalogList.find((c) => c.id === Number(item));
+
+    const found = catalogList.find(
+      (c) =>
+        Number(c.id ?? c.pk ?? c.value) === Number(item)
+    );
+
     if (found) {
-      return capitalizeWords(found.name || found.nombre);
+      return capitalizeWords(found.name || found.nombre || "");
     }
+
     return `ID #${item}`;
   };
 
@@ -380,7 +415,9 @@ export default function JournalDetail({ journalId }) {
                   </span>
                   <div className="mt-1.5 p-2.5 bg-slate-50 border border-slate-100 rounded-lg">
                     <span className="text-[14px] sm:text-[15px] font-semibold text-slate-900">
-                      {journal.editorial
+                      {journal.editorial_name
+                        ? capitalizeWords(journal.editorial_name)
+                        : journal.editorial
                         ? formatItemName(journal.editorial, catalogs.editorials)
                         : "Sin editorial"}
                     </span>
