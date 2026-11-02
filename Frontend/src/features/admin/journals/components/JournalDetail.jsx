@@ -69,10 +69,14 @@ export default function JournalDetail({ journalId }) {
   const [actionBusy, setActionBusy] = useState(false);
   const [publishModalOpen, setPublishModalOpen] = useState(false);
   const [userNames, setUserNames] = useState({});
+  const [editorialName, setEditorialName] = useState("");
+  const [editorialError, setEditorialError] = useState(null);
 
   const loadDetail = async () => {
     setLoading(true);
     setError(null);
+    setEditorialName("");
+    setEditorialError(null);
     try {
       const [data, catData, kaData, licData] = await Promise.all([
         journalService.getJournalById(journalId),
@@ -81,32 +85,29 @@ export default function JournalDetail({ journalId }) {
         journalService.getLicenses().catch(() => []),
       ]);
 
-      const editorialCatalog = Array.isArray(catData.editorials)
-        ? catData.editorials
-        : catData.editorials?.results || [];
       const editorialId =
         typeof data.editorial === "object" && data.editorial !== null
           ? data.editorial.id ?? data.editorial.pk
           : data.editorial;
-      const matchedEditorial = editorialCatalog.find(
-        (editorial) =>
-          Number(editorial.id ?? editorial.pk ?? editorial.value) ===
-          Number(editorialId)
-      );
-      const resolvedEditorialName =
-        data.editorial_name ||
-        (typeof data.editorial === "object" && data.editorial !== null
-          ? data.editorial.name || data.editorial.nombre
-          : matchedEditorial?.name || matchedEditorial?.nombre);
+      let resolvedEditorialName = "";
+      let editorialRequestError = null;
 
-      console.log("Editorial recibida desde el detalle (data.editorial):", data.editorial);
-      console.log("Contenido de catData.editorials:", catData.editorials);
-      console.log("Editoriales encontradas por el mismo ID:", editorialCatalog.filter(
-        (editorial) =>
-          Number(editorial.id ?? editorial.pk ?? editorial.value) ===
-          Number(editorialId)
-      ));
-      console.log("Resultado final de búsqueda de la editorial:", resolvedEditorialName || matchedEditorial || null);
+      if (editorialId !== null && editorialId !== undefined && editorialId !== "") {
+        try {
+          const editorialData = await journalService.getEditorialById(editorialId);
+          resolvedEditorialName =
+            typeof editorialData?.name === "string" ? editorialData.name.trim() : "";
+
+          if (!resolvedEditorialName) {
+            editorialRequestError =
+              "La respuesta de la editorial no contiene un nombre válido.";
+          }
+        } catch (editorialErr) {
+          console.error("[JournalDetail] Editorial request failed:", editorialErr);
+          editorialRequestError =
+            editorialErr?.message || "No se pudo cargar el nombre de la editorial.";
+        }
+      }
 
       const auditUserIds = [...new Set(
         ["created_by", "updated_by", "validated_by", "deleted_by"]
@@ -124,10 +125,11 @@ export default function JournalDetail({ journalId }) {
       );
 
       setJournal(data);
+      setEditorialName(resolvedEditorialName);
+      setEditorialError(editorialRequestError);
       setUserNames(Object.fromEntries(resolvedUsers));
       setCatalogs({
         ...catData,
-        editorials: editorialCatalog,
         knowledgeAreas: kaData,
         licenses: Array.isArray(licData) ? licData : [],
       });
@@ -415,11 +417,13 @@ export default function JournalDetail({ journalId }) {
                   </span>
                   <div className="mt-1.5 p-2.5 bg-slate-50 border border-slate-100 rounded-lg">
                     <span className="text-[14px] sm:text-[15px] font-semibold text-slate-900">
-                      {journal.editorial_name
-                        ? capitalizeWords(journal.editorial_name)
-                        : journal.editorial
-                        ? formatItemName(journal.editorial, catalogs.editorials)
-                        : "Sin editorial"}
+                      {!journal.editorial
+                        ? "Sin editorial"
+                        : editorialError
+                        ? editorialError
+                        : editorialName
+                        ? capitalizeWords(editorialName)
+                        : "No se pudo cargar el nombre de la editorial."}
                     </span>
                   </div>
                 </div>

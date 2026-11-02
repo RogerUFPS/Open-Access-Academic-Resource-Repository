@@ -22,6 +22,10 @@ export const journalService = {
     return apiClient.get(`/api/journals/${id}/`);
   },
 
+  getEditorialById: async (id) => {
+    return apiClient.get(`/api/catalog/editorials/${id}/`);
+  },
+
   /**
    * Create a new journal (POST /api/journals/)
    */
