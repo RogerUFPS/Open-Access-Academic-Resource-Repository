@@ -415,7 +415,7 @@ export default function AuditChangeDetails({ changes, action, objectLabel, addit
             {toOriginalJson(changes ?? {})}
           </pre>
           <div className="flex items-center gap-3 border-t border-slate-200 px-3 py-2">
-            <button type="button" onClick={copyOriginal} className="text-xs font-medium text-[#a50d26] underline">
+            <button type="button" onClick={copyOriginal} className="text-xs font-medium text-[#7f1218] underline">
               Copiar JSON
             </button>
             {copyMessage && <span role="status" className="text-xs text-slate-600">{copyMessage}</span>}

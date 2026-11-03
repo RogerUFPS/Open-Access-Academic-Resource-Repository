@@ -53,12 +53,12 @@ const fmtDate = (d) => {
 };
 
 const focus =
-  "focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#c8102e]";
+  "focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#7f1218]";
 const control = `w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm ${focus}`;
-const primary = `rounded-md bg-[#c8102e] px-4 py-2 text-sm font-semibold text-white hover:bg-[#a50d26] disabled:opacity-50 ${focus}`;
+const primary = `rounded-md bg-[#7f1218] px-4 py-2 text-sm font-semibold text-white hover:bg-[#6a0f14] disabled:opacity-50 ${focus}`;
 const secondary = `rounded-md border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50 ${focus}`;
 const danger = `rounded-md bg-red-700 px-4 py-2 text-sm font-semibold text-white hover:bg-red-800 disabled:opacity-50 ${focus}`;
-const linkBtn = `rounded px-1 text-sm font-medium text-[#c8102e] hover:underline disabled:opacity-50 ${focus}`;
+const linkBtn = `rounded px-1 text-sm font-medium text-[#7f1218] hover:underline disabled:opacity-50 ${focus}`;
 
 const TEXT = {
   areas: { one: "área", create: "Nueva área", rel: "Programas UFPS", noRel: "Sin programas vinculados", onlyEmpty: "Solo áreas sin programas" },
@@ -139,7 +139,7 @@ function TagInput({ id, value, onChange }) {
     setText("");
   }
   return (
-    <div className="flex flex-wrap gap-1.5 rounded-md border border-slate-300 bg-white p-2 focus-within:outline focus-within:outline-2 focus-within:outline-[#c8102e]">
+    <div className="flex flex-wrap gap-1.5 rounded-md border border-slate-300 bg-white p-2 focus-within:outline focus-within:outline-2 focus-within:outline-[#7f1218]">
       {value.map((p) => (
         <span key={p} className="inline-flex items-center gap-1 rounded-full bg-slate-100 py-1 pl-3 pr-1.5 text-xs text-slate-700">
           {label(p)}
@@ -528,7 +528,7 @@ export default function Page() {
                 setOnlyEmpty(false);
               }}
               className={`-mb-px border-b-2 px-4 py-2.5 text-sm font-medium ${focus} ${
-                tab === key ? "border-[#c8102e] text-[#c8102e]" : "border-transparent text-slate-600 hover:text-slate-900"
+                tab === key ? "border-[#7f1218] text-[#7f1218]" : "border-transparent text-slate-600 hover:text-slate-900"
               }`}
             >
               {name}

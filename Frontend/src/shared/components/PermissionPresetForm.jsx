@@ -9,8 +9,8 @@ import { useAccountsApi } from "@/shared/components/AccountsProvider";
 import UserPermissionMatrix, { normalizeCatalog, permissionsForCatalog, valueFor, enableRequiredViews, presetPermissionsAreValid } from "@/shared/components/UserPermissionMatrix";
 
 const listUrl = "/admin/usuarios?vista=presets";
-const primary = "!h-[42px] !border-[#C8102E] !bg-[#C8102E] hover:!bg-[#A80D27]";
-const outline = "!h-[42px] !border-[#C8102E] !text-[#C8102E]";
+const primary = "!h-[42px] !border-[#7f1218] !bg-[#7f1218] hover:!bg-[#6a0f14]";
+const outline = "!h-[42px] !border-[#7f1218] !text-[#7f1218]";
 
 export default function PermissionPresetForm({ presetId }) {
   const api = useAccountsApi();
@@ -101,7 +101,7 @@ export default function PermissionPresetForm({ presetId }) {
     {loading && <p role="status" className="rounded-lg bg-white p-8 text-center text-sm text-[#6B758A]">Cargando preset y catálogo de permisos…</p>}
     {data && <form onSubmit={save} className="space-y-3" aria-busy={busy}>
       <div className="grid min-h-[92px] grid-cols-[52px_minmax(0,1fr)] items-center gap-3.5 rounded-[10px] bg-white px-[18px] py-4 sm:grid-cols-[52px_minmax(0,1fr)_auto]">
-        <span aria-hidden="true" className="flex size-[52px] items-center justify-center rounded-full bg-[#C8102E] font-bold text-white">PR</span>
+        <span aria-hidden="true" className="flex size-[52px] items-center justify-center rounded-full bg-[#7f1218] font-bold text-white">PR</span>
         <FormField compact id="preset-name" label="Nombre del preset *" placeholder="Escriba el nombre del preset" required value={name} disabled={!editable || busy} onChange={(event) => setName(event.target.value)} />
         <div className="col-span-2 flex items-center justify-between gap-2 sm:col-span-1 sm:items-end sm:flex-col">
           <span className={`rounded-full px-3 py-1 text-xs font-semibold ${!editing || data.preset?.is_active === false ? "bg-[#EEF0F3] text-[#68707C]" : "bg-[#E8FAF0] text-[#0F8C45]"}`}>{!editing ? "Nuevo" : data.preset.is_active === false ? "Inactivo" : "Activo"}</span>

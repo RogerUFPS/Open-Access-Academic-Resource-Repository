@@ -52,7 +52,7 @@ export default function LinkCheckModal({ isOpen, onClose, onConfirm, platform, i
               value={url}
               onChange={(e) => setUrl(e.target.value)}
               placeholder="https://www.scielo.org (opcional si ya existe)"
-              className="rounded-xl border-gray-200 text-xs h-10 focus:border-[#C8102E] focus:ring-1 focus:ring-[#C8102E]"
+              className="rounded-xl border-gray-200 text-xs h-10 focus:border-[#7f1218] focus:ring-1 focus:ring-[#7f1218]"
             />
             <p className="text-[11px] text-gray-400">
               * Nota: `base_api_url` es para la API de cosecha. La URL pública se registra en LinkCheckLog.
@@ -72,7 +72,7 @@ export default function LinkCheckModal({ isOpen, onClose, onConfirm, platform, i
             <Button
               type="submit"
               disabled={isChecking}
-              className="rounded-xl bg-[#C8102E] hover:bg-[#A50D25] text-white text-xs font-medium px-4 flex items-center gap-1.5"
+              className="rounded-xl bg-[#7f1218] hover:bg-[#6a0f14] text-white text-xs font-medium px-4 flex items-center gap-1.5"
             >
               <CheckCircle2 className="w-4 h-4" />
               {isChecking ? "Verificando..." : "Ejecutar Check"}

@@ -11,6 +11,7 @@ import {
   Bell, 
   Clock, 
   Users, 
+  Trash2, 
   Cpu, 
   Tag, 
   MessageSquare, 
@@ -20,7 +21,11 @@ import {
 } from "lucide-react";
 
 export default function AdminLayout({ children, userName = "Usuario" }) {
-  return <Suspense fallback={<div role="status" className="p-8">Cargando administración…</div>}><AdminLayoutContent userName={userName}>{children}</AdminLayoutContent></Suspense>;
+  return (
+    <Suspense fallback={<div role="status" className="p-8">Cargando administración…</div>}>
+      <AdminLayoutContent userName={userName}>{children}</AdminLayoutContent>
+    </Suspense>
+  );
 }
 
 function AdminLayoutContent({ children, userName }) {
@@ -32,6 +37,8 @@ function AdminLayoutContent({ children, userName }) {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [signingOut, setSigningOut] = useState(false);
   const [sessionError, setSessionError] = useState("");
+  
+  // Cálculo dinámico de iniciales (De tu versión)
   const userInitials = userName.split(/\s+/).filter(Boolean).slice(0, 2).map((part) => part.charAt(0)).join("").toLocaleUpperCase("es");
 
   async function signOut() {
@@ -49,17 +56,16 @@ function AdminLayoutContent({ children, userName }) {
     }
   }
 
-  // Mapeo de rutas basado en tu estructura y el diseño
+  // Mapeo de rutas fusionado (Tus rutas + Sintaxis válidas y Papelera)
   const menuGroups = [
     {
       title: "DIRECTORIO",
       items: [
         { name: "Indicadores", href: "/admin/indicadores", icon: LayoutGrid },
-        // Nota: Agrupamos Recursos hacia bases-de-datos por defecto. 
-        // Podrías necesitar un menú desplegable aquí si quieres incluir /revistas en el mismo botón.
         { name: "Recursos", href: "/admin/bases-de-datos", icon: Book },
+        { name: "Sintaxis válidas", href: "/admin/sintaxis-validas", icon: Book },
         { name: "Cosecha", href: "/admin/cosecha", icon: RefreshCw },
-        { name: "Alertas", href: "/admin/alertas", icon: Bell }, // Ruta asume /admin/alertas (no estaba en tu árbol)
+        { name: "Alertas", href: "/admin/alertas", icon: Bell },
       ]
     },
     {
@@ -68,13 +74,13 @@ function AdminLayoutContent({ children, userName }) {
         { name: "Bitácora", href: "/admin/bitacora", icon: Clock },
         { name: "Administrativos", href: "/admin/usuarios", icon: Users },
         { name: "Presets", href: "/admin/usuarios?vista=presets", icon: Users },
+        { name: "Papelera", href: "/admin/papelera", icon: Trash2 },
       ]
     },
     {
       title: "INTELIGENCIA",
       items: [
         { name: "Módulo de IA", href: "/admin/modulo-ia", icon: Cpu },
-        // Nota: Clasificación apunta a áreas de conocimiento. Podrías añadir programas-academicos.
         { name: "Clasificación", href: "/admin/areas-conocimiento", icon: Tag }, 
         { name: "Chats", href: "/admin/chats", icon: MessageSquare },
       ]
@@ -83,8 +89,9 @@ function AdminLayoutContent({ children, userName }) {
 
   return (
     <div className="min-h-screen bg-[#F4F5F8] text-gray-900 flex flex-col md:flex-row antialiased font-sans">
-      {/* Mobile Top Navbar */}
-      <div className="md:hidden bg-[#C8102E] px-4 py-3 flex items-center justify-between sticky top-0 z-40 text-white shadow-md">
+      
+      {/* Mobile Top Navbar - Color actualizado a oscuro */}
+      <div className="md:hidden bg-[#7f1218] px-4 py-3 flex items-center justify-between sticky top-0 z-40 text-white shadow-md">
         <div className="flex items-center gap-3">
           <div className="w-8 h-8 rounded-lg bg-white/10 border border-white/20 flex items-center justify-center font-bold text-sm">
             UF
@@ -101,9 +108,9 @@ function AdminLayoutContent({ children, userName }) {
         </button>
       </div>
 
-      {/* Sidebar - Ahora con fondo rojo institucional */}
+      {/* Sidebar - Color oscuro de producción pero conservando tus clases responsive (h-dvh, md:sticky) */}
       <aside
-        className={`fixed inset-y-0 left-0 z-50 h-dvh w-64 shrink-0 bg-[#C8102E] flex flex-col justify-between transform transition-transform duration-200 ease-in-out md:translate-x-0 ${
+        className={`fixed inset-y-0 left-0 z-50 h-dvh w-64 shrink-0 bg-[#7f1218] flex flex-col justify-between transform transition-transform duration-200 ease-in-out md:translate-x-0 ${
           sidebarOpen ? "translate-x-0" : "-translate-x-full"
         } md:sticky md:top-0 md:self-start md:z-auto`}
       >
@@ -128,7 +135,7 @@ function AdminLayoutContent({ children, userName }) {
                 </p>
                 {group.items.map((item) => {
                   const Icon = item.icon;
-                  // Manejo de estado activo: verifica si la ruta actual empieza con el href del item
+                  // Manejo de estado activo
                   const isActive = item.name === "Presets" ? pathname === "/admin/usuarios" && presetsView
                     : item.name === "Administrativos" ? pathname.startsWith(item.href) && !presetsView
                     : pathname.startsWith(item.href);
@@ -158,12 +165,12 @@ function AdminLayoutContent({ children, userName }) {
           </div>
         </div>
 
-        {/* User Footer - Tarjeta de usuario al estilo del diseño */}
+        {/* User Footer - Conservando tu lógica dinámica y accesibilidad pero con el color de texto oscuro */}
         <div className="shrink-0 p-4 mt-auto">
           <button type="button" onClick={signOut} disabled={signingOut} aria-label={`Cerrar sesión de ${userName}`} className="w-full text-left disabled:opacity-60">
             <div className="flex items-center justify-between p-3 rounded-xl bg-white/10 hover:bg-white/15 transition-colors cursor-pointer group">
               <div className="min-w-0 flex items-center gap-3">
-                <div aria-hidden="true" className="w-9 h-9 rounded-full bg-[#EADDD7] text-[#C8102E] font-medium text-sm flex items-center justify-center shrink-0">
+                <div aria-hidden="true" className="w-9 h-9 rounded-full bg-[#EADDD7] text-[#7f1218] font-medium text-sm flex items-center justify-center shrink-0">
                   {userInitials}
                 </div>
                 <div className="min-w-0">

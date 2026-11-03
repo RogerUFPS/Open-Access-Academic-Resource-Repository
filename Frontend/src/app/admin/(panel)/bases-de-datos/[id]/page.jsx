@@ -13,6 +13,12 @@ export default function AdminDatabaseDetailPage({ params, searchParams }) {
 
   const searchParamsObj = useSearchParams();
   const isEditMode = searchParamsObj.get("edit") === "true";
+  let publishErrors = {};
+  try {
+    publishErrors = JSON.parse(searchParamsObj.get("publishErrors") || "{}");
+  } catch {
+    publishErrors = {};
+  }
 
   const [platformData, setPlatformData] = useState(null);
   const [loading, setLoading] = useState(isEditMode);
@@ -39,7 +45,7 @@ export default function AdminDatabaseDetailPage({ params, searchParams }) {
     if (loading) {
       return (
         <div className="p-16 text-center text-gray-500">
-          <div className="w-8 h-8 border-2 border-[#C8102E] border-t-transparent rounded-full animate-spin mx-auto mb-3"></div>
+          <div className="w-8 h-8 border-2 border-[#7f1218] border-t-transparent rounded-full animate-spin mx-auto mb-3"></div>
           <p className="text-xs font-medium">Cargando datos de la plataforma para edición...</p>
         </div>
       );
@@ -53,7 +59,7 @@ export default function AdminDatabaseDetailPage({ params, searchParams }) {
       );
     }
 
-    return <DatabaseForm initialData={platformData} isEdit={true} />;
+    return <DatabaseForm initialData={platformData} isEdit={true} publishErrors={publishErrors} />;
   }
 
   return <DatabaseDetail platformId={platformId} />;

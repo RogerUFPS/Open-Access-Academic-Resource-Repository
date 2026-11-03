@@ -4,6 +4,7 @@ import React, { useState, useEffect, useCallback } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { platformService } from "../services/platformService";
+import { useToast } from "@/components/ui/use-toast";
 import { capitalizeWords } from "@/lib/utils";
 import { clampPage, sanitizePageValue } from "@/shared/utils/pagination";
 import DeleteModal from "./DeleteModal";
@@ -31,6 +32,7 @@ export default function DatabaseTable() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [actionSuccess, setActionSuccess] = useState(null);
+  const { toast } = useToast();
 
   // Pagination metadata
   const [page, setPage] = useState(1);
@@ -140,7 +142,16 @@ export default function DatabaseTable() {
       showSuccess(`Plataforma "${name}" publicada con éxito.`);
       fetchPlatforms();
     } catch (err) {
-      alert(`Error al publicar: ${err.message}`);
+      const detail = err.data?.detail || err.data?.message || err.data?.error;
+      const fields = err.data && typeof err.data === "object"
+        ? Object.entries(err.data).filter(([key]) => !["detail", "message", "error"].includes(key)).map(([key, value]) => `${key}: ${Array.isArray(value) ? value.join(", ") : value}`)
+        : [];
+      toast({
+        title: `No se pudo publicar “${name}”.`,
+        description: fields.length ? fields.join("\n") : detail || err.message || "No se pudo publicar.",
+        variant: "destructive",
+        duration: 9000,
+      });
     }
   };
 
@@ -250,14 +261,13 @@ export default function DatabaseTable() {
           </button>
         </div>
       )}
-
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
           <h1 className="text-3xl font-extrabold text-gray-900 tracking-tight">Bases de datos</h1>
         </div>
         <Link href="/admin/bases-de-datos/nueva">
-          <button className="bg-[#C8102E] hover:bg-[#A50D25] text-white font-medium text-sm rounded-lg px-4 py-2.5 flex items-center gap-2 shadow-xs transition-all cursor-pointer">
+          <button className="bg-[#7f1218] hover:bg-[#6a0f14] text-white font-medium text-sm rounded-lg px-4 py-2.5 flex items-center gap-2 shadow-xs transition-all cursor-pointer">
             <Plus className="w-4 h-4" />
             <span>Nuevo recurso</span>
           </button>
@@ -266,7 +276,7 @@ export default function DatabaseTable() {
 
       {/* Navigation Tabs Bar */}
       <div className="bg-[#EFEFEF]/60 p-1 rounded-xl inline-flex items-center gap-1 border border-gray-200/50">
-        <button className="bg-white text-[#C8102E] font-semibold text-xs px-5 py-2 rounded-lg shadow-2xs transition-all border border-gray-200/60">
+        <button className="bg-white text-[#7f1218] font-semibold text-xs px-5 py-2 rounded-lg shadow-2xs transition-all border border-gray-200/60">
           Bases de datos
         </button>
         <Link href="/admin/revistas">
@@ -428,7 +438,7 @@ export default function DatabaseTable() {
                           <Link href={`/admin/bases-de-datos/${platform.id}`}>
                             <button
                               title="Ver detalle de la plataforma"
-                              className="p-1.5 rounded-lg border border-gray-200 text-gray-600 hover:bg-[#C8102E] hover:text-white hover:border-[#C8102E] transition-all cursor-pointer"
+                              className="p-1.5 rounded-lg border border-gray-200 text-gray-600 hover:bg-[#7f1218] hover:text-white hover:border-[#7f1218] transition-all cursor-pointer"
                             >
                               <Eye className="w-4 h-4" />
                             </button>
@@ -438,7 +448,7 @@ export default function DatabaseTable() {
                           <Link href={`/admin/bases-de-datos/${platform.id}?edit=true`}>
                             <button
                               title="Editar información de la plataforma"
-                              className="p-1.5 rounded-lg border border-blue-200 text-blue-600 hover:bg-[#C8102E] hover:text-white hover:border-[#C8102E] transition-all cursor-pointer"
+                              className="p-1.5 rounded-lg border border-blue-200 text-blue-600 hover:bg-[#7f1218] hover:text-white hover:border-[#7f1218] transition-all cursor-pointer"
                             >
                               <Edit3 className="w-4 h-4" />
                             </button>
@@ -543,7 +553,7 @@ export default function DatabaseTable() {
                       handlePageSubmit();
                     }
                   }}
-                  className="w-12 rounded border border-gray-200 bg-white px-1 py-1 text-center text-xs font-medium text-gray-800 outline-none focus:border-[#C8102E]"
+                  className="w-12 rounded border border-gray-200 bg-white px-1 py-1 text-center text-xs font-medium text-gray-800 outline-none focus:border-[#7f1218]"
                 />
                 <span>de {totalPages}</span>
               </label>

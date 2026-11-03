@@ -104,12 +104,12 @@ export default function AdminLoginForm() {
           </>}
         </fieldset>
         {!mustChange && <div className="flex justify-end">
-          <Link href="/admin/recuperar-contrasena" className="text-sm font-medium text-[#C8102E] hover:underline">¿Olvidaste tu contraseña?</Link>
+          <Link href="/admin/recuperar-contrasena" className="text-sm font-medium text-[#7f1218] hover:underline">¿Olvidaste tu contraseña?</Link>
         </div>}
         <p className="pt-1 text-[13px] text-gray-500">{mustChange ? "Usa al menos 12 caracteres. Evita claves comunes, solo numéricas o similares a tus datos personales." : "Usa tu correo institucional y la contraseña asignada."}</p>
       </CardContent>
       <CardFooter className="pt-2 pb-4">
-        <Button type="submit" disabled={busy} className="h-12 w-full rounded-lg bg-[#C8102E] text-[15px] font-medium text-white transition-colors hover:bg-[#A50D25]">{busy ? "Procesando…" : mustChange ? "Guardar contraseña" : "Iniciar sesión"}</Button>
+        <Button type="submit" disabled={busy} className="h-12 w-full rounded-lg bg-[#7f1218] text-[15px] font-medium text-white transition-colors hover:bg-[#6a0f14]">{busy ? "Procesando…" : mustChange ? "Guardar contraseña" : "Iniciar sesión"}</Button>
       </CardFooter>
     </form>
   </Card>;
