@@ -39,7 +39,7 @@ export default function SessionExpiredProvider({ children }) {
         <div className="fixed inset-0 z-[100] flex items-center justify-center bg-[#1F242E]/60 px-4">
           <div className="w-full max-w-md rounded-xl border border-[#E5E7EB] bg-white p-6 shadow-2xl">
             <div className="flex items-start gap-3">
-              <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-[#FDECEC] text-xl font-bold text-[#C8102E]">
+              <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-[#7f1218]/10 text-xl font-bold text-[#7f1218]">
                 !
               </div>
               <div>
@@ -58,7 +58,7 @@ export default function SessionExpiredProvider({ children }) {
               <button
                 type="button"
                 onClick={handleLoginAgain}
-                className="rounded-md bg-[#C8102E] px-4 py-2 text-sm font-semibold text-white transition hover:bg-[#A80D27]"
+                className="rounded-md bg-[#7f1218] px-4 py-2 text-sm font-semibold text-white transition hover:bg-[#6a0f14]"
               >
                 Iniciar sesión nuevamente
               </button>

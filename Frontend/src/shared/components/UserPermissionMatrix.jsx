@@ -99,7 +99,7 @@ export default function UserPermissionMatrix({ catalog, isChecked, isInherited, 
               const resourceRules = actions.map((action) => [section, resource, action]);
               const selected = resourceRules.filter(isChecked).length;
               return <details key={resource} className="group min-w-0">
-                <summary className="flex min-h-8 cursor-pointer list-none items-center gap-1.5 rounded-md bg-[#F7F8FA] px-2 py-1 text-[13px] leading-5 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#C8102E] [&::-webkit-details-marker]:hidden">
+                <summary className="flex min-h-8 cursor-pointer list-none items-center gap-1.5 rounded-md bg-[#F7F8FA] px-2 py-1 text-[13px] leading-5 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#7f1218] [&::-webkit-details-marker]:hidden">
                   <span className="min-w-0 flex-1 break-words font-semibold">{labelFor(resource)}</span>
                   <span className="shrink-0 text-xs text-[#68707C]">{selected} / {actions.length}</span>
                   <span aria-hidden="true" className="flex w-4 shrink-0 items-center justify-center text-lg leading-5 transition-transform group-open:rotate-90">›</span>
@@ -112,7 +112,7 @@ export default function UserPermissionMatrix({ catalog, isChecked, isInherited, 
                     const required = action === "view" && resourceRules.some((other) => other[2] !== "view" && isChecked(other));
                     return <label key={action} className="flex min-h-7 min-w-0 items-center gap-2 py-1 text-[13px] leading-5">
                       <span className="relative flex size-5 shrink-0">
-                        <input type="checkbox" checked={isChecked(entry)} disabled={disabled || inherited || required} onChange={(event) => onChange(entry, event.target.checked)} className="peer size-5 cursor-pointer appearance-none rounded border border-[#CCD4E0] bg-white checked:border-[#C8102E] checked:bg-[#C8102E] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#C8102E] disabled:cursor-default disabled:opacity-60" />
+                        <input type="checkbox" checked={isChecked(entry)} disabled={disabled || inherited || required} onChange={(event) => onChange(entry, event.target.checked)} className="peer size-5 cursor-pointer appearance-none rounded border border-[#CCD4E0] bg-white checked:border-[#7f1218] checked:bg-[#7f1218] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#7f1218] disabled:cursor-default disabled:opacity-60" />
                         <span aria-hidden="true" className="pointer-events-none absolute inset-0 hidden items-center justify-center text-xs font-semibold leading-none text-white peer-checked:flex">✓</span>
                       </span>
                       <span className="min-w-0 break-words">{labelFor(action)}{inherited && <span className="ml-1 text-[11px] text-[#68707C]">· heredado</span>}{required && !inherited && <span className="ml-1 text-[11px] text-[#68707C]">· necesario</span>}</span>

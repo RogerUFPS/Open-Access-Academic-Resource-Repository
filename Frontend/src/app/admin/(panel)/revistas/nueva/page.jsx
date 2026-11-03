@@ -35,7 +35,7 @@ function NewJournalPageInner() {
     if (loading) {
       return (
         <div className="p-16 text-center text-gray-500">
-          <div className="w-8 h-8 border-2 border-[#C8102E] border-t-transparent rounded-full animate-spin mx-auto mb-3"></div>
+          <div className="w-8 h-8 border-2 border-[#7f1218] border-t-transparent rounded-full animate-spin mx-auto mb-3"></div>
           <p className="text-xs font-medium">Cargando datos de la revista para edición...</p>
         </div>
       );
@@ -60,7 +60,7 @@ export default function NewJournalPage() {
     <Suspense
       fallback={
         <div className="p-16 text-center text-gray-500">
-          <div className="w-8 h-8 border-2 border-[#C8102E] border-t-transparent rounded-full animate-spin mx-auto mb-3"></div>
+          <div className="w-8 h-8 border-2 border-[#7f1218] border-t-transparent rounded-full animate-spin mx-auto mb-3"></div>
           <p className="text-xs font-medium">Cargando formulario de revista...</p>
         </div>
       }

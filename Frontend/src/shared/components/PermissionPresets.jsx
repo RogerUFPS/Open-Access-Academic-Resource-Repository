@@ -8,8 +8,8 @@ import { useAccountsApi } from "@/shared/components/AccountsProvider";
 import { normalizeCatalog, valueFor } from "@/shared/components/UserPermissionMatrix";
 import { clampPage, sanitizePageValue } from "@/shared/utils/pagination";
 
-const primary = "!border-[#C8102E] !bg-[#C8102E] hover:!bg-[#A80D27]";
-const outline = "!border-[#C8102E] !text-[#C8102E]";
+const primary = "!border-[#7f1218] !bg-[#7f1218] hover:!bg-[#6a0f14]";
+const outline = "!border-[#7f1218] !text-[#7f1218]";
 const listUrl = "/admin/usuarios?vista=presets";
 
 function DeletePresetDialog({ preset, onClose, onDeleted }) {
@@ -136,7 +136,7 @@ export default function PermissionPresets({ result }) {
       </div>
       {!loading && data && <div className="flex flex-wrap items-center justify-between gap-3 py-4 text-xs text-[#6B758A]">
         <p aria-live="polite">{filtered.length ? `${(currentPage - 1) * 10 + 1}–${Math.min(currentPage * 10, filtered.length)} de ${filtered.length}` : "0"} presets{status === "active" ? " activos" : status === "inactive" ? " inactivos" : ""}</p>
-        <div className="flex items-center gap-3"><button className="rounded px-2 py-1 text-[#C8102E] disabled:opacity-30" disabled={currentPage === 1} aria-label="Página anterior" onClick={() => { const nextPage = clampPage(currentPage - 1, totalPages); setPage(nextPage); setPageInput(String(nextPage)); }}>‹</button><label className="flex items-center gap-2 text-[#6B758A]"><span>Página</span><input aria-label="Número de página actual" type="number" min={1} max={totalPages} value={pageInput} onChange={(event) => setPageInput(event.target.value)} onBlur={() => setPageInput(String(clampPage(page, totalPages)))} onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); handlePageSubmit(); } }} className="w-12 rounded border border-[#D1D6E0] bg-white px-1 py-0.5 text-center font-medium text-[#1F242E] outline-none focus:border-[#C8102E]" /><span>de {totalPages}</span></label><button className="rounded px-2 py-1 text-[#C8102E] disabled:opacity-30" disabled={currentPage === totalPages} aria-label="Página siguiente" onClick={() => { const nextPage = clampPage(currentPage + 1, totalPages); setPage(nextPage); setPageInput(String(nextPage)); }}>›</button></div>
+        <div className="flex items-center gap-3"><button className="rounded px-2 py-1 text-[#7f1218] disabled:opacity-30" disabled={currentPage === 1} aria-label="Página anterior" onClick={() => { const nextPage = clampPage(currentPage - 1, totalPages); setPage(nextPage); setPageInput(String(nextPage)); }}>‹</button><label className="flex items-center gap-2 text-[#6B758A]"><span>Página</span><input aria-label="Número de página actual" type="number" min={1} max={totalPages} value={pageInput} onChange={(event) => setPageInput(event.target.value)} onBlur={() => setPageInput(String(clampPage(page, totalPages)))} onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); handlePageSubmit(); } }} className="w-12 rounded border border-[#D1D6E0] bg-white px-1 py-0.5 text-center font-medium text-[#1F242E] outline-none focus:border-[#7f1218]" /><span>de {totalPages}</span></label><button className="rounded px-2 py-1 text-[#7f1218] disabled:opacity-30" disabled={currentPage === totalPages} aria-label="Página siguiente" onClick={() => { const nextPage = clampPage(currentPage + 1, totalPages); setPage(nextPage); setPageInput(String(nextPage)); }}>›</button></div>
       </div>}
     </div>
     <p className="text-xs text-[#6B758A]">Los cambios de un preset se usan al aplicarlo a un usuario. Revisa los permisos antes de guardar.</p>

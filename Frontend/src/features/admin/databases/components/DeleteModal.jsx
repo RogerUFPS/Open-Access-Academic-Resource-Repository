@@ -72,7 +72,7 @@ export default function DeleteModal({
               placeholder={isJournal
                 ? "Ej.: Revista retirada por cese de publicación o solicitud institucional..."
                 : "Ej.: Plataforma retirada por finalización de suscripción institucional..."}
-              className="w-full rounded-xl border border-gray-200 p-3 text-xs focus:border-[#C8102E] focus:ring-1 focus:ring-[#C8102E] outline-none transition-all placeholder:text-gray-400"
+              className="w-full rounded-xl border border-gray-200 p-3 text-xs focus:border-[#7f1218] focus:ring-1 focus:ring-[#7f1218] outline-none transition-all placeholder:text-gray-400"
             />
           </div>
 
@@ -89,7 +89,7 @@ export default function DeleteModal({
             <Button
               type="submit"
               disabled={isDeleting || !explanation.trim()}
-              className="rounded-xl bg-[#C8102E] hover:bg-[#A50D25] text-white text-xs font-medium px-4"
+              className="rounded-xl bg-rose-600 hover:bg-rose-700 text-white text-xs font-medium px-4"
             >
               {isDeleting ? "Eliminando..." : `Eliminar ${entityType}`}
             </Button>

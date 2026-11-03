@@ -41,7 +41,7 @@ export default function ForgotPasswordForm() {
         <p className="text-[13px] text-gray-500">Al iniciar sesión con la contraseña provisional se te pedirá cambiarla.</p>
       </CardContent>
       <CardFooter className="pt-2 pb-4">
-        <Button asChild className="h-12 w-full rounded-lg bg-[#C8102E] text-[15px] font-medium text-white transition-colors hover:bg-[#A50D25]">
+        <Button asChild className="h-12 w-full rounded-lg bg-[#7f1218] text-[15px] font-medium text-white transition-colors hover:bg-[#6a0f14]">
           <Link href="/admin/login">Volver a iniciar sesión</Link>
         </Button>
       </CardFooter>
@@ -53,8 +53,8 @@ export default function ForgotPasswordForm() {
         </fieldset>
       </CardContent>
       <CardFooter className="flex-col gap-4 pt-2 pb-4">
-        <Button type="submit" disabled={busy} className="h-12 w-full rounded-lg bg-[#C8102E] text-[15px] font-medium text-white transition-colors hover:bg-[#A50D25]">{busy ? "Enviando…" : "Enviar contraseña provisional"}</Button>
-        <Link href="/admin/login" className="text-sm font-medium text-[#C8102E] hover:underline">Volver a iniciar sesión</Link>
+        <Button type="submit" disabled={busy} className="h-12 w-full rounded-lg bg-[#7f1218] text-[15px] font-medium text-white transition-colors hover:bg-[#6a0f14]">{busy ? "Enviando…" : "Enviar contraseña provisional"}</Button>
+        <Link href="/admin/login" className="text-sm font-medium text-[#7f1218] hover:underline">Volver a iniciar sesión</Link>
       </CardFooter>
     </form>}
   </Card>;
