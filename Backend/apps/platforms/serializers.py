@@ -245,6 +245,7 @@ class LinkCheckLogSerializer(
             "is_active",
             "last_check",
             "verification_status",
+            "failure_notified_at",
         ]
 
         read_only_fields = AUDIT_FIELDS
@@ -268,6 +269,12 @@ class PlatformLinkCheckResultSerializer(serializers.Serializer):
         choices=("unverified", "available", "unavailable"),
     )
     error = serializers.CharField(required=False)
+
+
+class LinkCheckTriggerResponseSerializer(serializers.Serializer):
+    run_id = serializers.IntegerField()
+    task_id = serializers.CharField()
+    mode = serializers.ChoiceField(choices=("all", "failed"))
 
 
 class PlatformLinksCheckResponseSerializer(serializers.Serializer):

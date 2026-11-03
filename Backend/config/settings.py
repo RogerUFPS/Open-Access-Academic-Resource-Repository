@@ -54,6 +54,10 @@ CELERY_TASK_IGNORE_RESULT = True
 CELERY_TASK_ACKS_LATE = True
 CELERY_TASK_REJECT_ON_WORKER_LOST = True
 CELERY_WORKER_PREFETCH_MULTIPLIER = 1
+LINK_CHECK_BATCH_SIZE = max(1, int(os.getenv("LINK_CHECK_BATCH_SIZE", "50")))
+# Ruta real existente. Vacío evita inventar un dominio o enlazar una vista que
+# todavía no soporte el contrato de caídas confirmadas.
+LINK_FAILURE_FRONTEND_URL = os.getenv("LINK_FAILURE_FRONTEND_URL", "")
 FRONTEND_LOGIN_URL = os.getenv(
     "FRONTEND_LOGIN_URL",
     "https://repositorio-biblioteca-frontend.vercel.app/admin/login",
