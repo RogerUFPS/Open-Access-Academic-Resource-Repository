@@ -68,8 +68,7 @@ export default function HarvestExecutions({ rows, onRefresh, busy = false, capti
         <div>
           <span>{row.records_added} nuevas · {row.records_updated} actualizadas · {row.records_failed} fallidas</span>
           {errorMessage && <div className="mt-2 rounded-lg border border-[#820A1F]/15 bg-[#FFE1E3] p-3 text-xs leading-relaxed text-[#820A1F]">
-            <p className="font-semibold">Detalle del error</p>
-            <p className="mt-1 whitespace-pre-wrap [overflow-wrap:anywhere]">{errorMessage}</p>
+            <p className="whitespace-pre-wrap [overflow-wrap:anywhere]">{errorMessage}</p>
           </div>}
         </div>
       );
