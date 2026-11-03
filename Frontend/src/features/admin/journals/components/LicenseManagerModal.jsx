@@ -208,7 +208,7 @@ export default function LicenseManagerModal({ isOpen, onClose, onLicensesUpdated
             <Button
               type="submit"
               disabled={creating || !newName.trim()}
-              className="bg-[#C8102E] hover:bg-[#A50D25] text-white text-xs h-9 px-4 rounded-lg flex items-center gap-1.5 shrink-0 cursor-pointer"
+              className="bg-[#7f1218] hover:bg-[#6a0f14] text-white text-xs h-9 px-4 rounded-lg flex items-center gap-1.5 shrink-0 cursor-pointer"
             >
               {creating ? (
                 <Loader2 className="w-3.5 h-3.5 animate-spin" />
@@ -229,7 +229,7 @@ export default function LicenseManagerModal({ isOpen, onClose, onLicensesUpdated
 
           {loading ? (
             <div className="py-12 text-center text-gray-400 text-xs flex flex-col items-center justify-center gap-2">
-              <Loader2 className="w-6 h-6 animate-spin text-[#C8102E]" />
+              <Loader2 className="w-6 h-6 animate-spin text-[#7f1218]" />
               <span>Cargando licencias...</span>
             </div>
           ) : licenses.length === 0 ? (

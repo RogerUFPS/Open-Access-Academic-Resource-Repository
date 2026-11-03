@@ -9,7 +9,7 @@ import { useAccountsApi } from "@/shared/components/AccountsProvider";
 import { hasAccountPermission } from "@/shared/services/apiClient";
 import { getUserDisplayName } from "@/shared/services/userService";
 
-const outlineStyle = "!border-[#C8102E] !text-[#C8102E]";
+const outlineStyle = "!border-[#7f1218] !text-[#7f1218]";
 const openSans = Open_Sans({ subsets: ["latin"], weight: ["400", "600", "700"], display: "swap" });
 
 function deletionDate(value) {
@@ -89,11 +89,11 @@ export default function ArchivedAdministrativeUsers({ overview = false }) {
   const term = search.trim().toLocaleLowerCase("es");
   const filtered = users.filter((user) => [getUserDisplayName(user), user.email, user.collegue_code]
     .some((value) => String(value || "").toLocaleLowerCase("es").includes(term)));
-  const count = !loading && !error && <span className="inline-flex h-[34px] min-w-[159px] items-center justify-center rounded-full bg-[#FFF0F2] px-[18px] text-[13px] font-semibold text-[#C8102E]" aria-live="polite">{users.length} {users.length === 1 ? "eliminado" : "eliminados"}</span>;
+  const count = !loading && !error && <span className="inline-flex h-[34px] min-w-[159px] items-center justify-center rounded-full bg-[#7f1218]/5 px-[18px] text-[13px] font-semibold text-[#7f1218]" aria-live="polite">{users.length} {users.length === 1 ? "eliminado" : "eliminados"}</span>;
 
   if (overview) return (
     <section className={`${openSans.className} text-[#1F242E]`}>
-      <p className="text-xs font-semibold text-[#C8102E]">ADMINISTRACIÓN · GOBIERNO</p>
+      <p className="text-xs font-semibold text-[#7f1218]">ADMINISTRACIÓN · GOBIERNO</p>
       <header className="mt-2 flex flex-wrap items-center justify-between gap-3">
         <h1 className="text-[32px] leading-[48px] font-bold">Papelera</h1>
         {count}
@@ -101,27 +101,27 @@ export default function ArchivedAdministrativeUsers({ overview = false }) {
       <p className="mt-2 text-[15px] text-[#68707C]">Consulta los registros eliminados por tipo y decide cuáles restaurar.</p>
       {loading && <p role="status" className="mt-6 text-sm text-[#68707C]">Cargando papelera…</p>}
       {error && <div className="mt-6"><AccountFeedback error={error} sessionRequired={sessionRequired} retry={() => setRefresh((value) => value + 1)} /></div>}
-      {!loading && !error && <Link href="/admin/papelera?vista=usuarios" className="mt-14 flex min-h-[204px] max-w-[352px] flex-col rounded-xl border border-[#D1D6E0] bg-white p-5 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#C8102E]">
+      {!loading && !error && <Link href="/admin/papelera?vista=usuarios" className="mt-14 flex min-h-[204px] max-w-[352px] flex-col rounded-xl border border-[#D1D6E0] bg-white p-5 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#7f1218]">
         <div className="flex items-center justify-between gap-3">
-          <span className="flex h-10 w-10 items-center justify-center rounded-[10px] bg-[#FFF0F2] text-sm font-bold text-[#C8102E]">UA</span>
+          <span className="flex h-10 w-10 items-center justify-center rounded-[10px] bg-[#7f1218]/10 text-sm font-bold text-[#7f1218]">UA</span>
           <span className="rounded-full bg-[#F5F6F9] px-3 py-1.5 text-[11px] text-[#68707C]">{users.length} {users.length === 1 ? "borrado" : "borrados"}</span>
         </div>
         <h2 className="mt-4 text-[19px] font-semibold">Usuarios administrativos</h2>
         <p className="mt-2 text-[13px] text-[#68707C]">Cuentas retiradas del acceso administrativo.</p>
-        <span className="mt-6 text-sm font-semibold text-[#C8102E]">Ver eliminados →</span>
+        <span className="mt-6 text-sm font-semibold text-[#7f1218]">Ver eliminados →</span>
       </Link>}
     </section>
   );
 
   return (
     <section className={`${openSans.className} text-[#1F242E]`}>
-      <Link href="/admin/papelera" className="inline-flex h-[30px] items-center text-sm font-semibold text-[#C8102E] hover:underline">← Volver a Papelera</Link>
+      <Link href="/admin/papelera" className="inline-flex h-[30px] items-center text-sm font-semibold text-[#7f1218] hover:underline">← Volver a Papelera</Link>
       <h1 className="mt-3 text-[30px] leading-[48px] font-bold">Papelera · Usuarios administrativos</h1>
       <p className="mt-[3px] text-[15px] leading-6 text-[#68707C]">Cuentas retiradas del acceso a administración.</p>
       <div className="mt-11 flex flex-wrap items-center justify-between gap-4">
         <label className="w-full max-w-[560px]">
           <span className="sr-only">Buscar en usuarios administrativos eliminados</span>
-          <input type="search" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Buscar en usuarios administrativos..." className="h-12 w-full rounded-lg border border-[#D1D6E0] bg-white px-4 text-sm outline-none placeholder:text-[#68707C] focus:border-[#C8102E] focus:ring-1 focus:ring-[#C8102E]" />
+          <input type="search" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Buscar en usuarios administrativos..." className="h-12 w-full rounded-lg border border-[#D1D6E0] bg-white px-4 text-sm outline-none placeholder:text-[#68707C] focus:border-[#7f1218] focus:ring-1 focus:ring-[#7f1218]" />
         </label>
         {count}
       </div>

@@ -1,11 +1,42 @@
 import { apiClient } from "@/shared/services/apiClient";
 
+const FORBIDDEN_FIELDS = [
+  "status",
+  "start_period",
+  "finish_period",
+  "validated_by",
+  "validated_at",
+  "created_by",
+  "created_at",
+  "updated_by",
+  "updated_at",
+  "deleted_by",
+  "deleted_at",
+  "encrypted_api_key",
+];
+
+function sanitizePayload(data) {
+  if (!data || typeof data !== "object") return data;
+  const clean = { ...data };
+  FORBIDDEN_FIELDS.forEach((field) => {
+    delete clean[field];
+  });
+  return clean;
+}
+
 export const platformService = {
   /**
    * List active platforms (with optional search, filters, ordering, pagination)
    */
   getPlatforms: async (params = {}) => {
     return apiClient.get("/api/platforms/", params);
+  },
+
+  /**
+   * Endpoint Público: GET /api/platforms/public/ (solo trae las plataformas publicadas)
+   */
+  getPublicPlatforms: async (params = {}) => {
+    return apiClient.get("/api/platforms/public/", params);
   },
 
   /**
@@ -24,23 +55,37 @@ export const platformService = {
 
   /**
    * Create a new platform (POST /api/platforms/)
+   * Regla de negocio: La creación crea un registro en borrador y solo envía
+   * los datos mínimos necesarios (name y public_url).
    */
   createPlatform: async (data) => {
-    return apiClient.post("/api/platforms/", data);
+    const payload = {
+      name: data?.name ? String(data.name).trim() : "",
+      public_url: data?.public_url ? String(data.public_url).trim() : "",
+    };
+    return apiClient.post("/api/platforms/", payload);
   },
 
   /**
    * Full update of a platform (PUT /api/platforms/{id}/)
    */
   updatePlatform: async (id, data) => {
-    return apiClient.put(`/api/platforms/${id}/`, data);
+    const cleanPayload = sanitizePayload(data);
+    return apiClient.put(`/api/platforms/${id}/`, cleanPayload);
   },
 
   /**
    * Partial update of a platform (PATCH /api/platforms/{id}/)
+   * Respeta: base_api_url y api_key solo se envían si is_harvestable es true.
+   * Campos de auditoría/estado prohibidos son removidos.
    */
   patchPlatform: async (id, data) => {
-    return apiClient.patch(`/api/platforms/${id}/`, data);
+    const cleanPayload = sanitizePayload(data);
+    if (!cleanPayload.is_harvestable) {
+      delete cleanPayload.base_api_url;
+      delete cleanPayload.api_key;
+    }
+    return apiClient.patch(`/api/platforms/${id}/`, cleanPayload);
   },
 
   /**
@@ -95,7 +140,7 @@ export const platformService = {
       return [
         { id: 1, name: "AND, OR, NOT; comillas; filtros por año y colección" },
         { id: 2, name: "OAI-PMH / Dublin Core" },
-        { id: 3, name: "REST API / JSON Search Syntax" }
+        { id: 3, name: "REST API / JSON Search Syntax" },
       ];
     }
   },
@@ -126,36 +171,36 @@ export const platformService = {
   },
 
   /**
-   * Load catalog options from /api/catalog/ endpoints as defined in API_del_catalogo.docx.txt
+   * Load catalog options from /api/catalog/ endpoints
    */
   loadFormCatalogs: async () => {
     const [sintaxis, institutions, languages, countries, materialTypes, academicPrograms] = await Promise.all([
       platformService.getValidSintaxis(),
       platformService.getCatalogData("/api/catalog/institutions/", [
         { id: 1, name: "SciELO Network" },
-        { id: 2, name: "Universidad Francisco de Paula Santander" }
+        { id: 2, name: "Universidad Francisco de Paula Santander" },
       ]),
       platformService.getCatalogData("/api/catalog/languages/", [
         { id: 1, abbreviation: "ES", name: "Español" },
         { id: 2, abbreviation: "PT", name: "Portugués" },
-        { id: 3, abbreviation: "EN", name: "Inglés" }
+        { id: 3, abbreviation: "EN", name: "Inglés" },
       ]),
       platformService.getCatalogData("/api/catalog/countries/", [
         { id: 1, abbreviation: "BR", name: "Brasil", emoji_flag: "🇧🇷" },
         { id: 2, abbreviation: "CO", name: "Colombia", emoji_flag: "🇨🇴" },
         { id: 3, abbreviation: "MX", name: "México", emoji_flag: "🇲🇽" },
-        { id: 4, abbreviation: "US", name: "Estados Unidos", emoji_flag: "🇺🇸" }
+        { id: 4, abbreviation: "US", name: "Estados Unidos", emoji_flag: "🇺🇸" },
       ]),
       platformService.getCatalogData("/api/catalog/material-types/", [
         { id: 1, name: "Revistas y artículos" },
         { id: 2, name: "Libros y Monografías" },
-        { id: 3, name: "Tesis y Disertaciones" }
+        { id: 3, name: "Tesis y Disertaciones" },
       ]),
       platformService.getCatalogData("/api/catalog/academic-programs/", [
         { id: 1, name: "Ingeniería de Sistemas" },
         { id: 2, name: "Ingeniería Industrial" },
         { id: 3, name: "Medicina" },
-        { id: 4, name: "Todos los programas" }
+        { id: 4, name: "Todos los programas" },
       ]),
     ]);
 

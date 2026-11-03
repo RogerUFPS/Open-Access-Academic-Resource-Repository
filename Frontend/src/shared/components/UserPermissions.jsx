@@ -184,7 +184,7 @@ export default function UserPermissions({ userId, initialUser, onDone }) {
       {loading && <p role="status" className="rounded-lg bg-white p-8 text-center text-sm text-[#6B758A]">Cargando usuario y catálogo de permisos…</p>}
       {data && <form onSubmit={save} className="space-y-3" aria-busy={busy}>
         <div className="grid min-h-[92px] grid-cols-[52px_minmax(0,1fr)] items-center gap-3.5 rounded-[10px] bg-white px-[18px] py-[11px] sm:grid-cols-[52px_minmax(0,1fr)_auto] xl:grid-cols-[52px_minmax(0,1fr)_410px_auto]">
-          <span className="flex size-[52px] shrink-0 items-center justify-center rounded-full bg-[#C8102E] font-bold text-white" aria-hidden="true">{initials}</span>
+          <span className="flex size-[52px] shrink-0 items-center justify-center rounded-full bg-[#7f1218] font-bold text-white" aria-hidden="true">{initials}</span>
           <div className="min-w-0">
             <h2 className="text-[17px] font-semibold">{displayName}</h2>
             <p className="mt-0.5 break-words text-[13px] text-[#6B758A]">Código {user.collegue_code || "sin asignar"} · {user.email}</p>
@@ -201,10 +201,10 @@ export default function UserPermissions({ userId, initialUser, onDone }) {
         </div>}
         <UserPermissionMatrix catalog={data.catalog} isChecked={isChecked} isInherited={isInherited} disabled={!editable || busy} onChange={(entry, enabled) => updateRules([entry], enabled)} />
         <div className="flex flex-wrap items-center justify-between gap-3">
-          <Button variant="outline" className="!h-[42px] !border-[#C8102E] !text-[#C8102E]" disabled={!editable || busy || !editableRules.length} onClick={() => updateRules(editableRules, !allSelected)}>{allSelected ? "Quitar selección" : "Seleccionar todos"}</Button>
+          <Button variant="outline" className="!h-[42px] !border-[#7f1218] !text-[#7f1218]" disabled={!editable || busy || !editableRules.length} onClick={() => updateRules(editableRules, !allSelected)}>{allSelected ? "Quitar selección" : "Seleccionar todos"}</Button>
           <div className="flex gap-3">
-            {onDone ? <Button variant="outline" disabled={busy} onClick={onDone}>Volver a usuarios</Button> : <Button variant="outline" className="!h-[42px] !border-[#C8102E] !text-[#C8102E]" href="/admin/usuarios">Cancelar</Button>}
-            <Button type="submit" className="!h-[42px] !border-[#C8102E] !bg-[#C8102E] hover:!bg-[#A80D27]" disabled={!editable || busy || !rules.length}>{busy ? "Guardando…" : "Guardar permisos"}</Button>
+            {onDone ? <Button variant="outline" disabled={busy} onClick={onDone}>Volver a usuarios</Button> : <Button variant="outline" className="!h-[42px] !border-[#7f1218] !text-[#7f1218]" href="/admin/usuarios">Cancelar</Button>}
+            <Button type="submit" className="!h-[42px] !border-[#7f1218] !bg-[#7f1218] hover:!bg-[#6a0f14]" disabled={!editable || busy || !rules.length}>{busy ? "Guardando…" : "Guardar permisos"}</Button>
           </div>
         </div>
         <p className="text-xs text-[#6B758A]">Los permisos heredados de presets se conservan. Activar una acción también habilita el acceso de lectura cuando corresponde.</p>

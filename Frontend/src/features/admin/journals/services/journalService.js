@@ -1,5 +1,28 @@
 import { apiClient } from "@/shared/services/apiClient";
 
+const FORBIDDEN_FIELDS = [
+  "status",
+  "start_period",
+  "finish_period",
+  "validated_by",
+  "validated_at",
+  "created_by",
+  "created_at",
+  "updated_by",
+  "updated_at",
+  "deleted_by",
+  "deleted_at",
+];
+
+function sanitizePayload(data) {
+  if (!data || typeof data !== "object") return data;
+  const clean = { ...data };
+  FORBIDDEN_FIELDS.forEach((field) => {
+    delete clean[field];
+  });
+  return clean;
+}
+
 export const journalService = {
   /**
    * List journals (supports ?search=..., pagination, ordering)
@@ -24,69 +47,79 @@ export const journalService = {
 
   /**
    * Create a new journal (POST /api/journals/)
+   * Regla de negocio: La creación crea un registro en borrador.
+   * Requiere mínimo issn (formato XXXX-XXXX) y title.
+   * NUNCA envía campos prohibidos / de solo lectura.
    */
   createJournal: async (data) => {
-    return apiClient.post("/api/journals/", data);
+    const clean = sanitizePayload(data);
+    // Asegurar estructura de knowledge_areas como array de IDs
+    if (clean.knowledge_areas && Array.isArray(clean.knowledge_areas)) {
+      clean.knowledge_areas = clean.knowledge_areas.map((ka) =>
+        typeof ka === "object" && ka !== null ? ka.id : Number(ka)
+      );
+    }
+    // Asegurar estructura de platforms
+    if (clean.platforms && Array.isArray(clean.platforms)) {
+      clean.platforms = clean.platforms.map((p) => ({
+        platform: typeof p.platform === "object" && p.platform !== null ? p.platform.id : Number(p.platform),
+        journal_url: String(p.journal_url || "").trim(),
+        has_full_text: Boolean(p.has_full_text),
+      }));
+    }
+    return apiClient.post("/api/journals/", clean);
   },
 
   /**
    * Partial update of a journal (PATCH /api/journals/{id}/)
+   * Knowledge areas se envía como array simple de IDs manuales: [1, 4, 7].
+   * Platforms se envía como [{ platform, journal_url, has_full_text }].
+   * Campos prohibidos son removidos.
    */
   patchJournal: async (id, data) => {
-    return apiClient.patch(`/api/journals/${id}/`, data);
+    const clean = sanitizePayload(data);
+
+    if (clean.knowledge_areas !== undefined) {
+      if (Array.isArray(clean.knowledge_areas)) {
+        clean.knowledge_areas = clean.knowledge_areas.map((ka) =>
+          typeof ka === "object" && ka !== null ? ka.id : Number(ka)
+        );
+      }
+    }
+
+    if (clean.platforms !== undefined) {
+      if (Array.isArray(clean.platforms)) {
+        clean.platforms = clean.platforms.map((p) => ({
+          platform: typeof p.platform === "object" && p.platform !== null ? p.platform.id : Number(p.platform),
+          journal_url: String(p.journal_url || "").trim(),
+          has_full_text: Boolean(p.has_full_text),
+        }));
+      }
+    }
+
+    return apiClient.patch(`/api/journals/${id}/`, clean);
   },
 
   /**
    * Publish journal (POST /api/journals/{id}/publish/)
-   * Payload: { licenses: [1, 2, ...] }
+   * Valida en el backend que la ficha esté completa.
    */
   publishJournal: async (id, licenses = []) => {
-    return apiClient.post(`/api/journals/${id}/publish/`, { licenses });
+    const body = Array.isArray(licenses) && licenses.length > 0 ? { licenses } : {};
+    return apiClient.post(`/api/journals/${id}/publish/`, body);
   },
 
   /**
-   * List licenses (GET /api/journals/licenses/)
+   * Lifecycle endpoints
    */
-  getLicenses: async (params = {}) => {
-    try {
-      const res = await apiClient.get("/api/journals/licenses/", params);
-      if (Array.isArray(res)) return res;
-      if (res && Array.isArray(res.results)) return res.results;
-      return [];
-    } catch (err) {
-      console.error("Error fetching licenses:", err);
-      throw err;
-    }
+  markObsoleteJournal: async (id) => {
+    return apiClient.post(`/api/journals/${id}/mark-obsolete/`, {});
   },
 
-  /**
-   * Create license (POST /api/journals/licenses/)
-   * Payload: { name: "CC BY 4.0" }
-   */
-  createLicense: async (data) => {
-    return apiClient.post("/api/journals/licenses/", data);
+  reactivateJournal: async (id) => {
+    return apiClient.post(`/api/journals/${id}/reactivate/`, {});
   },
 
-  /**
-   * Partial update of a license (PATCH /api/journals/licenses/{id}/)
-   * Payload: { name: "Nuevo Nombre" }
-   */
-  patchLicense: async (id, data) => {
-    return apiClient.patch(`/api/journals/licenses/${id}/`, data);
-  },
-
-  /**
-   * Delete license (DELETE /api/journals/licenses/{id}/)
-   */
-  deleteLicense: async (id, deleteExplanation) => {
-    return apiClient.delete(`/api/journals/licenses/${id}/`, {
-      delete_explanation: deleteExplanation,
-    });
-  },
-
-  /**
-   * Deactivate journal (POST /api/journals/{id}/deactivate/)
-   */
   deactivateJournal: async (id) => {
     return apiClient.post(`/api/journals/${id}/deactivate/`, {});
   },
@@ -108,20 +141,75 @@ export const journalService = {
   },
 
   /**
+   * List licenses (GET /api/journals/licenses/)
+   */
+  getLicenses: async (params = {}) => {
+    try {
+      const res = await apiClient.get("/api/journals/licenses/", params);
+      if (Array.isArray(res)) return res;
+      if (res && Array.isArray(res.results)) return res.results;
+      return [];
+    } catch (err) {
+      console.error("Error fetching licenses:", err);
+      throw err;
+    }
+  },
+
+  /**
+   * Create license (POST /api/journals/licenses/)
+   */
+  createLicense: async (data) => {
+    return apiClient.post("/api/journals/licenses/", data);
+  },
+
+  /**
+   * Partial update of a license (PATCH /api/journals/licenses/{id}/)
+   */
+  patchLicense: async (id, data) => {
+    return apiClient.patch(`/api/journals/licenses/${id}/`, data);
+  },
+
+  /**
+   * Delete license (DELETE /api/journals/licenses/{id}/)
+   */
+  deleteLicense: async (id, deleteExplanation) => {
+    return apiClient.delete(`/api/journals/licenses/${id}/`, {
+      delete_explanation: deleteExplanation,
+    });
+  },
+
+  /**
    * Published platforms only — journals can only be associated to these.
-   * Matches the platforms module status enum (PUBLICADO).
+   * Usa GET /api/platforms/public/ (o fallback a /api/platforms/?status=publicado).
    */
   getPublishedPlatforms: async () => {
     try {
-      const res = await apiClient.get("/api/platforms/", {
-        status: "publicado",
-        page_size: 200,
-      });
+      const res = await apiClient.get("/api/platforms/public/", { page_size: 200 });
       const list = Array.isArray(res) ? res : res?.results || [];
-      return list.filter((p) => String(p.status || "").toUpperCase() === "PUBLICADO");
+      return list;
     } catch {
-      return [];
+      try {
+        const fallbackRes = await apiClient.get("/api/platforms/", {
+          status: "publicado",
+          page_size: 200,
+        });
+        const list = Array.isArray(fallbackRes) ? fallbackRes : fallbackRes?.results || [];
+        return list.filter((p) => String(p.status || "").toUpperCase() === "PUBLICADO");
+      } catch {
+        return [];
+      }
     }
+  },
+
+  /**
+   * Obtener áreas de conocimiento con filtro contextual:
+   * GET /api/catalog/knowledge-areas/?available_for_journal={id}
+   */
+  getKnowledgeAreasForJournal: async (journalId = null) => {
+    const endpoint = journalId
+      ? `/api/catalog/knowledge-areas/?available_for_journal=${encodeURIComponent(journalId)}`
+      : "/api/catalog/knowledge-areas/";
+    return journalService.getCatalogData(endpoint, []);
   },
 
   /**
@@ -140,10 +228,9 @@ export const journalService = {
 
   /**
    * Load catalog options required by the journal form.
-   * knowledge_areas is intentionally omitted: the backend derives it.
    */
-  loadFormCatalogs: async () => {
-    const [languages, countries, materialTypes, academicPrograms, editorials, publishedPlatforms] =
+  loadFormCatalogs: async (journalId = null) => {
+    const [languages, countries, materialTypes, academicPrograms, editorials, publishedPlatforms, knowledgeAreas] =
       await Promise.all([
         journalService.getCatalogData("/api/catalog/languages/", [
           { id: 1, abbreviation: "ES", name: "Español" },
@@ -172,6 +259,7 @@ export const journalService = {
           return journalService.getCatalogData("/api/catalog/editoriales/", []);
         }),
         journalService.getPublishedPlatforms(),
+        journalService.getKnowledgeAreasForJournal(journalId),
       ]);
 
     return {
@@ -181,6 +269,7 @@ export const journalService = {
       academicPrograms,
       editorials,
       publishedPlatforms,
+      knowledgeAreas,
     };
   },
 };

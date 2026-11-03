@@ -224,7 +224,7 @@ export default function JournalDetail({ journalId }) {
   if (loading) {
     return (
       <div className="p-16 text-center text-gray-500">
-        <div className="w-8 h-8 border-2 border-[#C8102E] border-t-transparent rounded-full animate-spin mx-auto mb-3"></div>
+        <div className="w-8 h-8 border-2 border-[#7f1218] border-t-transparent rounded-full animate-spin mx-auto mb-3"></div>
         <p className="text-xs font-medium">Cargando detalles de la revista...</p>
       </div>
     );
@@ -238,7 +238,7 @@ export default function JournalDetail({ journalId }) {
         <p className="text-xs text-gray-500">{error || "No se encontró el recurso solicitado."}</p>
         <button
           onClick={() => router.push("/admin/revistas")}
-          className="bg-[#C8102E] text-white px-4 py-2 rounded-xl text-xs font-medium cursor-pointer"
+          className="bg-[#7f1218] hover:bg-[#6a0f14] text-white px-4 py-2 rounded-xl text-xs font-medium cursor-pointer"
         >
           Volver a Revistas
         </button>
@@ -337,7 +337,7 @@ export default function JournalDetail({ journalId }) {
           <Card className="rounded-2xl border-gray-200/80 shadow-xs bg-white">
             <CardHeader className="border-b border-gray-100 pb-4">
               <CardTitle className="text-base font-bold text-gray-900 flex items-center gap-2">
-                <Globe className="w-4 h-4 text-[#C8102E]" />
+                <Globe className="w-4 h-4 text-[#7f1218]" />
                 Información General
               </CardTitle>
             </CardHeader>
@@ -452,7 +452,7 @@ export default function JournalDetail({ journalId }) {
           <Card className="rounded-2xl border-gray-200/80 shadow-xs bg-white">
             <CardHeader className="border-b border-gray-100 pb-4">
               <CardTitle className="text-base font-bold text-gray-900 flex items-center gap-2">
-                <Database className="w-4 h-4 text-[#C8102E]" />
+                <Database className="w-4 h-4 text-[#7f1218]" />
                 Indexación / Bases de Datos
               </CardTitle>
             </CardHeader>
@@ -585,21 +585,38 @@ export default function JournalDetail({ journalId }) {
                 </span>
                 <div className="mt-1.5 p-2.5 bg-slate-50 border border-slate-100 rounded-lg">
                   {journal.knowledge_areas && journal.knowledge_areas.length > 0 ? (
-                    <div className="flex flex-wrap gap-1.5">
+                    <div className="flex flex-wrap gap-2">
                       {journal.knowledge_areas.map((ka, i) => {
-                        const name = formatItemName(ka, catalogs.knowledgeAreas);
+                        const name = typeof ka === "object" && ka.name ? ka.name : formatItemName(ka, catalogs.knowledgeAreas);
+                        const isManual = typeof ka === "object" ? Boolean(ka.is_manual) : true;
+                        const isDerived = typeof ka === "object" ? Boolean(ka.is_derived) : false;
+                        const isBoth = isManual && isDerived;
+
                         return (
-                          <span
-                            key={i}
-                            className="bg-emerald-50 text-emerald-800 border border-emerald-200/60 font-semibold px-2.5 py-0.5 rounded-md text-xs"
+                          <div
+                            key={ka.id || i}
+                            className="bg-white border border-gray-200 font-semibold px-2.5 py-1 rounded-lg text-xs flex items-center gap-1.5 shadow-2xs"
                           >
-                            {name}
-                          </span>
+                            <span className="text-gray-900">{name}</span>
+                            {isBoth ? (
+                              <span className="bg-purple-100 text-purple-800 text-[10px] font-bold px-1.5 py-0.5 rounded">
+                                Manual · Derivada
+                              </span>
+                            ) : isManual ? (
+                              <span className="bg-emerald-100 text-emerald-800 text-[10px] font-bold px-1.5 py-0.5 rounded">
+                                Manual
+                              </span>
+                            ) : (
+                              <span className="bg-blue-100 text-blue-800 text-[10px] font-bold px-1.5 py-0.5 rounded">
+                                Derivada
+                              </span>
+                            )}
+                          </div>
                         );
                       })}
                     </div>
                   ) : (
-                    <span className="text-slate-400 italic text-xs">—</span>
+                    <span className="text-slate-400 italic text-xs">Sin áreas asociadas</span>
                   )}
                 </div>
               </div>

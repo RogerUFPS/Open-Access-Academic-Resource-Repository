@@ -153,7 +153,7 @@ export default function PublishJournalModal({ journal, isOpen, onClose, onSucces
             <button
               type="button"
               onClick={() => setManagerOpen(true)}
-              className="text-[11px] text-[#C8102E] hover:underline font-semibold flex items-center gap-1 cursor-pointer"
+              className="text-[11px] text-[#7f1218] hover:underline font-semibold flex items-center gap-1 cursor-pointer"
             >
               <Settings className="w-3 h-3" />
               <span>Gestionar licencias</span>
@@ -185,7 +185,7 @@ export default function PublishJournalModal({ journal, isOpen, onClose, onSucces
           <div className="mt-3 flex-1 overflow-y-auto pr-1 space-y-2 min-h-40 border border-gray-100 rounded-xl p-2 bg-gray-50/40">
             {loadingLicenses ? (
               <div className="py-10 text-center text-gray-400 text-xs flex flex-col items-center justify-center gap-2">
-                <Loader2 className="w-5 h-5 animate-spin text-[#C8102E]" />
+                <Loader2 className="w-5 h-5 animate-spin text-[#7f1218]" />
                 <span>Cargando licencias...</span>
               </div>
             ) : licenses.length === 0 ? (
@@ -194,7 +194,7 @@ export default function PublishJournalModal({ journal, isOpen, onClose, onSucces
                 <button
                   type="button"
                   onClick={() => setManagerOpen(true)}
-                  className="text-xs font-semibold text-[#C8102E] underline cursor-pointer"
+                  className="text-xs font-semibold text-[#7f1218] underline cursor-pointer"
                 >
                   Crear una nueva licencia ahora
                 </button>

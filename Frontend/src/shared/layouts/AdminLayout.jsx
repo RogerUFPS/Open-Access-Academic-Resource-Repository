@@ -85,7 +85,7 @@ function AdminLayoutContent({ children }) {
   return (
     <div className="min-h-screen bg-[#F4F5F8] text-gray-900 flex flex-col md:flex-row antialiased font-sans">
       {/* Mobile Top Navbar */}
-      <div className="md:hidden bg-[#C8102E] px-4 py-3 flex items-center justify-between sticky top-0 z-40 text-white shadow-md">
+      <div className="md:hidden bg-[#7f1218] px-4 py-3 flex items-center justify-between sticky top-0 z-40 text-white shadow-md">
         <div className="flex items-center gap-3">
           <div className="w-8 h-8 rounded-lg bg-white/10 border border-white/20 flex items-center justify-center font-bold text-sm">
             UF
@@ -102,9 +102,9 @@ function AdminLayoutContent({ children }) {
         </button>
       </div>
 
-      {/* Sidebar - Ahora con fondo rojo institucional */}
+      {/* Sidebar - Con fondo oscuro principal */}
       <aside
-        className={`fixed inset-y-0 left-0 z-50 w-64 bg-[#C8102E] flex flex-col justify-between transform transition-transform duration-200 ease-in-out md:translate-x-0 ${
+        className={`fixed inset-y-0 left-0 z-50 w-64 bg-[#7f1218] flex flex-col justify-between transform transition-transform duration-200 ease-in-out md:translate-x-0 ${
           sidebarOpen ? "translate-x-0" : "-translate-x-full"
         } md:static md:z-auto`}
       >
@@ -164,7 +164,7 @@ function AdminLayoutContent({ children }) {
           <button type="button" onClick={signOut} disabled={signingOut} className="w-full text-left disabled:opacity-60">
             <div className="flex items-center justify-between p-3 rounded-xl bg-white/10 hover:bg-white/15 transition-colors cursor-pointer group">
               <div className="flex items-center gap-3 overflow-hidden">
-                <div className="w-9 h-9 rounded-full bg-[#EADDD7] text-[#C8102E] font-medium text-sm flex items-center justify-center shrink-0">
+                <div className="w-9 h-9 rounded-full bg-[#EADDD7] text-[#7f1218] font-medium text-sm flex items-center justify-center shrink-0">
                   AD
                 </div>
                 <div className="truncate">

@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useMemo } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { platformService } from "../services/platformService";
@@ -23,7 +23,9 @@ import {
   ShieldCheck,
   UserCheck,
   RefreshCw,
-  Link2
+  Link2,
+  XCircle,
+  HelpCircle
 } from "lucide-react";
 
 export default function DatabaseDetail({ platformId }) {
@@ -43,7 +45,8 @@ export default function DatabaseDetail({ platformId }) {
   const [actionMessage, setActionMessage] = useState(null);
   const [userNames, setUserNames] = useState({});
 
-  // Re-check loading state
+  // Verification status state: 'unverified' | 'available' | 'unavailable'
+  const [verificationStatus, setVerificationStatus] = useState("unverified");
   const [isRechecking, setIsRechecking] = useState(false);
 
   // Modals
@@ -80,13 +83,30 @@ export default function DatabaseDetail({ platformId }) {
       setUserNames(Object.fromEntries(resolvedUsers));
       setCatalogs({ ...catData, knowledgeAreas: kaData });
 
+      // Determine initial verification status from platform or latest log
+      let initialStatus = data.verification_status || "unverified";
+
       // Load link check logs history
       try {
         const logsData = await platformService.getLinkCheckLogs({ platform: platformId });
-        setLinkLogs(Array.isArray(logsData) ? logsData : logsData.results || []);
+        const logsList = Array.isArray(logsData) ? logsData : logsData.results || [];
+        setLinkLogs(logsList);
+
+        if (!data.verification_status && logsList.length > 0) {
+          const latest = logsList[0];
+          if (latest.verification_status) {
+            initialStatus = latest.verification_status;
+          } else if (latest.is_active || latest.http_status_code === 200 || latest.status === "available") {
+            initialStatus = "available";
+          } else if (latest.is_active === false || latest.status === "unavailable") {
+            initialStatus = "unavailable";
+          }
+        }
       } catch {
         setLinkLogs([]);
       }
+
+      setVerificationStatus(initialStatus);
     } catch (err) {
       console.error("Error loading platform detail:", err);
       setError(err.message || "No se pudo cargar la información de la plataforma.");
@@ -111,15 +131,39 @@ export default function DatabaseDetail({ platformId }) {
     return typeof value === "object" ? getUserDisplayName(value) : userNames[String(value)] || "—";
   };
 
-  // Direct Re-check handler (does NOT open modal, sends empty body payload {})
-  const handleDirectRecheck = async () => {
+  // Re-check handler calling POST /api/platforms/{id}/check-link/
+  const handleCheckLink = async () => {
     setIsRechecking(true);
     try {
-      await platformService.checkLink(platformId, null);
-      showToast("Re-verificación ejecutada exitosamente.");
-      loadDetail();
+      const res = await platformService.checkLink(platformId, null);
+      
+      // Update verification status from response
+      let newStatus = "unverified";
+      if (res) {
+        if (res.verification_status) {
+          newStatus = res.verification_status;
+        } else if (res.is_active === true || res.available === true || res.http_status_code === 200 || res.status === "available") {
+          newStatus = "available";
+        } else if (res.is_active === false || res.available === false || res.status === "unavailable") {
+          newStatus = "unavailable";
+        } else {
+          newStatus = "available";
+        }
+      }
+      setVerificationStatus(newStatus);
+      showToast(
+        newStatus === "available"
+          ? "URL verificada con éxito: enlace Disponible."
+          : newStatus === "unavailable"
+          ? "Verificación completada: enlace No disponible."
+          : "Verificación de enlace ejecutada."
+      );
+
+      // Refresh link logs history
+      const logsData = await platformService.getLinkCheckLogs({ platform: platformId });
+      setLinkLogs(Array.isArray(logsData) ? logsData : logsData.results || []);
     } catch (err) {
-      alert(`Error al re-verificar URL: ${err.message}`);
+      alert(`Error al verificar URL: ${err.message}`);
     } finally {
       setIsRechecking(false);
     }
@@ -127,6 +171,10 @@ export default function DatabaseDetail({ platformId }) {
 
   // Action Handlers
   const handlePublish = async () => {
+    if (verificationStatus !== "available") {
+      alert("Solo se permite publicar la plataforma si la verificación de la URL fue exitosa (Disponible).");
+      return;
+    }
     try {
       await platformService.publishPlatform(platformId);
       showToast("La plataforma ha sido publicada exitosamente.");
@@ -186,7 +234,6 @@ export default function DatabaseDetail({ platformId }) {
     }
   };
 
-  // Helper to format item names from catalog ID or Object
   const formatItemName = (item, catalogList = []) => {
     if (!item) return "";
     if (typeof item === "object" && item !== null) {
@@ -225,10 +272,35 @@ export default function DatabaseDetail({ platformId }) {
     );
   };
 
+  const renderVerificationBadge = (status) => {
+    if (status === "available") {
+      return (
+        <span className="bg-emerald-50 text-emerald-800 border border-emerald-200 font-semibold text-xs rounded-full px-3 py-1 inline-flex items-center gap-1.5">
+          <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+          Disponible
+        </span>
+      );
+    }
+    if (status === "unavailable") {
+      return (
+        <span className="bg-rose-50 text-rose-800 border border-rose-200 font-semibold text-xs rounded-full px-3 py-1 inline-flex items-center gap-1.5">
+          <XCircle className="w-3.5 h-3.5 text-rose-600" />
+          No disponible
+        </span>
+      );
+    }
+    return (
+      <span className="bg-amber-50 text-amber-800 border border-amber-200 font-semibold text-xs rounded-full px-3 py-1 inline-flex items-center gap-1.5">
+        <HelpCircle className="w-3.5 h-3.5 text-amber-600" />
+        Sin verificar
+      </span>
+    );
+  };
+
   if (loading) {
     return (
       <div className="p-16 text-center text-gray-500">
-        <div className="w-8 h-8 border-2 border-[#C8102E] border-t-transparent rounded-full animate-spin mx-auto mb-3"></div>
+        <div className="w-8 h-8 border-2 border-[#7f1218] border-t-transparent rounded-full animate-spin mx-auto mb-3"></div>
         <p className="text-xs font-medium">Cargando detalles de la plataforma...</p>
       </div>
     );
@@ -242,7 +314,7 @@ export default function DatabaseDetail({ platformId }) {
         <p className="text-xs text-gray-500">{error || "No se encontró el recurso solicitado."}</p>
         <button
           onClick={() => router.push("/admin/bases-de-datos")}
-          className="bg-[#C8102E] text-white px-4 py-2 rounded-xl text-xs font-medium cursor-pointer"
+          className="bg-[#7f1218] hover:bg-[#6a0f14] text-white px-4 py-2 rounded-xl text-xs font-medium cursor-pointer"
         >
           Volver a Bases de datos
         </button>
@@ -251,6 +323,7 @@ export default function DatabaseDetail({ platformId }) {
   }
 
   const currentStatus = (platform.status || "BORRADOR").toUpperCase();
+  const canPublish = currentStatus === "BORRADOR" && verificationStatus === "available";
 
   return (
     <div className="space-y-6 max-w-5xl mx-auto">
@@ -295,13 +368,25 @@ export default function DatabaseDetail({ platformId }) {
           </Link>
 
           {currentStatus === "BORRADOR" && (
-            <Button
-              onClick={handlePublish}
-              className="rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-medium gap-1.5 cursor-pointer"
-            >
-              <CheckCircle2 className="w-3.5 h-3.5" />
-              Publicar
-            </Button>
+            <div className="relative group">
+              <Button
+                onClick={handlePublish}
+                disabled={!canPublish}
+                className={`rounded-xl text-white text-xs font-medium gap-1.5 cursor-pointer ${
+                  canPublish 
+                    ? "bg-emerald-600 hover:bg-emerald-700" 
+                    : "bg-gray-300 text-gray-500 cursor-not-allowed"
+                }`}
+              >
+                <CheckCircle2 className="w-3.5 h-3.5" />
+                Publicar
+              </Button>
+              {!canPublish && (
+                <span className="hidden group-hover:block absolute right-0 top-full mt-1 w-64 p-2 bg-[#7f1218] text-white text-[11px] rounded-lg shadow-lg z-20">
+                  Para publicar, la URL pública debe estar verificada y disponible.
+                </span>
+              )}
+            </div>
           )}
 
           {currentStatus === "PUBLICADO" && (
@@ -326,7 +411,7 @@ export default function DatabaseDetail({ platformId }) {
 
           <Button
             onClick={() => setDeleteModalOpen(true)}
-            className="rounded-xl bg-[#C8102E] hover:bg-[#A50D25] text-white text-xs font-medium gap-1.5 cursor-pointer"
+            className="rounded-xl bg-[#7f1218] hover:bg-[#6a0f14] text-white text-xs font-medium gap-1.5 cursor-pointer"
           >
             <Trash2 className="w-3.5 h-3.5" />
             Eliminar
@@ -340,31 +425,48 @@ export default function DatabaseDetail({ platformId }) {
         <div className="md:col-span-2 space-y-6">
           {/* Información General Card */}
           <Card className="rounded-2xl border-gray-200/80 shadow-xs bg-white">
-            <CardHeader className="border-b border-gray-100 pb-4">
+            <CardHeader className="border-b border-gray-100 pb-4 flex flex-row items-center justify-between">
               <CardTitle className="text-base font-bold text-gray-900 flex items-center gap-2">
-                <Globe className="w-4 h-4 text-[#C8102E]" />
+                <Globe className="w-4 h-4 text-[#7f1218]" />
                 Información General
               </CardTitle>
+              <div>{renderVerificationBadge(verificationStatus)}</div>
             </CardHeader>
             <CardContent className="pt-6 space-y-4">
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                {/* URL Pública de Acceso — campo destacado */}
+                {/* URL Pública de Acceso con flujo visual de verificación */}
                 <div className="sm:col-span-2">
-                  <span className="text-xs uppercase tracking-wide text-gray-500 font-semibold block">URL Pública de Acceso</span>
-                  <div className="mt-1.5 p-3 bg-blue-50 border border-blue-200/80 rounded-lg flex items-center gap-2">
-                    <Link2 className="w-4 h-4 text-blue-500 shrink-0" />
-                    {platform.public_url ? (
-                      <a
-                        href={platform.public_url}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="font-semibold text-blue-700 hover:underline text-[14px] sm:text-[15px] break-all flex items-center gap-1.5"
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs uppercase tracking-wide text-gray-500 font-semibold block">URL Pública de Acceso</span>
+                    <span className="text-xs text-gray-500">Estado: {renderVerificationBadge(verificationStatus)}</span>
+                  </div>
+                  <div className="mt-1.5 p-3 bg-slate-50 border border-slate-200 rounded-xl flex items-center justify-between gap-3">
+                    <div className="flex items-center gap-2 min-w-0">
+                      <Link2 className="w-4 h-4 text-blue-500 shrink-0" />
+                      {platform.public_url ? (
+                        <a
+                          href={platform.public_url}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="font-semibold text-blue-700 hover:underline text-sm break-all flex items-center gap-1.5"
+                        >
+                          {platform.public_url}
+                          <ExternalLink className="w-3.5 h-3.5 shrink-0" />
+                        </a>
+                      ) : (
+                        <span className="text-slate-400 italic text-sm">Sin URL pública registrada</span>
+                      )}
+                    </div>
+                    {platform.public_url && (
+                      <Button
+                        size="sm"
+                        disabled={isRechecking}
+                        onClick={handleCheckLink}
+                        className="rounded-lg text-xs bg-[#7f1218] hover:bg-[#6a0f14] text-white font-medium gap-1.5 shrink-0 cursor-pointer"
                       >
-                        {platform.public_url}
-                        <ExternalLink className="w-3.5 h-3.5 shrink-0" />
-                      </a>
-                    ) : (
-                      <span className="text-slate-400 italic text-[14px]">Sin URL pública registrada</span>
+                        <RefreshCw className={`w-3.5 h-3.5 ${isRechecking ? "animate-spin" : ""}`} />
+                        <span>{isRechecking ? "Verificando..." : "Verificar URL"}</span>
+                      </Button>
                     )}
                   </div>
                 </div>
@@ -373,7 +475,7 @@ export default function DatabaseDetail({ platformId }) {
                 <div>
                   <span className="text-xs uppercase tracking-wide text-gray-500 font-semibold block">Nombre</span>
                   <div className="mt-1.5 p-2.5 bg-slate-50 border border-slate-100 rounded-lg">
-                    <span className="text-[14px] sm:text-[15px] font-semibold text-slate-900">{capitalizeWords(platform.name)}</span>
+                    <span className="text-sm font-semibold text-slate-900">{capitalizeWords(platform.name)}</span>
                   </div>
                 </div>
 
@@ -401,29 +503,13 @@ export default function DatabaseDetail({ platformId }) {
                 <div>
                   <span className="text-xs uppercase tracking-wide text-gray-500 font-semibold block">Sintaxis Válida</span>
                   <div className="mt-1.5 p-2.5 bg-slate-50 border border-slate-100 rounded-lg">
-                    <span className="text-[14px] sm:text-[15px] font-semibold text-slate-900">
+                    <span className="text-sm font-semibold text-slate-900">
                       {platform.valid_sintaxis
                         ? typeof platform.valid_sintaxis === "object"
                           ? capitalizeWords(platform.valid_sintaxis.name)
                           : capitalizeWords(catalogs.sintaxis?.find(s => s.id === Number(platform.valid_sintaxis))?.name || "Sintaxis estándar")
                         : "Sintaxis estándar"}
                     </span>
-                  </div>
-                </div>
-
-                {/* Fecha de registro administrada por el backend */}
-                <div>
-                  <span className="text-xs uppercase tracking-wide text-gray-500 font-semibold block">Fecha de registro de la plataforma</span>
-                  <div className="mt-1.5 p-2.5 bg-slate-50 border border-slate-100 rounded-lg">
-                    <span className="text-[14px] sm:text-[15px] font-semibold text-slate-900">{platform.start_period || "Sin definir"}</span>
-                  </div>
-                </div>
-
-                {/* Fecha de obsolescencia administrada por el backend */}
-                <div>
-                  <span className="text-xs uppercase tracking-wide text-gray-500 font-semibold block">Fecha de obsolescencia</span>
-                  <div className="mt-1.5 p-2.5 bg-slate-50 border border-slate-100 rounded-lg">
-                    <span className="text-[14px] sm:text-[15px] font-semibold text-slate-900">{platform.finish_period || "Indefinido"}</span>
                   </div>
                 </div>
               </div>
@@ -438,8 +524,7 @@ export default function DatabaseDetail({ platformId }) {
                 Configuración de Cosecha
               </CardTitle>
             </CardHeader>
-            <CardContent className="pt-6 space-y-4">
-              {/* is_harvestable */}
+            <CardContent className="pt-1 space-y-4">
               <div className="flex items-center gap-2">
                 <span className={`px-2.5 py-1 rounded-full text-xs font-bold ${
                   platform.is_harvestable
@@ -450,7 +535,6 @@ export default function DatabaseDetail({ platformId }) {
                 </span>
               </div>
 
-              {/* URL Base de API */}
               <div>
                 <span className="text-xs uppercase tracking-wide text-gray-500 font-semibold block">URL Base de API de cosecha</span>
                 <div className="mt-1.5 p-2.5 bg-slate-50 border border-slate-100 rounded-lg">
@@ -459,13 +543,13 @@ export default function DatabaseDetail({ platformId }) {
                       href={platform.base_api_url}
                       target="_blank"
                       rel="noreferrer"
-                      className="text-blue-600 hover:underline flex items-center gap-1.5 text-[14px] sm:text-[15px] break-all font-semibold"
+                      className="text-blue-600 hover:underline flex items-center gap-1.5 text-sm break-all font-semibold"
                     >
                       {platform.base_api_url}
                       <ExternalLink className="w-3.5 h-3.5 shrink-0" />
                     </a>
                   ) : (
-                    <span className="text-slate-400 italic text-[14px]">Sin URL de API configurada</span>
+                    <span className="text-slate-400 italic text-sm">Sin URL de API configurada</span>
                   )}
                 </div>
               </div>
@@ -478,21 +562,21 @@ export default function DatabaseDetail({ platformId }) {
               <div>
                 <CardTitle className="text-base font-bold text-gray-900 flex items-center gap-2">
                   <History className="w-4 h-4 text-blue-600" />
-                  Historial de Verificaciones de URL
+                  Historial de Verificaciones de Enlace
                 </CardTitle>
                 <CardDescription className="text-xs text-gray-500">
-                  Registros de disponibilidad y verificación de la URL pública
+                  Registros gestionados por LinkCheckLog
                 </CardDescription>
               </div>
 
               <Button
                 size="sm"
                 disabled={isRechecking}
-                onClick={handleDirectRecheck}
-                className="rounded-xl text-xs bg-[#C8102E] hover:bg-[#A50D25] text-white font-medium gap-1.5 cursor-pointer shadow-2xs"
+                onClick={handleCheckLink}
+                className="rounded-xl text-xs bg-[#7f1218] hover:bg-[#6a0f14] text-white font-medium gap-1.5 cursor-pointer shadow-2xs"
               >
                 <RefreshCw className={`w-3.5 h-3.5 ${isRechecking ? "animate-spin" : ""}`} />
-                <span>{isRechecking ? "Verificando..." : "Re-verificar URL"}</span>
+                <span>{isRechecking ? "Verificando..." : "Comprobar enlace"}</span>
               </Button>
             </CardHeader>
 
@@ -514,12 +598,14 @@ export default function DatabaseDetail({ platformId }) {
                       </div>
                       <span
                         className={`px-2.5 py-1 rounded-full text-[10px] font-bold ${
-                          log.is_active || log.http_status_code === 200
+                          log.is_active || log.http_status_code === 200 || log.verification_status === "available"
                             ? "bg-emerald-100 text-emerald-800"
                             : "bg-rose-100 text-rose-800"
                         }`}
                       >
-                        {log.is_active || log.http_status_code === 200 ? "Válido" : "Error"}
+                        {log.is_active || log.http_status_code === 200 || log.verification_status === "available"
+                          ? "Disponible"
+                          : "No disponible"}
                       </span>
                     </div>
                   ))}
@@ -536,49 +622,10 @@ export default function DatabaseDetail({ platformId }) {
             <CardHeader className="border-b border-gray-100 pb-4">
               <CardTitle className="text-base font-bold text-gray-900 flex items-center gap-2">
                 <Building2 className="w-4 h-4 text-emerald-600" />
-                Clasificación y Relaciones
+                Clasificación y Cobertura
               </CardTitle>
             </CardHeader>
             <CardContent className="pt-6 space-y-4">
-              <div>
-                <span className="text-xs uppercase tracking-wide text-gray-500 font-semibold block">Áreas de Conocimiento</span>
-                <div className="mt-1.5 p-2.5 bg-slate-50 border border-slate-100 rounded-lg">
-                  {platform.knowledge_areas && platform.knowledge_areas.length > 0 ? (
-                    <div className="flex flex-wrap gap-1.5">
-                      {platform.knowledge_areas.map((ka, i) => {
-                        const name = formatItemName(ka, catalogs.knowledgeAreas);
-                        return (
-                          <span
-                            key={i}
-                            className="bg-emerald-50 text-emerald-800 border border-emerald-200/60 font-semibold px-2.5 py-0.5 rounded-md text-xs"
-                          >
-                            {name}
-                          </span>
-                        );
-                      })}
-                    </div>
-                  ) : (
-                    <span className="text-slate-400 italic text-xs">—</span>
-                  )}
-                </div>
-              </div>
-
-              {/* Programas Académicos */}
-              <div>
-                <span className="text-xs uppercase tracking-wide text-gray-500 font-semibold block">Programas Académicos</span>
-                <div className="mt-1.5 p-2.5 bg-slate-50 border border-slate-100 rounded-lg">
-                  {platform.academic_programs && platform.academic_programs.length > 0 ? (
-                    <ul className="space-y-1 list-disc list-inside text-slate-900 font-semibold text-[14px]">
-                      {platform.academic_programs.map((ap, i) => (
-                        <li key={i}>{formatItemName(ap, catalogs.academicPrograms)}</li>
-                      ))}
-                    </ul>
-                  ) : (
-                    <span className="text-slate-400 italic text-xs">Sin programas asociados</span>
-                  )}
-                </div>
-              </div>
-
               {/* Instituciones */}
               <div>
                 <span className="text-xs uppercase tracking-wide text-gray-500 font-semibold block">Instituciones</span>
@@ -592,7 +639,25 @@ export default function DatabaseDetail({ platformId }) {
                       ))}
                     </div>
                   ) : (
-                    <span className="text-slate-400 italic text-xs">Sin instituciones especificadas</span>
+                    <span className="text-slate-400 italic text-xs">Sin instituciones asociadas</span>
+                  )}
+                </div>
+              </div>
+
+              {/* Idiomas */}
+              <div>
+                <span className="text-xs uppercase tracking-wide text-gray-500 font-semibold block">Idiomas</span>
+                <div className="mt-1.5 p-2.5 bg-slate-50 border border-slate-100 rounded-lg">
+                  {platform.languages && platform.languages.length > 0 ? (
+                    <div className="flex flex-wrap gap-1.5">
+                      {platform.languages.map((lang, i) => (
+                        <span key={i} className="bg-slate-200/80 text-slate-800 font-semibold px-2.5 py-0.5 rounded-md text-xs">
+                          {formatItemName(lang, catalogs.languages)}
+                        </span>
+                      ))}
+                    </div>
+                  ) : (
+                    <span className="text-slate-400 italic text-xs">Sin idiomas especificados</span>
                   )}
                 </div>
               </div>
@@ -611,6 +676,24 @@ export default function DatabaseDetail({ platformId }) {
                     </div>
                   ) : (
                     <span className="text-slate-400 italic text-xs">Sin países especificados</span>
+                  )}
+                </div>
+              </div>
+
+              {/* Tipos de material */}
+              <div>
+                <span className="text-xs uppercase tracking-wide text-gray-500 font-semibold block">Tipos de material</span>
+                <div className="mt-1.5 p-2.5 bg-slate-50 border border-slate-100 rounded-lg">
+                  {platform.material_types && platform.material_types.length > 0 ? (
+                    <div className="flex flex-wrap gap-1.5">
+                      {platform.material_types.map((mat, i) => (
+                        <span key={i} className="bg-slate-200/80 text-slate-800 font-semibold px-2.5 py-0.5 rounded-md text-xs">
+                          {formatItemName(mat, catalogs.materialTypes)}
+                        </span>
+                      ))}
+                    </div>
+                  ) : (
+                    <span className="text-slate-400 italic text-xs">Sin tipos de material</span>
                   )}
                 </div>
               </div>
@@ -651,23 +734,6 @@ export default function DatabaseDetail({ platformId }) {
                   <span className="text-[10px] text-gray-400 block">{formatDate(platform.updated_at)}</span>
                 </div>
               </div>
-
-              {platform.deleted_by != null && (
-                <div>
-                  <span className="text-xs uppercase tracking-wide text-gray-500 font-semibold block">Eliminado por</span>
-                  <div className="mt-1 p-2 bg-slate-50 border border-slate-100 rounded-lg">
-                    <span className="font-semibold text-slate-900 text-xs block">{resolveUserName(platform.deleted_by)}</span>
-                    {platform.deleted_at && <span className="text-[10px] text-gray-400 block">{formatDate(platform.deleted_at)}</span>}
-                  </div>
-                </div>
-              )}
-
-              {platform.delete_explanation && (
-                <div className="p-2.5 rounded-lg bg-rose-50 border border-rose-200 text-rose-700 text-xs">
-                  <span className="font-bold block uppercase text-[10px]">Motivo de eliminación:</span>
-                  <span className="mt-0.5 block font-semibold">{platform.delete_explanation}</span>
-                </div>
-              )}
             </CardContent>
           </Card>
         </div>

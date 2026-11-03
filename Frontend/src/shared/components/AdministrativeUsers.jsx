@@ -10,8 +10,8 @@ import { useAccountsApi } from "@/shared/components/AccountsProvider";
 import { clampPage, sanitizePageValue } from "@/shared/utils/pagination";
 
 const PAGE_SIZE = 10;
-const buttonStyle = "!border-[#C8102E] !text-[#C8102E]";
-const primaryStyle = "!border-[#C8102E] !bg-[#C8102E] hover:!bg-[#A80D27]";
+const buttonStyle = "!border-[#7f1218] !text-[#7f1218]";
+const primaryStyle = "!border-[#7f1218] !bg-[#7f1218] hover:!bg-[#6a0f14]";
 
 function DeactivateDialog({ user, onClose, onDeleted }) {
   const accountsApi = useAccountsApi();
@@ -158,7 +158,7 @@ export default function AdministrativeUsers() {
         {!loading && !error && <div className="flex flex-wrap items-center justify-between gap-3 py-4 text-xs text-[#6B758A]">
           <p aria-live="polite">{filtered.length ? `${(currentPage - 1) * PAGE_SIZE + 1}–${Math.min(currentPage * PAGE_SIZE, filtered.length)} de ${filtered.length}` : "0"} usuarios{status === "active" ? " activos" : status === "inactive" ? " inactivos" : ""}</p>
           <div className="flex items-center gap-3">
-            <button className="rounded px-2 py-1 text-[#C8102E] disabled:opacity-30" disabled={currentPage === 1} aria-label="Página anterior" onClick={() => {
+            <button className="rounded px-2 py-1 text-[#7f1218] disabled:opacity-30" disabled={currentPage === 1} aria-label="Página anterior" onClick={() => {
               const nextPage = clampPage(currentPage - 1, totalPages);
               setPage(nextPage);
               setPageInput(String(nextPage));
@@ -179,11 +179,11 @@ export default function AdministrativeUsers() {
                     handlePageSubmit();
                   }
                 }}
-                className="w-12 rounded border border-[#D1D6E0] bg-white px-1 py-0.5 text-center font-medium text-[#1F242E] outline-none focus:border-[#C8102E]"
+                className="w-12 rounded border border-[#D1D6E0] bg-white px-1 py-0.5 text-center font-medium text-[#1F242E] outline-none focus:border-[#7f1218]"
               />
               <span>de {totalPages}</span>
             </label>
-            <button className="rounded px-2 py-1 text-[#C8102E] disabled:opacity-30" disabled={currentPage === totalPages} aria-label="Página siguiente" onClick={() => {
+            <button className="rounded px-2 py-1 text-[#7f1218] disabled:opacity-30" disabled={currentPage === totalPages} aria-label="Página siguiente" onClick={() => {
               const nextPage = clampPage(currentPage + 1, totalPages);
               setPage(nextPage);
               setPageInput(String(nextPage));
