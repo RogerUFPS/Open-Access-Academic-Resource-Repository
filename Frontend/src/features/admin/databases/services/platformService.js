@@ -145,6 +145,15 @@ export const platformService = {
     }
   },
 
+  getValidSintaxisList: async () => {
+    const response = await apiClient.get("/api/platforms/valid-sintaxis/");
+    return Array.isArray(response) ? response : response.results || [];
+  },
+  createValidSintaxis: async (data) => apiClient.post("/api/platforms/valid-sintaxis/", data),
+  updateValidSintaxis: async (id, data) => apiClient.patch(`/api/platforms/valid-sintaxis/${id}/`, data),
+  deleteValidSintaxis: async (id) => apiClient.delete(`/api/platforms/valid-sintaxis/${id}/`),
+  findSimilarSintaxis: async (data) => apiClient.post("/api/platforms/valid-sintaxis/similar/", data),
+
   /**
    * Get link check logs history (GET /api/platforms/link-check-logs/)
    */

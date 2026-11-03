@@ -4,6 +4,7 @@ import React, { useState, useEffect, useCallback } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { platformService } from "../services/platformService";
+import { useToast } from "@/components/ui/use-toast";
 import { capitalizeWords } from "@/lib/utils";
 import { clampPage, sanitizePageValue } from "@/shared/utils/pagination";
 import DeleteModal from "./DeleteModal";
@@ -31,6 +32,7 @@ export default function DatabaseTable() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [actionSuccess, setActionSuccess] = useState(null);
+  const { toast } = useToast();
 
   // Pagination metadata
   const [page, setPage] = useState(1);
@@ -140,7 +142,16 @@ export default function DatabaseTable() {
       showSuccess(`Plataforma "${name}" publicada con éxito.`);
       fetchPlatforms();
     } catch (err) {
-      alert(`Error al publicar: ${err.message}`);
+      const detail = err.data?.detail || err.data?.message || err.data?.error;
+      const fields = err.data && typeof err.data === "object"
+        ? Object.entries(err.data).filter(([key]) => !["detail", "message", "error"].includes(key)).map(([key, value]) => `${key}: ${Array.isArray(value) ? value.join(", ") : value}`)
+        : [];
+      toast({
+        title: `No se pudo publicar “${name}”.`,
+        description: fields.length ? fields.join("\n") : detail || err.message || "No se pudo publicar.",
+        variant: "destructive",
+        duration: 9000,
+      });
     }
   };
 
@@ -250,7 +261,6 @@ export default function DatabaseTable() {
           </button>
         </div>
       )}
-
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>

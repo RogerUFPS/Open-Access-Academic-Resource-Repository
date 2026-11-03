@@ -58,6 +58,7 @@ function AdminLayoutContent({ children }) {
         // Nota: Agrupamos Recursos hacia bases-de-datos por defecto. 
         // Podrías necesitar un menú desplegable aquí si quieres incluir /revistas en el mismo botón.
         { name: "Recursos", href: "/admin/bases-de-datos", icon: Book },
+        { name: "Sintaxis válidas", href: "/admin/sintaxis-validas", icon: Book },
         { name: "Cosecha", href: "/admin/cosecha", icon: RefreshCw },
         { name: "Alertas", href: "/admin/alertas", icon: Bell }, // Ruta asume /admin/alertas (no estaba en tu árbol)
       ]

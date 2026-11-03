@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { platformService } from "../services/platformService";
 import { getUserDisplayName, userService } from "@/shared/services/userService";
 import { capitalizeWords } from "@/lib/utils";
+import { useToast } from "@/components/ui/use-toast";
 import DeleteModal from "./DeleteModal";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
@@ -44,6 +45,7 @@ export default function DatabaseDetail({ platformId }) {
   const [error, setError] = useState(null);
   const [actionMessage, setActionMessage] = useState(null);
   const [userNames, setUserNames] = useState({});
+  const { toast } = useToast();
 
   // Verification status state: 'unverified' | 'available' | 'unavailable'
   const [verificationStatus, setVerificationStatus] = useState("unverified");
@@ -172,7 +174,11 @@ export default function DatabaseDetail({ platformId }) {
   // Action Handlers
   const handlePublish = async () => {
     if (verificationStatus !== "available") {
-      alert("Solo se permite publicar la plataforma si la verificación de la URL fue exitosa (Disponible).");
+      toast({
+        title: "No se pudo publicar la plataforma",
+        description: "La URL pública debe verificarse y estar disponible antes de publicar.",
+        variant: "destructive",
+      });
       return;
     }
     try {
@@ -180,7 +186,25 @@ export default function DatabaseDetail({ platformId }) {
       showToast("La plataforma ha sido publicada exitosamente.");
       loadDetail();
     } catch (err) {
-      alert(`Error al publicar: ${err.message}`);
+      const payload = err.data && typeof err.data === "object" ? err.data : {};
+      const fieldErrors = Object.entries(payload)
+        .filter(([key]) => !["detail", "message", "error"].includes(key))
+        .map(([key, value]) => `${key}: ${Array.isArray(value) ? value.join(", ") : String(value)}`);
+      const message = fieldErrors.length
+        ? fieldErrors.join("\n")
+        : payload.detail || payload.message || payload.error || err.message || "No se pudo publicar la plataforma.";
+      const fieldErrorData = Object.fromEntries(Object.entries(payload).filter(([key]) => !["detail", "message", "error"].includes(key)));
+      toast({
+        title: "No se pudo publicar la plataforma",
+        description: fieldErrors.length ? (
+          <div>
+            <ul className="list-disc space-y-1 pl-4">{fieldErrors.map((item, index) => <li key={`${item}-${index}`}>{item}</li>)}</ul>
+            <Link href={`/admin/bases-de-datos/${platform.id}?edit=true&publishErrors=${encodeURIComponent(JSON.stringify(fieldErrorData))}`} className="mt-2 inline-block font-semibold text-[#7f1218] underline">Revisar datos de la plataforma</Link>
+          </div>
+        ) : message,
+        variant: "destructive",
+        duration: 9000,
+      });
     }
   };
 

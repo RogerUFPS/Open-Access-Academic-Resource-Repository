@@ -13,6 +13,12 @@ export default function AdminDatabaseDetailPage({ params, searchParams }) {
 
   const searchParamsObj = useSearchParams();
   const isEditMode = searchParamsObj.get("edit") === "true";
+  let publishErrors = {};
+  try {
+    publishErrors = JSON.parse(searchParamsObj.get("publishErrors") || "{}");
+  } catch {
+    publishErrors = {};
+  }
 
   const [platformData, setPlatformData] = useState(null);
   const [loading, setLoading] = useState(isEditMode);
@@ -53,7 +59,7 @@ export default function AdminDatabaseDetailPage({ params, searchParams }) {
       );
     }
 
-    return <DatabaseForm initialData={platformData} isEdit={true} />;
+    return <DatabaseForm initialData={platformData} isEdit={true} publishErrors={publishErrors} />;
   }
 
   return <DatabaseDetail platformId={platformId} />;

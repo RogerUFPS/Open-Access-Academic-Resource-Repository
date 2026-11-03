@@ -289,8 +289,9 @@ export default function JournalForm({ initialData = null, isEdit = false }) {
       // Modo Edición (PATCH):
       // Áreas de conocimiento: Enviar como array simple de IDs manuales
       const manualAreaIds = knowledgeAreas
-        .filter((ka) => ka.is_manual || ka.editable)
-        .map((ka) => ka.id);
+        .filter((ka) => ka.editable === true)
+        .map((ka) => Number(ka.id))
+        .filter(Number.isFinite);
 
       // Validar cada plataforma vinculada en edición si existen
       for (let i = 0; i < formData.platforms.length; i++) {
@@ -634,7 +635,7 @@ export default function JournalForm({ initialData = null, isEdit = false }) {
                     key={area.id}
                     className="flex items-center gap-2 px-3 py-1.5 rounded-xl border border-gray-200 bg-slate-50 text-xs"
                   >
-                    <span className="font-semibold text-gray-900">{area.name}</span>
+                    <span className="font-semibold text-gray-900">{capitalizeWords(area.name)}</span>
                     
                     {/* Tags visuales: Manual / Derivada / Ambas */}
                     {isBoth ? (
@@ -684,7 +685,7 @@ export default function JournalForm({ initialData = null, isEdit = false }) {
                 .filter((catArea) => !knowledgeAreas.some((ka) => ka.id === catArea.id))
                 .map((catArea) => (
                   <option key={catArea.id} value={catArea.id}>
-                    {catArea.name}
+                    {capitalizeWords(catArea.name || catArea.nombre)}
                   </option>
                 ))}
             </select>
@@ -827,7 +828,7 @@ export default function JournalForm({ initialData = null, isEdit = false }) {
                         : "bg-white border-gray-200 text-gray-700 hover:bg-gray-50"
                     }`}
                   >
-                    <span className="truncate pr-1">{lang.name}</span>
+                    <span className="truncate pr-1">{capitalizeWords(lang.name || lang.nombre)}</span>
                     <div className={`w-4 h-4 rounded flex items-center justify-center border transition-all shrink-0 ${isSelected ? "bg-[#7f1218] border-[#7f1218] text-white" : "border-gray-300 bg-white"}`}>
                       {isSelected && <Check className="w-3 h-3" />}
                     </div>
@@ -862,7 +863,7 @@ export default function JournalForm({ initialData = null, isEdit = false }) {
                   >
                     <span className="truncate pr-1 flex items-center gap-1.5">
                       {country.emoji_flag && <span>{country.emoji_flag}</span>}
-                      <span>{country.name}</span>
+                      <span>{capitalizeWords(country.name || country.nombre)}</span>
                     </span>
                     <div className={`w-4 h-4 rounded flex items-center justify-center border transition-all shrink-0 ${isSelected ? "bg-[#7f1218] border-[#7f1218] text-white" : "border-gray-300 bg-white"}`}>
                       {isSelected && <Check className="w-3 h-3" />}
@@ -896,7 +897,7 @@ export default function JournalForm({ initialData = null, isEdit = false }) {
                         : "bg-white border-gray-200 text-gray-700 hover:bg-gray-50"
                     }`}
                   >
-                    <span className="truncate pr-1">{mat.name}</span>
+                    <span className="truncate pr-1">{capitalizeWords(mat.name || mat.nombre)}</span>
                     <div className={`w-4 h-4 rounded flex items-center justify-center border transition-all shrink-0 ${isSelected ? "bg-[#7f1218] border-[#7f1218] text-white" : "border-gray-300 bg-white"}`}>
                       {isSelected && <Check className="w-3 h-3" />}
                     </div>
@@ -929,7 +930,7 @@ export default function JournalForm({ initialData = null, isEdit = false }) {
                         : "bg-white border-gray-200 text-gray-700 hover:bg-gray-50"
                     }`}
                   >
-                    <span className="truncate pr-1">{prog.name}</span>
+                    <span className="truncate pr-1">{capitalizeWords(prog.name || prog.nombre)}</span>
                     <div className={`w-4 h-4 rounded flex items-center justify-center border transition-all shrink-0 ${isSelected ? "bg-[#7f1218] border-[#7f1218] text-white" : "border-gray-300 bg-white"}`}>
                       {isSelected && <Check className="w-3 h-3" />}
                     </div>

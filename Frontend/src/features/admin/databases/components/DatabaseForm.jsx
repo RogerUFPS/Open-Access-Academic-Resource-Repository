@@ -15,7 +15,7 @@ import {
   Globe
 } from "lucide-react";
 
-export default function DatabaseForm({ initialData = null, isEdit = false }) {
+export default function DatabaseForm({ initialData = null, isEdit = false, publishErrors = {} }) {
   const router = useRouter();
 
   // Catalogs state (only needed for full edit)
@@ -50,7 +50,7 @@ export default function DatabaseForm({ initialData = null, isEdit = false }) {
   const [clearApiKey, setClearApiKey] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [formError, setFormError] = useState(null);
-  const [fieldErrors, setFieldErrors] = useState({});
+  const [fieldErrors, setFieldErrors] = useState(publishErrors);
 
   useEffect(() => {
     async function loadData() {
@@ -113,6 +113,9 @@ export default function DatabaseForm({ initialData = null, isEdit = false }) {
       }
     });
   };
+
+  const hasCatalogError = (...keys) => keys.some((key) => Boolean(fieldErrors[key]));
+  const catalogErrorText = (...keys) => keys.map((key) => fieldErrors[key]).filter(Boolean).flat().join(" ");
 
   const handleSubmit = async (e) => {
     if (e) e.preventDefault();
@@ -499,15 +502,16 @@ export default function DatabaseForm({ initialData = null, isEdit = false }) {
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           {/* Institución responsable */}
-          <div className="bg-white border border-gray-200 rounded-xl p-4 shadow-2xs space-y-2.5">
+          <div className={`bg-white border rounded-xl p-4 shadow-2xs space-y-2.5 ${hasCatalogError("institutions", "institution") ? "border-rose-400 ring-1 ring-rose-200" : "border-gray-200"}`}>
             <div className="flex items-center justify-between pb-1 border-b border-gray-100">
-              <Label className="text-[11px] font-bold text-gray-700 uppercase tracking-wider block">
+              <Label className={`text-[11px] font-bold uppercase tracking-wider block ${hasCatalogError("institutions", "institution") ? "text-rose-700" : "text-gray-700"}`}>
                 Institución responsable
               </Label>
               <span className="text-[10px] bg-slate-100 text-slate-600 font-semibold px-2 py-0.5 rounded-full">
                 {formData.institutions.length} seleccionados
               </span>
             </div>
+            {hasCatalogError("institutions", "institution") && <p className="text-xs font-medium text-rose-700">{catalogErrorText("institutions", "institution")}</p>}
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 max-h-52 overflow-y-auto pr-1">
               {catalogs.institutions.map((inst) => {
                 const isSelected = formData.institutions.includes(inst.id);
@@ -521,7 +525,7 @@ export default function DatabaseForm({ initialData = null, isEdit = false }) {
                         : "bg-white border-gray-200 text-gray-700 hover:bg-gray-50"
                     }`}
                   >
-                    <span className="truncate pr-1">{inst.name}</span>
+                    <span className="truncate pr-1">{capitalizeWords(inst.name || inst.nombre)}</span>
                     <div className={`w-4 h-4 rounded flex items-center justify-center border transition-all shrink-0 ${isSelected ? "bg-[#7f1218] border-[#7f1218] text-white" : "border-gray-300 bg-white"}`}>
                       {isSelected && <Check className="w-3 h-3" />}
                     </div>
@@ -554,7 +558,7 @@ export default function DatabaseForm({ initialData = null, isEdit = false }) {
                         : "bg-white border-gray-200 text-gray-700 hover:bg-gray-50"
                     }`}
                   >
-                    <span className="truncate pr-1">{lang.name}</span>
+                    <span className="truncate pr-1">{capitalizeWords(lang.name || lang.nombre)}</span>
                     <div className={`w-4 h-4 rounded flex items-center justify-center border transition-all shrink-0 ${isSelected ? "bg-[#7f1218] border-[#7f1218] text-white" : "border-gray-300 bg-white"}`}>
                       {isSelected && <Check className="w-3 h-3" />}
                     </div>
@@ -565,15 +569,16 @@ export default function DatabaseForm({ initialData = null, isEdit = false }) {
           </div>
 
           {/* Países */}
-          <div className="bg-white border border-gray-200 rounded-xl p-4 shadow-2xs space-y-2.5">
+          <div className={`bg-white border rounded-xl p-4 shadow-2xs space-y-2.5 ${hasCatalogError("countries", "country") ? "border-rose-400 ring-1 ring-rose-200" : "border-gray-200"}`}>
             <div className="flex items-center justify-between pb-1 border-b border-gray-100">
-              <Label className="text-[11px] font-bold text-gray-700 uppercase tracking-wider block">
+              <Label className={`text-[11px] font-bold uppercase tracking-wider block ${hasCatalogError("countries", "country") ? "text-rose-700" : "text-gray-700"}`}>
                 Países
               </Label>
               <span className="text-[10px] bg-slate-100 text-slate-600 font-semibold px-2 py-0.5 rounded-full">
                 {formData.countries.length} seleccionados
               </span>
             </div>
+            {hasCatalogError("countries", "country") && <p className="text-xs font-medium text-rose-700">{catalogErrorText("countries", "country")}</p>}
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 max-h-52 overflow-y-auto pr-1">
               {catalogs.countries.map((country) => {
                 const isSelected = formData.countries.includes(country.id);
@@ -589,7 +594,7 @@ export default function DatabaseForm({ initialData = null, isEdit = false }) {
                   >
                     <span className="truncate pr-1 flex items-center gap-1.5">
                       {country.emoji_flag && <span>{country.emoji_flag}</span>}
-                      <span>{country.name}</span>
+                      <span>{capitalizeWords(country.name || country.nombre)}</span>
                     </span>
                     <div className={`w-4 h-4 rounded flex items-center justify-center border transition-all shrink-0 ${isSelected ? "bg-[#7f1218] border-[#7f1218] text-white" : "border-gray-300 bg-white"}`}>
                       {isSelected && <Check className="w-3 h-3" />}
@@ -623,7 +628,7 @@ export default function DatabaseForm({ initialData = null, isEdit = false }) {
                         : "bg-white border-gray-200 text-gray-700 hover:bg-gray-50"
                     }`}
                   >
-                    <span className="truncate pr-1">{mat.name}</span>
+                    <span className="truncate pr-1">{capitalizeWords(mat.name || mat.nombre)}</span>
                     <div className={`w-4 h-4 rounded flex items-center justify-center border transition-all shrink-0 ${isSelected ? "bg-[#7f1218] border-[#7f1218] text-white" : "border-gray-300 bg-white"}`}>
                       {isSelected && <Check className="w-3 h-3" />}
                     </div>
