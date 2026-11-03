@@ -69,10 +69,14 @@ export default function JournalDetail({ journalId }) {
   const [actionBusy, setActionBusy] = useState(false);
   const [publishModalOpen, setPublishModalOpen] = useState(false);
   const [userNames, setUserNames] = useState({});
+  const [editorialName, setEditorialName] = useState("");
+  const [editorialError, setEditorialError] = useState(null);
 
   const loadDetail = async () => {
     setLoading(true);
     setError(null);
+    setEditorialName("");
+    setEditorialError(null);
     try {
       const [data, catData, kaData, licData] = await Promise.all([
         journalService.getJournalById(journalId),
@@ -80,6 +84,30 @@ export default function JournalDetail({ journalId }) {
         journalService.getCatalogData("/api/catalog/knowledge-areas/"),
         journalService.getLicenses().catch(() => []),
       ]);
+
+      const editorialId =
+        typeof data.editorial === "object" && data.editorial !== null
+          ? data.editorial.id ?? data.editorial.pk
+          : data.editorial;
+      let resolvedEditorialName = "";
+      let editorialRequestError = null;
+
+      if (editorialId !== null && editorialId !== undefined && editorialId !== "") {
+        try {
+          const editorialData = await journalService.getEditorialById(editorialId);
+          resolvedEditorialName =
+            typeof editorialData?.name === "string" ? editorialData.name.trim() : "";
+
+          if (!resolvedEditorialName) {
+            editorialRequestError =
+              "La respuesta de la editorial no contiene un nombre válido.";
+          }
+        } catch (editorialErr) {
+          console.error("[JournalDetail] Editorial request failed:", editorialErr);
+          editorialRequestError =
+            editorialErr?.message || "No se pudo cargar el nombre de la editorial.";
+        }
+      }
 
       const auditUserIds = [...new Set(
         ["created_by", "updated_by", "validated_by", "deleted_by"]
@@ -97,6 +125,8 @@ export default function JournalDetail({ journalId }) {
       );
 
       setJournal(data);
+      setEditorialName(resolvedEditorialName);
+      setEditorialError(editorialRequestError);
       setUserNames(Object.fromEntries(resolvedUsers));
       setCatalogs({
         ...catData,
@@ -171,13 +201,20 @@ export default function JournalDetail({ journalId }) {
 
   const formatItemName = (item, catalogList = []) => {
     if (!item) return "";
+
     if (typeof item === "object" && item !== null) {
-      return capitalizeWords(item.name || item.nombre);
+      return capitalizeWords(item.name || item.nombre || "");
     }
-    const found = catalogList.find((c) => c.id === Number(item));
+
+    const found = catalogList.find(
+      (c) =>
+        Number(c.id ?? c.pk ?? c.value) === Number(item)
+    );
+
     if (found) {
-      return capitalizeWords(found.name || found.nombre);
+      return capitalizeWords(found.name || found.nombre || "");
     }
+
     return `ID #${item}`;
   };
 
@@ -380,9 +417,13 @@ export default function JournalDetail({ journalId }) {
                   </span>
                   <div className="mt-1.5 p-2.5 bg-slate-50 border border-slate-100 rounded-lg">
                     <span className="text-[14px] sm:text-[15px] font-semibold text-slate-900">
-                      {journal.editorial
-                        ? formatItemName(journal.editorial, catalogs.editorials)
-                        : "Sin editorial"}
+                      {!journal.editorial
+                        ? "Sin editorial"
+                        : editorialError
+                        ? editorialError
+                        : editorialName
+                        ? capitalizeWords(editorialName)
+                        : "No se pudo cargar el nombre de la editorial."}
                     </span>
                   </div>
                 </div>

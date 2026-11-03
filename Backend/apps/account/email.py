@@ -14,17 +14,20 @@ def login_link_html():
     return f'<p><a href="{login_url}">Iniciar sesión</a></p><p>{login_url}</p>'
 
 
-def send_email(to_email, subject, html_content):
+def send_email(to_email, subject, html_content, *, bcc=None):
     if not settings.RESEND_API_KEY:
         raise EmailDeliveryError("El envío de correo no está configurado.")
 
     resend.api_key = settings.RESEND_API_KEY
     try:
-        return resend.Emails.send({
+        message = {
             "from": settings.DEFAULT_FROM_EMAIL,
             "to": [to_email],
             "subject": subject,
             "html": html_content,
-        })
+        }
+        if bcc:
+            message["bcc"] = list(bcc)
+        return resend.Emails.send(message)
     except (resend.exceptions.ResendError, RequestException) as error:
         raise EmailDeliveryError(f"No se pudo entregar el correo: {error}") from error

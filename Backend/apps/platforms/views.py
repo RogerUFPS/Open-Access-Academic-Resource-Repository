@@ -1,4 +1,7 @@
+import logging
+
 from django.db.models import F, Prefetch
+from kombu.exceptions import OperationalError
 from django.utils import timezone
 
 from drf_spectacular.utils import (
@@ -21,6 +24,10 @@ from apps.core.viewsets import (
 from apps.core.pagination import CustomPageNumberPagination
 
 from . import classification, filters, models, serializers, services
+from .tasks import dispatch_link_checks
+from .permissions import LinkVerificationPermission
+
+logger = logging.getLogger(__name__)
 
 
 def _with_public_link_logs(queryset):
@@ -185,7 +192,11 @@ class ValidSintaxisViewSet(AuditableViewSet):
             "todavía no verificados. Use journal_platform__isnull=true para "
             "consultar únicamente URLs públicas generales y "
             "verification_status=unverified|available|unavailable para "
-            "distinguir su estado semántico."
+            "distinguir su estado semántico. current=true limita a URLs vigentes. "
+            "failure_confirmed=true devuelve solo URLs vigentes comprobadas, "
+            "no disponibles y con al menos cinco fallos consecutivos. "
+            "failure_confirmed=false devuelve su complemento dentro de URLs vigentes. "
+            "Requiere platforms.link-check-logs.view."
         ),
         parameters=[
             OpenApiParameter(
@@ -510,7 +521,10 @@ class PlatformViewSet(AuditableViewSet):
         responses={200: serializers.PlatformLinksCheckResponseSerializer},
         tags=["Plataformas - Verificación de enlaces"],
     )
-    @action(detail=True, methods=["post"], url_path="check-links")
+    @action(
+        detail=True, methods=["post"], url_path="check-links",
+        permission_classes=[LinkVerificationPermission],
+    )
     def check_links(self, request, pk=None):
         result = services.check_platform_links(
             platform=self.get_object(),
@@ -526,10 +540,66 @@ class PlatformViewSet(AuditableViewSet):
         responses={204: None},
         tags=["Plataformas - Verificación de enlaces"],
     )
-    @action(detail=False, methods=["post"], url_path="check-links")
+    @action(
+        detail=False, methods=["post"], url_path="check-links",
+        permission_classes=[LinkVerificationPermission],
+    )
     def check_all_links(self, request):
         services.check_all_current_links(user=get_acting_user(request))
         return Response(status=status.HTTP_204_NO_CONTENT)
+
+    def _enqueue_link_run(self, request, mode):
+        run = models.LinkCheckRun.objects.create(
+            mode=mode, requested_by=get_acting_user(request),
+        )
+        try:
+            task = dispatch_link_checks.delay(run.pk)
+        except OperationalError:
+            logger.exception("No se pudo encolar ronda de enlaces: run=%s", run.pk)
+            return Response(
+                {"detail": "No se pudo confirmar el envío al broker.", "run_id": run.pk},
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
+        return Response(
+            {"run_id": run.pk, "task_id": task.id, "mode": mode},
+            status=status.HTTP_202_ACCEPTED,
+        )
+
+    @extend_schema(
+        summary="Encolar verificación total de enlaces vigentes",
+        description=(
+            "Asíncrono: cron cada 4 horas. Requiere sesión autenticada, CSRF y "
+            "permiso platforms.platforms.check_link. No espera las comprobaciones HTTP. "
+            "Usa Celery/RabbitMQ existentes y notifica nuevas caídas tras completar los lotes."
+        ),
+        request=None,
+        responses={202: serializers.LinkCheckTriggerResponseSerializer, 401: None, 403: None, 503: None},
+        tags=["Plataformas - Verificación de enlaces"],
+    )
+    @action(
+        detail=False, methods=["post"], url_path="check-links-async",
+        permission_classes=[LinkVerificationPermission],
+    )
+    def check_all_links_async(self, request):
+        return self._enqueue_link_run(request, "all")
+
+    @extend_schema(
+        summary="Encolar reintentos de enlaces con 1–4 fallos consecutivos",
+        description=(
+            "Asíncrono: cron cada 15 minutos. Misma sesión, CSRF y permiso "
+            "platforms.platforms.check_link. Solo URLs vigentes comprobadas y no disponibles. "
+            "Cinco fallos confirman una caída; desde entonces solo participa en la ronda total."
+        ),
+        request=None,
+        responses={202: serializers.LinkCheckTriggerResponseSerializer, 401: None, 403: None, 503: None},
+        tags=["Plataformas - Verificación de enlaces"],
+    )
+    @action(
+        detail=False, methods=["post"], url_path="check-failed-links",
+        permission_classes=[LinkVerificationPermission],
+    )
+    def check_failed_links(self, request):
+        return self._enqueue_link_run(request, "failed")
 
     @extend_schema(
         summary="Restaurar plataforma eliminada",

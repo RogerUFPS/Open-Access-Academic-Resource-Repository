@@ -20,11 +20,15 @@ import {
   X 
 } from "lucide-react";
 
-export default function AdminLayout({ children }) {
-  return <Suspense fallback={<div role="status" className="p-8">Cargando administración…</div>}><AdminLayoutContent>{children}</AdminLayoutContent></Suspense>;
+export default function AdminLayout({ children, userName = "Usuario" }) {
+  return (
+    <Suspense fallback={<div role="status" className="p-8">Cargando administración…</div>}>
+      <AdminLayoutContent userName={userName}>{children}</AdminLayoutContent>
+    </Suspense>
+  );
 }
 
-function AdminLayoutContent({ children }) {
+function AdminLayoutContent({ children, userName }) {
   const accountsApi = useAccountsApi();
   const pathname = usePathname();
   const searchParams = useSearchParams();
@@ -33,6 +37,9 @@ function AdminLayoutContent({ children }) {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [signingOut, setSigningOut] = useState(false);
   const [sessionError, setSessionError] = useState("");
+  
+  // Cálculo dinámico de iniciales (De tu versión)
+  const userInitials = userName.split(/\s+/).filter(Boolean).slice(0, 2).map((part) => part.charAt(0)).join("").toLocaleUpperCase("es");
 
   async function signOut() {
     if (signingOut) return;
@@ -49,18 +56,16 @@ function AdminLayoutContent({ children }) {
     }
   }
 
-  // Mapeo de rutas basado en tu estructura y el diseño
+  // Mapeo de rutas fusionado (Tus rutas + Sintaxis válidas y Papelera)
   const menuGroups = [
     {
       title: "DIRECTORIO",
       items: [
         { name: "Indicadores", href: "/admin/indicadores", icon: LayoutGrid },
-        // Nota: Agrupamos Recursos hacia bases-de-datos por defecto. 
-        // Podrías necesitar un menú desplegable aquí si quieres incluir /revistas en el mismo botón.
         { name: "Recursos", href: "/admin/bases-de-datos", icon: Book },
         { name: "Sintaxis válidas", href: "/admin/sintaxis-validas", icon: Book },
         { name: "Cosecha", href: "/admin/cosecha", icon: RefreshCw },
-        { name: "Alertas", href: "/admin/alertas", icon: Bell }, // Ruta asume /admin/alertas (no estaba en tu árbol)
+        { name: "Alertas", href: "/admin/alertas", icon: Bell },
       ]
     },
     {
@@ -76,7 +81,6 @@ function AdminLayoutContent({ children }) {
       title: "INTELIGENCIA",
       items: [
         { name: "Módulo de IA", href: "/admin/modulo-ia", icon: Cpu },
-        // Nota: Clasificación apunta a áreas de conocimiento. Podrías añadir programas-academicos.
         { name: "Clasificación", href: "/admin/areas-conocimiento", icon: Tag }, 
         { name: "Chats", href: "/admin/chats", icon: MessageSquare },
       ]
@@ -85,7 +89,8 @@ function AdminLayoutContent({ children }) {
 
   return (
     <div className="min-h-screen bg-[#F4F5F8] text-gray-900 flex flex-col md:flex-row antialiased font-sans">
-      {/* Mobile Top Navbar */}
+      
+      {/* Mobile Top Navbar - Color actualizado a oscuro */}
       <div className="md:hidden bg-[#7f1218] px-4 py-3 flex items-center justify-between sticky top-0 z-40 text-white shadow-md">
         <div className="flex items-center gap-3">
           <div className="w-8 h-8 rounded-lg bg-white/10 border border-white/20 flex items-center justify-center font-bold text-sm">
@@ -103,13 +108,13 @@ function AdminLayoutContent({ children }) {
         </button>
       </div>
 
-      {/* Sidebar - Con fondo oscuro principal */}
+      {/* Sidebar - Color oscuro de producción pero conservando tus clases responsive (h-dvh, md:sticky) */}
       <aside
-        className={`fixed inset-y-0 left-0 z-50 w-64 bg-[#7f1218] flex flex-col justify-between transform transition-transform duration-200 ease-in-out md:translate-x-0 ${
+        className={`fixed inset-y-0 left-0 z-50 h-dvh w-64 shrink-0 bg-[#7f1218] flex flex-col justify-between transform transition-transform duration-200 ease-in-out md:translate-x-0 ${
           sidebarOpen ? "translate-x-0" : "-translate-x-full"
-        } md:static md:z-auto`}
+        } md:sticky md:top-0 md:self-start md:z-auto`}
       >
-        <div className="overflow-y-auto no-scrollbar pb-6">
+        <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain no-scrollbar pb-6">
           {/* Logo & Header */}
           <div className="p-6 flex items-center gap-3">
             <div className="w-10 h-10 rounded-xl bg-white/10 border border-white/10 flex items-center justify-center text-white font-medium text-lg shrink-0">
@@ -130,7 +135,7 @@ function AdminLayoutContent({ children }) {
                 </p>
                 {group.items.map((item) => {
                   const Icon = item.icon;
-                  // Manejo de estado activo: verifica si la ruta actual empieza con el href del item
+                  // Manejo de estado activo
                   const isActive = item.name === "Presets" ? pathname === "/admin/usuarios" && presetsView
                     : item.name === "Administrativos" ? pathname.startsWith(item.href) && !presetsView
                     : pathname.startsWith(item.href);
@@ -160,22 +165,22 @@ function AdminLayoutContent({ children }) {
           </div>
         </div>
 
-        {/* User Footer - Tarjeta de usuario al estilo del diseño */}
-        <div className="p-4 mt-auto">
-          <button type="button" onClick={signOut} disabled={signingOut} className="w-full text-left disabled:opacity-60">
+        {/* User Footer - Conservando tu lógica dinámica y accesibilidad pero con el color de texto oscuro */}
+        <div className="shrink-0 p-4 mt-auto">
+          <button type="button" onClick={signOut} disabled={signingOut} aria-label={`Cerrar sesión de ${userName}`} className="w-full text-left disabled:opacity-60">
             <div className="flex items-center justify-between p-3 rounded-xl bg-white/10 hover:bg-white/15 transition-colors cursor-pointer group">
-              <div className="flex items-center gap-3 overflow-hidden">
-                <div className="w-9 h-9 rounded-full bg-[#EADDD7] text-[#7f1218] font-medium text-sm flex items-center justify-center shrink-0">
-                  AD
+              <div className="min-w-0 flex items-center gap-3">
+                <div aria-hidden="true" className="w-9 h-9 rounded-full bg-[#EADDD7] text-[#7f1218] font-medium text-sm flex items-center justify-center shrink-0">
+                  {userInitials}
                 </div>
-                <div className="truncate">
-                  <p className="text-sm font-medium text-white truncate">Administrador</p>
+                <div className="min-w-0">
+                  <p title={userName} className="text-sm font-medium text-white truncate">{userName}</p>
                   <p className="text-[11px] text-white/70 group-hover:text-white/90 transition-colors truncate">
                     {signingOut ? "Cerrando sesión…" : "Cerrar sesión"}
                   </p>
                 </div>
               </div>
-              <LogOut className="w-4 h-4 text-white/70 group-hover:text-white transition-colors" />
+              <LogOut className="ml-2 w-4 h-4 shrink-0 text-white/70 group-hover:text-white transition-colors" />
             </div>
           </button>
           {sessionError && <p role="alert" className="mt-2 text-xs text-white">{sessionError}</p>}

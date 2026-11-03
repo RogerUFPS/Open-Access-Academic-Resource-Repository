@@ -46,6 +46,13 @@ export const journalService = {
   },
 
   /**
+   * Get detail of a specific editorial (From production)
+   */
+  getEditorialById: async (id) => {
+    return apiClient.get(`/api/catalog/editorials/${id}/`);
+  },
+
+  /**
    * Create a new journal (POST /api/journals/)
    * Regla de negocio: La creación crea un registro en borrador.
    * Requiere mínimo issn (formato XXXX-XXXX) y title.

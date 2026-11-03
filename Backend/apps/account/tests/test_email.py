@@ -53,6 +53,15 @@ class ResendEmailTests(SimpleTestCase):
         with self.assertRaises(EmailDeliveryError):
             send_email("reader@example.org", "Asunto", "<p>Contenido</p>")
 
+    @override_settings(RESEND_API_KEY="test", DEFAULT_FROM_EMAIL="noreply@example.org")
+    @patch("apps.account.email.resend.Emails.send")
+    def test_broadcast_recipients_are_only_in_bcc(self, send):
+        recipients = ["first@example.org", "second@example.org"]
+        send_email("noreply@example.org", "Alerta", "<p>Resumen</p>", bcc=recipients)
+        message = send.call_args.args[0]
+        self.assertEqual(message["to"], ["noreply@example.org"])
+        self.assertEqual(message["bcc"], recipients)
+
     @override_settings(RESEND_API_KEY="re_test_key")
     @patch(
         "apps.account.email.resend.Emails.send",

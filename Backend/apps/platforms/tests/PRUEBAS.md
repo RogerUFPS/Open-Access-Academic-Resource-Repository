@@ -379,3 +379,21 @@ publicación con secciones efectivas, procedencia manual/derivada, recálculo
 desde Journals elegibles, sintaxis similares y verificación global de enlaces.
 También deben comprobarse los filtros contextuales de catálogos y los bloqueos
 de eliminación de Platform y ValidSintaxis en uso.
+# Monitoreo automático — 2 de noviembre de 2026
+
+Se añadió `test_monitoring.py`: URLs vigentes generales y de Journal–Platform,
+Soft Delete, umbrales de reintento, URLs nuevas sin verificar, contador,
+recuperación y nuevo incidente, contratos asíncronos/legado, permisos/CSRF,
+broker no disponible, lotes/redelivery y finalización, destinatarios efectivos,
+resumen de máximo diez, total exacto, marcas, errores y ausencia de correo.
+`account.tests.test_email` incluye difusión BCC sin exposición de destinatarios.
+
+Las dos pruebas con `TransactionTestCase` usan conexiones e hilos separados:
+contador sin incrementos perdidos y dos notificadores con un único envío.
+Requieren PostgreSQL y se omiten en SQLite. Verifican también que el request HTTP
+del checker no se ejecute dentro de una transacción. Se mockean HTTP y Resend.
+
+No se ejecutó esta cobertura. Generar/aplicar la migración antes de probar;
+comandos actuales desde la raíz general y pendientes externos en
+`Backend/docs/ENDPOINTS_PLATFORMS.md`, sección «Monitoreo automático de enlaces».
+
