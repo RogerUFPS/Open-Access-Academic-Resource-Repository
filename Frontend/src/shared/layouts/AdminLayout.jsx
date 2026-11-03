@@ -1,6 +1,6 @@
 "use client";
 
-import React, { Suspense, useState } from "react";
+import React, { Suspense, useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useAccountsApi } from "@/shared/components/AccountsProvider";
@@ -19,6 +19,7 @@ import {
   Menu, 
   X 
 } from "lucide-react";
+import { getLinkAlerts } from "@/features/admin/harvesting/harvesting";
 
 export default function AdminLayout({ children, userName = "Usuario" }) {
   return (
@@ -37,6 +38,26 @@ function AdminLayoutContent({ children, userName }) {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [signingOut, setSigningOut] = useState(false);
   const [sessionError, setSessionError] = useState("");
+  const [alertCount, setAlertCount] = useState(0);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    let timer;
+    const loadAlerts = async () => {
+      try {
+        const alerts = await getLinkAlerts({ current: "true", failure_confirmed: "true" }, controller.signal);
+        if (!controller.signal.aborted) setAlertCount(alerts.length);
+      } catch {
+        // The notification bell is passive; a temporary API failure should not interrupt navigation.
+      } finally {
+        if (!controller.signal.aborted) timer = setTimeout(loadAlerts, 60000);
+      }
+    };
+    loadAlerts();
+    return () => { controller.abort(); clearTimeout(timer); };
+  }, []);
+
+  const alertsHref = "/admin/alertas?current=true&failure_confirmed=true";
   
   // Cálculo dinámico de iniciales (De tu versión)
   const userInitials = userName.split(/\s+/).filter(Boolean).slice(0, 2).map((part) => part.charAt(0)).join("").toLocaleUpperCase("es");
@@ -65,7 +86,6 @@ function AdminLayoutContent({ children, userName }) {
         { name: "Recursos", href: "/admin/bases-de-datos", icon: Book },
         { name: "Sintaxis válidas", href: "/admin/sintaxis-validas", icon: Book },
         { name: "Cosecha", href: "/admin/cosecha", icon: RefreshCw },
-        { name: "Alertas", href: "/admin/alertas", icon: Bell },
       ]
     },
     {
@@ -100,12 +120,19 @@ function AdminLayoutContent({ children, userName }) {
             <span className="font-semibold text-sm tracking-tight block">Biblioteca UFPS</span>
           </div>
         </div>
-        <button
-          onClick={() => setSidebarOpen(!sidebarOpen)}
-          className="p-2 rounded-lg text-white hover:bg-white/10 focus:outline-none transition-colors"
-        >
-          {sidebarOpen ? <X className="w-6 h-6" /> : <Menu className="w-6 h-6" />}
-        </button>
+        <div className="flex items-center gap-1">
+          <Link href={alertsHref} aria-label={`Alertas de enlaces${alertCount ? `: ${alertCount} confirmadas` : ""}`} className="relative rounded-lg p-2 text-white hover:bg-white/10">
+            <Bell className="h-5 w-5" />
+            {alertCount > 0 && <span className="absolute -right-0.5 -top-0.5 min-w-4 rounded-full bg-[#F59E0B] px-1 text-center text-[10px] leading-4 font-bold text-[#321B00]">{alertCount > 99 ? "99+" : alertCount}</span>}
+          </Link>
+          <button
+            onClick={() => setSidebarOpen(!sidebarOpen)}
+            className="p-2 rounded-lg text-white hover:bg-white/10 focus:outline-none transition-colors"
+            aria-label={sidebarOpen ? "Cerrar menú" : "Abrir menú"}
+          >
+            {sidebarOpen ? <X className="w-6 h-6" /> : <Menu className="w-6 h-6" />}
+          </button>
+        </div>
       </div>
 
       {/* Sidebar - Color oscuro de producción pero conservando tus clases responsive (h-dvh, md:sticky) */}
@@ -167,6 +194,11 @@ function AdminLayoutContent({ children, userName }) {
 
         {/* User Footer - Conservando tu lógica dinámica y accesibilidad pero con el color de texto oscuro */}
         <div className="shrink-0 p-4 mt-auto">
+          <Link href={alertsHref} onClick={() => setSidebarOpen(false)} className="mb-3 flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium text-white/85 transition-colors hover:bg-white/10 hover:text-white">
+            <span className="relative inline-flex"><Bell className="h-4 w-4" />{alertCount > 0 && <span className="absolute -right-2 -top-2 h-2.5 w-2.5 rounded-full border border-[#7f1218] bg-[#F59E0B]" />}</span>
+            <span>Alertas de enlaces</span>
+            {alertCount > 0 && <span className="ml-auto rounded-full bg-[#F59E0B] px-2 py-0.5 text-xs font-bold text-[#321B00]">{alertCount > 99 ? "99+" : alertCount}</span>}
+          </Link>
           <button type="button" onClick={signOut} disabled={signingOut} aria-label={`Cerrar sesión de ${userName}`} className="w-full text-left disabled:opacity-60">
             <div className="flex items-center justify-between p-3 rounded-xl bg-white/10 hover:bg-white/15 transition-colors cursor-pointer group">
               <div className="min-w-0 flex items-center gap-3">
