@@ -212,6 +212,11 @@ class LinkCheckLog(AuditableModel):
         )
     )
     last_check = models.DateTimeField(null=True, blank=True)
+    failure_notified_at = models.DateTimeField(null=True, blank=True)
+    check_batch = models.ForeignKey(
+        "LinkCheckBatch", on_delete=models.SET_NULL, null=True, blank=True,
+        related_name="results",
+    )
 
     class Meta:
         ordering = ["-created_at", "-pk"]
@@ -255,8 +260,30 @@ class LinkCheckLog(AuditableModel):
 
 
 # ==============================================================================
+# COORDINACIÓN INTERNA DE COMPROBACIONES ASÍNCRONAS
+# ==============================================================================
+
+class LinkCheckRun(models.Model):
+    """Coordinación persistente sin depender de un result backend de Celery."""
+
+    mode = models.CharField(max_length=10, choices=[("all", "Total"), ("failed", "Reintentos")])
+    requested_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT)
+    created_at = models.DateTimeField(auto_now_add=True)
+    planned = models.BooleanField(default=False)
+    finished_at = models.DateTimeField(null=True, blank=True)
+
+
+class LinkCheckBatch(models.Model):
+    run = models.ForeignKey(LinkCheckRun, on_delete=models.CASCADE, related_name="batches")
+    # IDs de eventos vigentes al planificar. Si cambian, el worker los omite.
+    link_ids = models.JSONField(default=list)
+    completed_at = models.DateTimeField(null=True, blank=True)
+
+
+# ==============================================================================
 # TABLAS INTERMEDIAS DE CLASIFICACIÓN (SharedPlatform*)
 # ==============================================================================
+
 
 class PlatformSectionOriginModel(AuditableModel):
     """Procedencia de un valor de sección dentro de una Platform."""

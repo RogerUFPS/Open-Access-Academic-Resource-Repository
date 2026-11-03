@@ -1,7 +1,7 @@
 import django_filters  # type: ignore[import-untyped]
 from django.db.models import Q
 
-from . import models
+from . import models, services
 
 
 class PlatformBaseFilter(django_filters.FilterSet):
@@ -107,6 +107,11 @@ class LinkCheckLogFilter(django_filters.FilterSet):
         field_name="journal_platform",
         lookup_expr="isnull",
     )
+    current = django_filters.BooleanFilter(method="filter_current")
+    failure_confirmed = django_filters.BooleanFilter(
+        method="filter_failure_confirmed",
+        help_text="URL vigente comprobada, no disponible y con al menos 5 fallos consecutivos.",
+    )
     verification_status = django_filters.ChoiceFilter(
         choices=(
             ("unverified", "Sin verificar"),
@@ -128,3 +133,12 @@ class LinkCheckLogFilter(django_filters.FilterSet):
         if value == "unavailable":
             return queryset.filter(last_check__isnull=False, is_active=False)
         return queryset
+
+    def filter_current(self, queryset, name, value):
+        ids = services.current_link_logs().values("pk")
+        return queryset.filter(pk__in=ids) if value else queryset.exclude(pk__in=ids)
+
+    def filter_failure_confirmed(self, queryset, name, value):
+        current = queryset.filter(pk__in=services.current_link_logs().values("pk"))
+        ids = services.confirmed_link_failures().values("pk")
+        return current.filter(pk__in=ids) if value else current.exclude(pk__in=ids)
