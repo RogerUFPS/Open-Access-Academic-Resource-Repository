@@ -3,6 +3,7 @@
 import React, { useState, useEffect, useCallback } from "react";
 import { journalService } from "../services/journalService";
 import { Button } from "@/components/ui/button";
+import { useToast } from "@/components/ui/use-toast";
 import LicenseManagerModal from "./LicenseManagerModal";
 import {
   X,
@@ -21,6 +22,7 @@ export default function PublishJournalModal({ journal, isOpen, onClose, onSucces
   const [publishing, setPublishing] = useState(false);
   const [error, setError] = useState(null);
   const [managerOpen, setManagerOpen] = useState(false);
+  const { toast } = useToast();
 
   const fetchLicenses = useCallback(async () => {
     setLoadingLicenses(true);
@@ -79,7 +81,16 @@ export default function PublishJournalModal({ journal, isOpen, onClose, onSucces
       onClose();
     } catch (err) {
       console.error("Error publishing journal:", err);
-      setError(err.message || "Error al procesar las licencias de la revista.");
+      const data = err.data && typeof err.data === "object" ? err.data : {};
+      const fieldErrors = Object.entries(data)
+        .filter(([key]) => !["detail", "message", "error"].includes(key))
+        .map(([key, value]) => `${key}: ${Array.isArray(value) ? value.join(", ") : String(value)}`);
+      toast({
+        title: "No se pudo publicar la revista",
+        description: fieldErrors.length ? fieldErrors.join("\n") : data.detail || data.message || data.error || err.message || "Error al procesar las licencias de la revista.",
+        variant: "destructive",
+        duration: 9000,
+      });
     } finally {
       setPublishing(false);
     }
@@ -153,7 +164,7 @@ export default function PublishJournalModal({ journal, isOpen, onClose, onSucces
             <button
               type="button"
               onClick={() => setManagerOpen(true)}
-              className="text-[11px] text-[#C8102E] hover:underline font-semibold flex items-center gap-1 cursor-pointer"
+              className="text-[11px] text-[#7f1218] hover:underline font-semibold flex items-center gap-1 cursor-pointer"
             >
               <Settings className="w-3 h-3" />
               <span>Gestionar licencias</span>
@@ -185,7 +196,7 @@ export default function PublishJournalModal({ journal, isOpen, onClose, onSucces
           <div className="mt-3 flex-1 overflow-y-auto pr-1 space-y-2 min-h-40 border border-gray-100 rounded-xl p-2 bg-gray-50/40">
             {loadingLicenses ? (
               <div className="py-10 text-center text-gray-400 text-xs flex flex-col items-center justify-center gap-2">
-                <Loader2 className="w-5 h-5 animate-spin text-[#C8102E]" />
+                <Loader2 className="w-5 h-5 animate-spin text-[#7f1218]" />
                 <span>Cargando licencias...</span>
               </div>
             ) : licenses.length === 0 ? (
@@ -194,7 +205,7 @@ export default function PublishJournalModal({ journal, isOpen, onClose, onSucces
                 <button
                   type="button"
                   onClick={() => setManagerOpen(true)}
-                  className="text-xs font-semibold text-[#C8102E] underline cursor-pointer"
+                  className="text-xs font-semibold text-[#7f1218] underline cursor-pointer"
                 >
                   Crear una nueva licencia ahora
                 </button>

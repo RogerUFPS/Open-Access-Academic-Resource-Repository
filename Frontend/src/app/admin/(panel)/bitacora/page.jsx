@@ -97,9 +97,9 @@ const FALLBACK_ACTIONS = [
 ];
 
 const focus =
-  "focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#c8102e]";
+  "focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#7f1218]";
 const control = `w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm ${focus}`;
-const primary = `rounded-md bg-[#c8102e] px-4 py-2 text-sm font-semibold text-white hover:bg-[#a50d26] disabled:opacity-50 ${focus}`;
+const primary = `rounded-md bg-[#7f1218] px-4 py-2 text-sm font-semibold text-white hover:bg-[#6a0f14] disabled:opacity-50 ${focus}`;
 const secondary = `rounded-md border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50 ${focus}`;
 
 const EMPTY_FILTERS = { search: "", action: "", resource: "", actor: "", objectId: "", range: "30d", from: "", to: "" };
@@ -578,7 +578,7 @@ export default function Page() {
                       submitPageNumber();
                     }
                   }}
-                  className="w-14 rounded-md border border-slate-300 bg-white px-2 py-1 text-center text-sm font-medium text-slate-900 outline-none focus:border-[#c8102e]"
+                  className="w-14 rounded-md border border-slate-300 bg-white px-2 py-1 text-center text-sm font-medium text-slate-900 outline-none focus:border-[#7f1218]"
                 />
                 <span>de {totalPages}</span>
               </label>

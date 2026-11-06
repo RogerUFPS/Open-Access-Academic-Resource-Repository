@@ -1,7 +1,7 @@
 export default function AdminAuthLayout({ children }) {
   return <div className="min-h-screen w-full flex bg-[#F8F9FA]">
     {/* Panel Izquierdo - Informativo */}
-    <div className="hidden lg:flex flex-col justify-between w-1/2 bg-[#C8102E] p-12 text-white">
+    <div className="hidden lg:flex flex-col justify-between w-1/2 bg-[#7f1218] p-12 text-white">
       <div>
         <h2 className="font-semibold text-lg tracking-wide">UFPS · BIBLIOTECA</h2>
         <p className="text-sm text-white/80 mt-1">Directorio de acceso abierto</p>

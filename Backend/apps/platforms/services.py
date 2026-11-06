@@ -5,6 +5,7 @@ from urllib.parse import urlsplit
 
 import httpx
 from django.db import transaction
+from django.db.models import F, OuterRef, Q, Subquery
 from django.utils import timezone
 from rest_framework.exceptions import ValidationError
 
@@ -12,6 +13,7 @@ from . import models
 
 
 LINK_CHECK_TIMEOUT_SECONDS = 10.0
+LINK_FAILURE_THRESHOLD = 5
 SYNTAX_SIMILARITY_LIMIT = 5
 SYNTAX_SIMILARITY_THRESHOLD = 70
 
@@ -136,6 +138,7 @@ def link_verification_status(link_log) -> str:
     return "available" if link_log.is_active else "unavailable"
 
 
+@transaction.atomic
 def register_link_url(
     *,
     platform: models.Platform,
@@ -150,6 +153,8 @@ def register_link_url(
     el log actual y evita crear un registro redundante.
     """
     validate_safe_http_url(url)
+    # El contexto estable es Platform: también se bloquea al persistir checks.
+    models.Platform.objects.select_for_update().get(pk=platform.pk)
 
     if journal_platform is None:
         latest_log = (
@@ -567,44 +572,6 @@ def validate_safe_http_url(
 _validate_safe_http_url = validate_safe_http_url
 
 
-def _get_next_fail_count(
-    platform: models.Platform,
-    *,
-    url: str,
-    is_active: bool,
-    journal_platform=None,
-) -> int:
-    """
-    Calcula la cantidad de fallos consecutivos para una URL específica.
-
-    Una verificación exitosa reinicia el contador a cero.
-    Si cambia la URL pública, la nueva URL inicia una secuencia independiente.
-    """
-
-    if is_active:
-        return 0
-
-    latest_log = (
-        models.LinkCheckLog.objects
-        .filter(
-            platform=platform,
-            journal_platform=journal_platform,
-            url=url,
-        )
-        .order_by(*LINK_LOG_ORDERING)
-        .first()
-    )
-
-    if (
-        latest_log
-        and latest_log.last_check is not None
-        and not latest_log.is_active
-    ):
-        return latest_log.fail_count + 1
-
-    return 1
-
-
 def _perform_link_check(
     url: str,
 ) -> tuple[int | None, bool]:
@@ -804,6 +771,8 @@ def check_link_context(
     platform: models.Platform,
     user,
     journal_platform=None,
+    expected_log_id=None,
+    check_batch_id=None,
 ) -> models.LinkCheckLog:
     """Verifica la URL vigente de un contexto Platform o Journal-Platform."""
     if platform.is_deleted:
@@ -811,21 +780,58 @@ def check_link_context(
     if journal_platform is None:
         latest_log = latest_platform_link_log(platform)
     else:
-        if journal_platform.is_deleted or journal_platform.platform_id != platform.pk:
+        if (
+            journal_platform.is_deleted
+            or journal_platform.journal.is_deleted
+            or journal_platform.platform_id != platform.pk
+        ):
             raise ValidationError({"journal_platform": "La relación no está vigente."})
         latest_log = latest_journal_link_log(journal_platform)
     if latest_log is None:
         raise ValidationError({"url": "No existe una URL vigente para este contexto."})
+    if expected_log_id is not None and latest_log.pk != expected_log_id:
+        return latest_log
 
     resolved_url = latest_log.url.strip()
-    _validate_safe_http_url(resolved_url)
-    status_code, is_active = _perform_link_check(resolved_url)
+    try:
+        _validate_safe_http_url(resolved_url)
+    except ValidationError:
+        # Bloquear un destino inseguro también registra una comprobación fallida.
+        status_code, is_active = None, False
+    else:
+        status_code, is_active = _perform_link_check(resolved_url)
+    checked_at = timezone.now()
     with transaction.atomic():
-        fail_count = _get_next_fail_count(
-            platform,
-            url=resolved_url,
-            is_active=is_active,
-            journal_platform=journal_platform,
+        # HTTP ya terminó. Serializar sobre el recurso estable evita incrementos
+        # perdidos aunque cada comprobación produzca un evento nuevo.
+        platform = models.Platform.objects.select_for_update().get(pk=platform.pk)
+        if journal_platform is not None:
+            from apps.journal.models import SharedJournalPlatform
+
+            journal_platform = SharedJournalPlatform.objects.select_related("journal").filter(
+                pk=journal_platform.pk, journal__deleted_at__isnull=True,
+            ).first()
+            if journal_platform is None:
+                raise ValidationError({"journal_platform": "La relación ya no está vigente."})
+        current = (
+            latest_platform_link_log(platform) if journal_platform is None
+            else latest_journal_link_log(journal_platform)
+        )
+        if current is None:
+            raise ValidationError({"url": "El contexto ya no tiene URL vigente."})
+        if current.url.strip() != resolved_url or (
+            expected_log_id is not None and current.pk != expected_log_id
+        ):
+            return current
+        if current.pk != latest_log.pk and models.LinkCheckLog.objects.filter(
+            platform=platform, journal_platform=journal_platform,
+            pk__gt=latest_log.pk, last_check__isnull=True,
+        ).exists():
+            # También descarta una respuesta anterior a un cambio A → B → A.
+            return current
+        fail_count = 0 if is_active else (
+            current.fail_count + 1
+            if current.last_check is not None and not current.is_active else 1
         )
         return models.LinkCheckLog.objects.create(
             platform=platform,
@@ -834,9 +840,50 @@ def check_link_context(
             fail_count=fail_count,
             http_status_code=status_code,
             is_active=is_active,
-            last_check=timezone.now(),
+            last_check=checked_at,
+            failure_notified_at=None if is_active else current.failure_notified_at,
+            check_batch_id=check_batch_id or current.check_batch_id,
             created_by=user,
         )
+
+
+def current_link_logs():
+    """Una URL por contexto, ordenada con la misma regla que los helpers manuales.
+
+    La subconsulta se aplica ANTES de filtrar por disponibilidad o fallos.
+    Una URL nueva sin verificar sustituye cualquier resultado histórico.
+    """
+    public = models.LinkCheckLog.objects.filter(
+        platform_id=OuterRef("platform_id"), journal_platform__isnull=True,
+    ).order_by(*LINK_LOG_ORDERING).values("pk")[:1]
+    journal = models.LinkCheckLog.objects.filter(
+        journal_platform_id=OuterRef("journal_platform_id"),
+    ).order_by(*LINK_LOG_ORDERING).values("pk")[:1]
+    return models.LinkCheckLog.objects.filter(
+        platform__deleted_at__isnull=True,
+    ).filter(
+        Q(journal_platform__isnull=True, pk=Subquery(public))
+        | Q(
+            journal_platform__deleted_at__isnull=True,
+            journal_platform__journal__deleted_at__isnull=True,
+            journal_platform__platform_id=F("platform_id"),
+            pk=Subquery(journal),
+        )
+    )
+
+
+def pending_link_retries():
+    return current_link_logs().filter(
+        last_check__isnull=False, is_active=False,
+        fail_count__gt=0, fail_count__lt=LINK_FAILURE_THRESHOLD,
+    )
+
+
+def confirmed_link_failures():
+    return current_link_logs().filter(
+        last_check__isnull=False, is_active=False,
+        fail_count__gte=LINK_FAILURE_THRESHOLD,
+    )
 
 
 def check_platform_links(*, platform: models.Platform, user) -> dict:

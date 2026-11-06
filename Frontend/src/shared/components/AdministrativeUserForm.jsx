@@ -7,8 +7,8 @@ import AccountFeedback from "@/shared/components/AccountFeedback";
 import { hasAccountPermission } from "@/shared/services/apiClient";
 import { useAccountsApi } from "@/shared/components/AccountsProvider";
 
-const outline = "!h-[42px] !border-[#C8102E] !text-[#C8102E]";
-const primary = "!h-[42px] !border-[#C8102E] !bg-[#C8102E] hover:!bg-[#A80D27]";
+const outline = "!h-[42px] !border-[#7f1218] !text-[#7f1218]";
+const primary = "!h-[42px] !border-[#7f1218] !bg-[#7f1218] hover:!bg-[#6a0f14]";
 
 export default function AdministrativeUserForm({ userId }) {
   const accountsApi = useAccountsApi();
