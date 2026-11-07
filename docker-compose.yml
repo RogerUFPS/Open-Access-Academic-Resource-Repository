@@ -65,9 +65,30 @@ services:
     ports:
       - "127.0.0.1:3000:3000"
 
+    rustfs:
+      image: rustfs/rustfs:latest
+      container_name: rustfs
+      restart: unless-stopped
+      ports:
+        - "9000:9000"
+        - "9001:9001"
+      volumes:
+        - rustfs-data:/data
+      env_file:
+        - ./RustFS/.env
+      environment:
+        RUSTFS_ADDRESS: ":9000"
+        RUSTFS_CONSOLE_ADDRESS: ":9001"
+        RUSTFS_CONSOLE_ENABLE: "true"
+        RUSTFS_OBS_LOGGER_LEVEL: "error"
+        RUSTFS_OBS_LOG_DIRECTORY: "/var/log/rustfs/"
+      command: /data
+
+
 networks:
   services:
     driver: bridge
 
 volumes:
   rabbitmq_data:
+  rustfs-data:
