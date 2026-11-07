@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback, useRef } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { platformService } from "../services/platformService";
@@ -49,6 +49,8 @@ export default function DatabaseTable() {
   const [registrationFilter, setRegistrationFilter] = useState("");
   const [accessTextFilter, setAccessTextFilter] = useState("");
   const [ordering, setOrdering] = useState("-updated_at");
+  const [showArchived, setShowArchived] = useState(false);
+  const fetchRequestId = useRef(0);
 
   // Modals state
   const [deleteModalOpen, setDeleteModalOpen] = useState(false);
@@ -67,11 +69,12 @@ export default function DatabaseTable() {
 
   // Fetch platforms from backend using debouncedSearch
   const fetchPlatforms = useCallback(async () => {
+    const requestId = ++fetchRequestId.current;
     setLoading(true);
     setError(null);
     try {
       let data;
-      if (statusFilter === "archived") {
+      if (showArchived) {
         data = await platformService.getArchivedPlatforms({
           search: debouncedSearch,
           page,
@@ -91,29 +94,39 @@ export default function DatabaseTable() {
       }
 
       if (Array.isArray(data)) {
-        setPlatforms(data);
-        setTotalItems(data.length);
+        const visiblePlatforms = showArchived
+          ? data.filter((platform) => platform.deleted_at)
+          : data.filter((platform) => !platform.deleted_at);
+        if (requestId !== fetchRequestId.current) return;
+        setPlatforms(visiblePlatforms);
+        setTotalItems(visiblePlatforms.length);
         setTotalPages(1);
         setPageInput(String(clampPage(page, 1)));
       } else if (data && Array.isArray(data.results)) {
-        setPlatforms(data.results);
-        setTotalItems(data.total_items || data.count || data.results.length);
+        const visiblePlatforms = showArchived
+          ? data.results.filter((platform) => platform.deleted_at)
+          : data.results.filter((platform) => !platform.deleted_at);
+        if (requestId !== fetchRequestId.current) return;
+        setPlatforms(visiblePlatforms);
+        setTotalItems(data.total_items || data.count || visiblePlatforms.length);
         const nextTotalPages = data.total_pages || Math.ceil((data.total_items || data.results.length) / (data.page_size || 10)) || 1;
         setTotalPages(nextTotalPages);
         setPageInput(String(clampPage(page, nextTotalPages)));
       } else {
+        if (requestId !== fetchRequestId.current) return;
         setPlatforms([]);
         setTotalItems(0);
         setTotalPages(1);
       }
     } catch (err) {
+      if (requestId !== fetchRequestId.current) return;
       console.error("Error fetching platforms:", err);
       setError(err.message || "Error al cargar las plataformas del servidor.");
       setPlatforms([]);
     } finally {
-      setLoading(false);
+      if (requestId === fetchRequestId.current) setLoading(false);
     }
-  }, [page, debouncedSearch, statusFilter, registrationFilter, accessTextFilter, ordering]);
+  }, [page, debouncedSearch, statusFilter, registrationFilter, accessTextFilter, ordering, showArchived]);
 
   useEffect(() => {
     fetchPlatforms();
@@ -185,6 +198,13 @@ export default function DatabaseTable() {
     }
   };
 
+  const toggleArchivedView = () => {
+    fetchRequestId.current += 1;
+    setShowArchived((current) => !current);
+    setPage(1);
+    setPageInput("1");
+  };
+
   const confirmDelete = async (explanation) => {
     if (!selectedPlatform) return;
     setIsDeleting(true);
@@ -233,7 +253,7 @@ export default function DatabaseTable() {
         </span>
       );
     }
-    if (s === "ARCHIVADO" || statusFilter === "archived") {
+    if (s === "ARCHIVADO" || showArchived) {
       return (
         <span className="bg-rose-50 text-rose-700 border border-rose-200 font-semibold text-xs rounded-full px-3 py-0.5 inline-flex items-center gap-1">
           Archivado
@@ -264,17 +284,40 @@ export default function DatabaseTable() {
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
-          <h1 className="text-3xl font-extrabold text-gray-900 tracking-tight">Bases de datos</h1>
+          <h1 className="text-3xl font-extrabold text-gray-900 tracking-tight">
+            {showArchived ? "Bases de datos eliminadas" : "Bases de datos"}
+          </h1>
         </div>
-        <Link href="/admin/bases-de-datos/nueva">
-          <button className="bg-[#7f1218] hover:bg-[#6a0f14] text-white font-medium text-sm rounded-lg px-4 py-2.5 flex items-center gap-2 shadow-xs transition-all cursor-pointer">
-            <Plus className="w-4 h-4" />
-            <span>Nuevo recurso</span>
+        {showArchived ? (
+          <button
+            onClick={toggleArchivedView}
+            className="bg-white border border-gray-200 text-gray-700 hover:bg-gray-50 font-medium text-sm rounded-lg px-3.5 py-2.5 flex items-center gap-2 shadow-2xs transition-all cursor-pointer"
+          >
+            <RotateCcw className="w-4 h-4" />
+            <span>Volver al listado activo</span>
           </button>
-        </Link>
+        ) : (
+          <div className="flex items-center gap-2 flex-wrap">
+            <button
+              onClick={toggleArchivedView}
+              className="bg-white border border-gray-200 text-gray-700 hover:bg-gray-50 font-medium text-sm rounded-lg px-3.5 py-2.5 flex items-center gap-2 shadow-2xs transition-all cursor-pointer"
+              title="Ver bases de datos eliminadas"
+            >
+              <Archive className="w-4 h-4 text-gray-600" />
+              <span>Ver eliminadas</span>
+            </button>
+            <Link href="/admin/bases-de-datos/nueva">
+              <button className="bg-[#7f1218] hover:bg-[#6a0f14] text-white font-medium text-sm rounded-lg px-4 py-2.5 flex items-center gap-2 shadow-xs transition-all cursor-pointer">
+                <Plus className="w-4 h-4" />
+                <span>Nuevo recurso</span>
+              </button>
+            </Link>
+          </div>
+        )}
       </div>
 
       {/* Navigation Tabs Bar */}
+      {!showArchived &&
       <div className="bg-[#EFEFEF]/60 p-1 rounded-xl inline-flex items-center gap-1 border border-gray-200/50">
         <button className="bg-white text-[#7f1218] font-semibold text-xs px-5 py-2 rounded-lg shadow-2xs transition-all border border-gray-200/60">
           Bases de datos
@@ -285,8 +328,10 @@ export default function DatabaseTable() {
           </button>
         </Link>
       </div>
+      }
 
       {/* Filters Bar with Debounced Search Input */}
+      {!showArchived &&
       <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
         {/* Buscar con Debounce 400ms */}
         <div className="bg-white border border-gray-200 rounded-xl p-2.5 shadow-2xs flex flex-col justify-center focus-within:border-gray-400">
@@ -352,10 +397,10 @@ export default function DatabaseTable() {
             <option value="borrador">Pendientes (Borrador)</option>
             <option value="publicado">Publicados</option>
             <option value="obsoleto">Obsoletos</option>
-            <option value="archived">Archivadas (Eliminadas)</option>
           </select>
         </div>
       </div>
+      }
 
       {/* Table Container */}
       <div className="bg-white rounded-2xl border border-gray-200/80 shadow-sm overflow-hidden">
@@ -399,7 +444,11 @@ export default function DatabaseTable() {
                   <td colSpan={5} className="py-12 px-6 text-center text-gray-500">
                     <Archive className="w-8 h-8 mx-auto mb-2 text-gray-300" />
                     <p className="font-medium text-sm text-gray-700">No se encontraron plataformas</p>
-                    <p className="text-xs text-gray-400 mt-1">Prueba a cambiar los filtros o agregar un nuevo recurso.</p>
+                    <p className="text-xs text-gray-400 mt-1">
+                      {showArchived
+                        ? "No hay bases de datos eliminadas para mostrar."
+                        : "Prueba a cambiar los filtros o agregar un nuevo recurso."}
+                    </p>
                   </td>
                 </tr>
               ) : (
@@ -435,27 +484,27 @@ export default function DatabaseTable() {
                       <td className="py-4 px-6">
                         <div className="flex items-center justify-center gap-1.5">
                           {/* Ver (Ojo) */}
-                          <Link href={`/admin/bases-de-datos/${platform.id}`}>
+                          {!showArchived && <Link href={`/admin/bases-de-datos/${platform.id}`}>
                             <button
                               title="Ver detalle de la plataforma"
                               className="p-1.5 rounded-lg border border-gray-200 text-gray-600 hover:bg-[#7f1218] hover:text-white hover:border-[#7f1218] transition-all cursor-pointer"
                             >
                               <Eye className="w-4 h-4" />
                             </button>
-                          </Link>
+                          </Link>}
 
                           {/* Editar (Lápiz) */}
-                          <Link href={`/admin/bases-de-datos/${platform.id}?edit=true`}>
+                          {!showArchived && <Link href={`/admin/bases-de-datos/${platform.id}?edit=true`}>
                             <button
                               title="Editar información de la plataforma"
                               className="p-1.5 rounded-lg border border-blue-200 text-blue-600 hover:bg-[#7f1218] hover:text-white hover:border-[#7f1218] transition-all cursor-pointer"
                             >
                               <Edit3 className="w-4 h-4" />
                             </button>
-                          </Link>
+                          </Link>}
 
                           {/* Acciones según Estado */}
-                          {statusFilter === "archived" ? (
+                          {showArchived ? (
                             <button
                               onClick={() => handleRestore(platform.id, platform.name)}
                               title="Restaurar plataforma"
