@@ -18,7 +18,14 @@ services:
   rabbitmq:
     <<: *service
     build: ./RabbitMQ
+    user: rabbitmq
     env_file: ./RabbitMQ/.env
+    healthcheck: 
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 30s
     cap_add:
       - SETGID
       - SETUID
@@ -33,6 +40,8 @@ services:
     depends_on:
       rustfs-init:
         condition: service_completed_successfully
+      rabbitmq:
+        condition: service_healthy
     env_file: ./Backend/.env
     environment:
       DJANGO_DEBUG: ${DJANGO_DEBUG:-0}
@@ -43,6 +52,9 @@ services:
     <<: *service
     build: ./Backend
     image: harvest-backend
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
     pull_policy: never
     env_file: ./Backend/.env
     command: ["celery", "-A", "project", "worker",
