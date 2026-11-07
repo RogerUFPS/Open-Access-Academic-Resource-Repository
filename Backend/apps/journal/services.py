@@ -1,7 +1,6 @@
 from datetime import date
 
 from django.db import IntegrityError, transaction
-from django.db.models import Q
 from django.utils import timezone
 from rest_framework.exceptions import ValidationError
 
@@ -71,10 +70,11 @@ def validate_journal_for_publication(journal: models.Journal) -> None:
     if not journal.publication_date:
         errors["publication_date"] = "La fecha de publicación es obligatoria."
 
+    # ``knowledge_areas`` no se exige por separado: es una consecuencia
+    # automática de los programas académicos seleccionados.
     relation_specs = (
         ("languages", models.SharedJournalLanguage, "language"),
         ("countries", models.SharedJournalCountry, "country"),
-        ("knowledge_areas", models.SharedJournalKnowledgeArea, "knowledge_area"),
         ("material_types", models.SharedJournalMaterialType, "material_type"),
         ("academic_programs", models.SharedJournalAcademicProgram, "academic_program"),
     )
@@ -83,10 +83,6 @@ def validate_journal_for_publication(journal: models.Journal) -> None:
             journal=journal,
             **{f"{relation_field}__deleted_at__isnull": True},
         )
-        if through_model is models.SharedJournalKnowledgeArea:
-            relation_query = relation_query.filter(
-                Q(is_manual=True) | Q(is_derived=True)
-            )
         if not relation_query.exists():
             errors[field] = "La revista debe tener al menos un valor vigente."
 

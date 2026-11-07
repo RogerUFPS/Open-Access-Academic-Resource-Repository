@@ -102,6 +102,7 @@ ACTION_NAMES = {
     "reactivate": "reactivate",
     "mark-obsolete": "mark_obsolete",
     "check-link": "check_link",
+    "image": "update",
     "run-due": "run_due",
     "pause": "pause",
     "resume": "resume",

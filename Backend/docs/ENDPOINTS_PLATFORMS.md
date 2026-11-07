@@ -88,6 +88,7 @@ institutions
 languages
 countries
 material_types
+academic_programs
 ```
 
 Los siguientes campos son de solo lectura o son controlados por el backend:
@@ -100,7 +101,6 @@ finish_period
 validated_by
 validated_at
 knowledge_areas
-academic_programs
 created_by
 created_at
 updated_by
@@ -110,11 +110,14 @@ deleted_at
 delete_explanation
 ```
 
-La respuesta de Platform conserva procedencia manual/derivada por sección.
-Los programas y las áreas derivados provienen de Journals elegibles. En el
-caso de las áreas, Platform consume todas las áreas efectivas de Journal
-(`is_manual=true OR is_derived=true`) y las marca como derivadas en el nivel
-Platform; no copia los flags de procedencia de Journal.
+`academic_programs` es opcional y puede seleccionarse manualmente. Los
+programas derivados de Journals elegibles se conservan y se distinguen por
+`is_manual` / `is_derived`.
+
+`knowledge_areas` es de solo lectura. Nunca se envía por la API: se deriva
+automáticamente de los programas académicos efectivos (manuales y derivados)
+usando `SharedAcademicProgramKnowledgeArea`. La respuesta conserva la
+procedencia manual/derivada por sección.
 
 ### 4.2. `is_harvestable`, `base_api_url` y `api_key`
 
@@ -216,9 +219,17 @@ fields
 | POST | `/api/platforms/{id}/publish/` | `BORRADOR → PUBLICADO` | 200 |
 | POST | `/api/platforms/{id}/mark-obsolete/` | `PUBLICADO → OBSOLETO` | 200 |
 | POST | `/api/platforms/{id}/reactivate/` | `OBSOLETO → BORRADOR` | 200 |
+| POST | `/api/platforms/{id}/image/` | Subir imagen y asignar `url_image` | 200/400/503 |
+| DELETE | `/api/platforms/{id}/image/` | Quitar imagen de la ficha | 200 |
 | POST | `/api/platforms/{id}/check-link/` | Verificar y registrar URL pública | 200/400 |
 
 `status` no se modifica mediante `POST`, `PUT` o `PATCH`. Las transiciones se realizan únicamente mediante las acciones de ciclo de vida.
+
+`url_image` es opcional. `POST /api/platforms/{id}/image/` recibe
+`multipart/form-data` con el campo `image` (JPEG, PNG, GIF o WebP, máximo
+5 MB por defecto), lo almacena en el bucket `imagenes` de RustFS y devuelve la
+ficha con una URL pública permanente, sin expiración ni firma. Las imágenes
+externas existentes, incluidas las obtenidas por cosecha, se conservan.
 
 Cuando una plataforma eliminada se restaura, vuelve a `BORRADOR` y se limpian `validated_by` y `validated_at`.
 
@@ -409,9 +420,13 @@ curl -X POST http://localhost:8000/api/platforms/1/check-link/ \
 curl -X POST http://localhost:8000/api/platforms/1/publish/
 ```
 
-Para publicarse debe estar en `BORRADOR` y cumplir las reglas de completitud, incluyendo URL pública registrada, `start_period`, `valid_sintaxis` y las relaciones activas requeridas.
+Para publicarse debe estar en `BORRADOR` y cumplir las reglas de completitud, incluyendo URL pública registrada, `start_period`, `valid_sintaxis`, institución, país, idioma y tipo de material activos.
 
 No se exige `base_api_url` ni `api_key` cuando la plataforma no necesita cosecha.
+
+Tampoco se exigen `academic_programs` ni `knowledge_areas`: ambos son
+opcionales para publicar. Si se seleccionan programas, las áreas se derivan
+automáticamente.
 
 ### 6.7. Marcar como obsoleta
 
@@ -627,37 +642,54 @@ docker compose -f docker/docker-compose.yml exec web python manage.py check
 ```
 
 La autenticación JWT, los permisos y la protección de escritura se implementarán en la Fase B.
-# Clasificación derivada vigente
+# Clasificación académica vigente
 
-El Frontend no administra `academic_programs` ni `knowledge_areas`; ambos son
-read-only. Platform los obtiene de la unión de programas de sus Journals
-elegibles y de las áreas activas de esos programas:
+El Frontend administra `academic_programs`; `knowledge_areas` es siempre de
+solo lectura. Platform obtiene la clasificación de dos fuentes:
 
 ```text
-AcademicProgram ↔ KnowledgeArea       fuente de verdad
-Journal ↔ AcademicProgram             fuente de verdad
-Journal ↔ Platform                    fuente de verdad
-Journal ↔ KnowledgeArea               derivada
-Platform ↔ AcademicProgram            derivada
-Platform ↔ KnowledgeArea              derivada
+AcademicProgram ↔ KnowledgeArea       fuente de verdad del catálogo
+Journal ↔ AcademicProgram             fuente derivada
+Journal ↔ Platform                    fuente derivada
+Platform ↔ AcademicProgram            manual (opcional) + derivada
+Platform ↔ KnowledgeArea              derivada de los programas efectivos
 ```
 
+Los programas efectivos de una Platform son la unión de:
+
+- los programas seleccionados manualmente (`is_manual=true`);
+- los programas de sus Journals elegibles (`is_derived=true`).
+
+Las áreas del conocimiento se calculan como la unión de las áreas activas de
+esos programas mediante `SharedAcademicProgramKnowledgeArea`. También se
+conservan, por compatibilidad, las áreas efectivas de las Journals elegibles
+que ya existieran. Las relaciones derivadas usan Soft Delete y se restauran
+cuando vuelven a ser válidas.
+
 Una Journal es elegible si `deleted_at=null`, `active=true`,
-`validated_at!=null` y su `SharedJournalPlatform.deleted_at=null`. Las
-relaciones derivadas se conservan con Soft Delete y se restauran cuando vuelven
-a ser válidas.
+`validated_at!=null` y su `SharedJournalPlatform.deleted_at=null`.
 
-Una Platform sin Journals elegibles puede conservar su estado `PUBLICADO` y
-clasificación vacía. Si tiene al menos una Journal elegible pero el resultado
-queda sin programas o sin áreas, una Platform publicada pasa automáticamente a
-`BORRADOR`, limpia su validación y deja de aparecer públicamente. Si después
-recupera una clasificación completa permanece en `BORRADOR`; solo la acción
-explícita `publish` puede publicarla nuevamente. Nunca se usa `OBSOLETO` para
-esta invalidación.
+`academic_programs` y `knowledge_areas` no son obligatorios para publicar una
+Platform. Una Platform sin clasificación puede publicarse si cumple el resto de
+requisitos. Si una Platform publicada deja de cumplir los requisitos de
+publicación, vuelve a `BORRADOR` y requiere una nueva acción `publish`.
 
-Ejemplo de creación/edición: se envían los metadatos y relaciones no académicas
-(`institutions`, `languages`, `countries`, `material_types`), pero se omiten
-`academic_programs` y `knowledge_areas`.
+Ejemplo de creación/edición:
+
+```json
+{
+  "name": "Repositorio institucional",
+  "public_url": "https://repositorio.ejemplo.org",
+  "institutions": [1],
+  "languages": [1],
+  "countries": [1],
+  "material_types": [1],
+  "academic_programs": [1, 4]
+}
+```
+
+No se envía `knowledge_areas`: el backend deriva las áreas de los programas
+seleccionados.
 ## Contrato de URLs y verificación vigente
 
 - `public_url` es obligatoria al crear una Platform, pero no es una columna del
@@ -702,7 +734,8 @@ queda registrada en `LinkCheckLog` para su verificación. Los demás requisitos 
 último resultado exitoso, sintaxis vigente,
 campos técnicos condicionales y al menos un valor efectivo en institución,
 idioma, país, tipo de material, programa académico y área de conocimiento.
-La publicación no requiere Journals asociadas.
+La publicación no requiere Journals asociadas ni imagen (`url_image` es
+opcional).
 
 Si la URL vigente nunca fue comprobada, `publish` indica que debe verificarse.
 Si ya fue comprobada pero su último resultado falló, indica que no se encuentra

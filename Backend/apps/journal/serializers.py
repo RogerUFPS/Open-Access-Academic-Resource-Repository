@@ -333,6 +333,9 @@ class JournalSerializer(
     Todas las relaciones mediante tablas intermedias se sincronizan
     mediante SoftDeleteRelationSyncMixin.
 
+    ``knowledge_areas`` es de solo lectura: se deriva automáticamente de
+    los programas académicos seleccionados y no puede enviarse por API.
+
     La relación con plataformas utiliza el mismo mecanismo genérico,
     incluyendo sus atributos adicionales:
     start_period, finish_period y has_full_text.
@@ -363,10 +366,11 @@ class JournalSerializer(
     )
 
     knowledge_areas = JournalKnowledgeAreasField(
-        required=False,
+        read_only=True,
         help_text=(
-            "Lista de IDs para la selección manual. La respuesta incluye "
-            "procedencia y editabilidad de todas las áreas efectivas."
+            "Áreas del conocimiento derivadas automáticamente de los "
+            "programas académicos. La respuesta incluye procedencia y "
+            "editabilidad de todas las áreas efectivas."
         ),
     )
 
@@ -495,18 +499,13 @@ class JournalSerializer(
 
     def _prepare_relation_data(self, validated_data):
         """
-        Extrae las relaciones recibidas y deriva knowledge_areas cuando
-        academic_programs fue enviado.
+        Extrae las relaciones recibidas.
 
-        Si academic_programs no viene en un PATCH, ninguna de las dos
-        relaciones se modifica.
+        ``knowledge_areas`` es de solo lectura y se recalcula a partir de
+        ``academic_programs``. Si ``academic_programs`` no viene en un PATCH,
+        los programas y sus áreas derivadas no se modifican.
         """
-        relation_data = self._extract_relation_data(validated_data)
-        if "knowledge_areas" in validated_data:
-            relation_data["knowledge_areas"] = validated_data.pop(
-                "knowledge_areas"
-            )
-        return relation_data
+        return self._extract_relation_data(validated_data)
 
     def to_representation(self, instance):
         representation = super().to_representation(instance)
@@ -610,13 +609,6 @@ class JournalSerializer(
                 parent=journal,
                 relation_data=relation_data,
             )
-            if "knowledge_areas" in relation_data:
-                from .classification import sync_manual_knowledge_areas
-                sync_manual_knowledge_areas(
-                    journal,
-                    relation_data["knowledge_areas"],
-                    user=journal.created_by,
-                )
             self._sync_platform_urls(
                 journal,
                 relation_data.get("platforms"),
@@ -664,13 +656,6 @@ class JournalSerializer(
                 parent=journal,
                 relation_data=relation_data,
             )
-            if "knowledge_areas" in relation_data:
-                from .classification import sync_manual_knowledge_areas
-                sync_manual_knowledge_areas(
-                    journal,
-                    relation_data["knowledge_areas"],
-                    user=journal.updated_by or journal.created_by,
-                )
             self._sync_platform_urls(
                 journal,
                 relation_data.get("platforms"),

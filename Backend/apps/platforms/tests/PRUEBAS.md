@@ -50,32 +50,32 @@ Por tanto:
 
 ### 1.3. Programas académicos y áreas del conocimiento
 
-`academic_programs` y `knowledge_areas` son relaciones derivadas y de solo
-lectura en Platform. No deben ser introducidas manualmente por el usuario.
+`academic_programs` es opcional y puede seleccionarse manualmente en Platform.
+`knowledge_areas` es siempre de solo lectura: se deriva automáticamente de los
+programas académicos efectivos.
 
 La clasificación se obtiene mediante:
 
 ```text
-Journal elegible → SharedJournalAcademicProgram → AcademicProgram
-                                                   │
-                                                   ▼
-                              SharedAcademicProgramKnowledgeArea
-                                                   │
-                                                   ▼
-                                             KnowledgeArea
+Platform → SharedPlatformAcademicProgram → AcademicProgram
+                                              │
+                                              ▼
+                         SharedAcademicProgramKnowledgeArea
+                                              │
+                                              ▼
+                                        KnowledgeArea
 
-Platform → SharedPlatformAcademicProgram / SharedPlatformKnowledgeArea
+Journal elegible → SharedJournalAcademicProgram → AcademicProgram
+Journal elegible → SharedJournalPlatform → Platform
 ```
 
-Los `academic_programs` se obtienen de las Journals elegibles asociadas y las
-`knowledge_areas` se derivan de esos programas.
+Los programas efectivos son la unión de la selección manual y de los programas
+de Journals elegibles. Las áreas se calculan a partir de esos programas y se
+marcan como derivadas en Platform. También se conservan, por compatibilidad,
+las áreas efectivas de Journals elegibles ya existentes.
 
-Esto permite:
-
-- Evitar inconsistencias entre programas académicos y áreas del conocimiento.
-- Evitar que el usuario asigne manualmente programas o áreas a Platform.
-- Consolidar áreas repetidas cuando varios programas comparten la misma área.
-- Mantener la clasificación de la plataforma sincronizada con la relación académica existente.
+`academic_programs` y `knowledge_areas` no son obligatorios para publicar una
+Platform.
 
 ### 1.4. Publicación de plataformas
 
@@ -113,7 +113,7 @@ Una plataforma que no tenga API de cosecha puede publicarse siempre que cumpla l
 | Prueba | Resultado Esperado |
 | --- | --- |
 | `test_platform_serializer_create_with_api_key_and_relations` | Crea una Platform cosechable, cifra la clave y sincroniza las relaciones administrables. |
-| `test_platform_serializer_ignores_manual_academic_classification` | Ignora intentos de escribir la clasificación académica derivada. |
+| `test_platform_serializer_creates_manual_academic_classification` | Permite seleccionar programas académicos manualmente y deriva sus áreas. |
 | `test_platform_serializer_does_not_accept_knowledge_areas_as_input` | Mantiene `knowledge_areas` como relación derivada y de solo lectura. |
 | `test_platform_serializer_allows_null_api_key_without_base_api_url` | Permite una Platform no cosechable sin URL técnica ni credencial. |
 | `test_platform_serializer_allows_base_api_url_without_api_key` | Permite cosecha mediante una API que no necesita autenticación. |
@@ -121,8 +121,8 @@ Una plataforma que no tenga API de cosecha puede publicarse siempre que cumpla l
 | `test_platform_serializer_clears_api_key_when_sent_as_null` | Elimina la credencial cuando `api_key` se envía como `null`. |
 | `test_platform_serializer_rejects_removing_base_api_url_with_existing_api_key` | Impide retirar la URL técnica mientras se conserva una credencial. |
 | `test_platform_serializer_allows_removing_base_api_url_and_api_key_together` | Permite retirar conjuntamente la URL técnica y la credencial. |
-| `test_platform_serializer_patch_cannot_create_academic_relations` | Un `PATCH` no puede crear manualmente clasificación académica de Platform. |
-| `test_platform_serializer_empty_academic_programs_is_read_only` | Una lista vacía tampoco modifica los programas derivados. |
+| `test_platform_serializer_patch_preserves_manual_academic_relations` | Un `PATCH` posterior conserva los programas manuales no enviados y sus áreas derivadas. |
+| `test_platform_serializer_empty_academic_programs_removes_manual_origin` | Una lista vacía retira solo la contribución manual y recalcula las áreas. |
 | `test_sync_relations_deduplicates_repeated_ids` | Deduplica IDs en las relaciones administrables. |
 | `test_archived_platform_restored_via_serializer_resets_to_draft` | Restaura una Platform archivada en `BORRADOR` y limpia su validación. |
 | `test_public_serializer_excludes_sensitive_and_audit_fields` | La respuesta pública no expone credenciales, campos cifrados ni auditoría interna. |
@@ -333,8 +333,9 @@ Las reglas principales verificadas son:
 - URL pública gestionada mediante `LinkCheckLog`.
 - Validación de enlaces.
 - Control de fallos consecutivos.
-- Clasificación derivada de Journals elegibles mediante programas académicos.
-- Derivación automática de áreas del conocimiento.
+- Programas académicos manuales opcionales y programas derivados de Journals elegibles.
+- Derivación automática de áreas del conocimiento a partir de los programas efectivos.
+- Publicación sin programas ni áreas académicas.
 - Control del ciclo de vida de plataformas.
 - Publicación condicionada al cumplimiento de los requisitos.
 - Restauración mediante Soft Delete.
