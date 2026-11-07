@@ -67,26 +67,8 @@ async function handleResponse(response, endpoint = "") {
 
   if (!response.ok) {
     let errorMessage = `Error ${response.status}: ${response.statusText}`;
-    
-    if (data) {
-      if (typeof data === "string") {
-        errorMessage = data;
-      } else if (data.detail) {
-        errorMessage = data.detail;
-      } else if (data.message) {
-        errorMessage = data.message;
-      } else if (data.error) {
-        errorMessage = data.error;
-      } else if (typeof data === "object") {
-        // Collect field validation error messages
-        const fieldErrors = Object.entries(data)
-          .map(([key, val]) => `${key}: ${Array.isArray(val) ? val.join(", ") : val}`)
-          .join(" | ");
-        if (fieldErrors) {
-          errorMessage = fieldErrors;
-        }
-      }
-    }
+    const extractedMessage = extractApiErrorText(data);
+    if (extractedMessage) errorMessage = extractedMessage;
 
     const authExpired = response.status === 401 && !shouldSkipSessionExpiredAlert(endpoint || response.url || "");
     if (authExpired) {
@@ -101,6 +83,46 @@ async function handleResponse(response, endpoint = "") {
   }
 
   return data;
+}
+
+export function extractApiErrorText(value, fallback = "") {
+  if (typeof value === "string") return value.trim();
+  if (typeof value === "number" || typeof value === "boolean") return String(value);
+  if (Array.isArray(value)) {
+    return value.map((item) => extractApiErrorText(item)).filter(Boolean).join(" ");
+  }
+  if (!value || typeof value !== "object") return fallback;
+
+  const messages = ["message", "detail", "error", "code"]
+    .map((key) => {
+      const nested = value[key];
+      return key === "code" && nested && typeof nested === "object"
+        ? ""
+        : extractApiErrorText(nested);
+    })
+    .filter(Boolean);
+  if (messages.length) return [...new Set(messages)].join(" ");
+
+  return Object.entries(value)
+    .filter(([key]) => key !== "existing_id")
+    .map(([, nested]) => extractApiErrorText(nested))
+    .filter(Boolean)
+    .join(" ");
+}
+
+export function normalizeApiFieldErrors(data, fallback = "Ocurrió un error al guardar.") {
+  if (!data || typeof data !== "object" || Array.isArray(data)) return {};
+
+  const ignoredKeys = new Set(["detail", "message", "error", "existing_id"]);
+  return Object.fromEntries(
+    Object.entries(data)
+      .filter(([key]) => !ignoredKeys.has(key))
+      .map(([key, value]) => {
+        const message = extractApiErrorText(value);
+        return [key, message || fallback];
+      })
+      .filter(([, message]) => Boolean(message))
+  );
 }
 
 export const apiClient = {
@@ -198,6 +220,37 @@ export const apiClient = {
     return handleResponse(response, endpoint);
   },
 };
+
+export async function uploadMultipart(endpoint, fieldName, file) {
+  const url = buildUrl(endpoint);
+  const csrfToken = getCsrfToken();
+  const formData = new FormData();
+  formData.append(fieldName, file);
+  const response = await fetch(url, {
+    method: "POST",
+    headers: {
+      Accept: "application/json",
+      ...(csrfToken ? { "X-CSRFToken": csrfToken } : {}),
+    },
+    credentials: "include",
+    body: formData,
+  });
+  return handleResponse(response, endpoint);
+}
+
+export async function deleteMultipart(endpoint) {
+  const url = buildUrl(endpoint);
+  const csrfToken = getCsrfToken();
+  const response = await fetch(url, {
+    method: "DELETE",
+    headers: {
+      Accept: "application/json",
+      ...(csrfToken ? { "X-CSRFToken": csrfToken } : {}),
+    },
+    credentials: "include",
+  });
+  return handleResponse(response, endpoint);
+}
 
 // Read-only requests use the same-origin proxy. Mutations run through the
 // Server Action supplied by AccountsGateway, which owns session and CSRF cookies.

@@ -7,6 +7,7 @@ import { capitalizeWords } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { ResourceImageUploader } from "@/shared/components/ResourceImageUploader";
 import {
   ArrowLeft,
   AlertCircle,
@@ -81,6 +82,7 @@ export default function JournalForm({ initialData = null, isEdit = false }) {
   const [submitting, setSubmitting] = useState(false);
   const [formError, setFormError] = useState(null);
   const [fieldErrors, setFieldErrors] = useState({});
+  const [pendingImage, setPendingImage] = useState(null);
 
   useEffect(() => {
     async function loadData() {
@@ -215,7 +217,6 @@ export default function JournalForm({ initialData = null, isEdit = false }) {
         material_types: formData.material_types,
         academic_programs: formData.academic_programs,
         licenses: formData.licenses,
-        knowledge_areas: formData.knowledge_areas,
         editorial: formData.editorial ? Number(formData.editorial) : null,
         platforms: formData.platforms.filter((row) => row.platform).map((row) => ({
           platform: Number(row.platform),
@@ -231,7 +232,18 @@ export default function JournalForm({ initialData = null, isEdit = false }) {
         savedJournal = await journalService.createJournal(payload);
       }
 
-      const redirectId = savedJournal?.id || initialData?.id;
+      const savedId = savedJournal?.id || initialData?.id;
+      if (pendingImage && savedId) {
+        try {
+          const updated = await journalService.uploadJournalImage(savedId, pendingImage);
+          setPendingImage(null);
+          setFormData((current) => ({ ...current, url_image: updated.url_image || "" }));
+        } catch (imageError) {
+          setFormError(imageError.message || "La revista se guardó, pero no se pudo subir la imagen.");
+        }
+      }
+
+      const redirectId = savedId;
       if (redirectId) {
         router.push(`/admin/revistas/${redirectId}`);
       } else {
@@ -378,18 +390,18 @@ export default function JournalForm({ initialData = null, isEdit = false }) {
 
           <div className="bg-white border border-gray-200 rounded-xl p-3 shadow-2xs space-y-1">
             <Label
-              htmlFor="url_image"
               className="text-[11px] font-medium text-gray-500 uppercase block"
             >
-              URL de imagen (opcional)
+              Imagen (opcional)
             </Label>
-            <Input
-              id="url_image"
-              type="url"
+            <ResourceImageUploader
               value={formData.url_image}
-              onChange={(e) => setFormData({ ...formData, url_image: e.target.value })}
-              placeholder="https://.../portada.png"
-              className="border-0 p-0 text-xs shadow-none focus-visible:ring-0 h-6 text-gray-800"
+              alt={`Imagen de ${formData.title || "la revista"}`}
+              resourceId={initialData?.id}
+              uploadImage={journalService.uploadJournalImage}
+              deleteImage={journalService.deleteJournalImage}
+              onImageChange={(urlImage) => setFormData((current) => ({ ...current, url_image: urlImage || "" }))}
+              onPendingFileChange={setPendingImage}
             />
             {renderFieldError("url_image")}
           </div>

@@ -4,6 +4,7 @@ import React, { useState, useEffect, useMemo } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { platformService } from "../services/platformService";
+import { extractApiErrorText, normalizeApiFieldErrors } from "@/shared/services/apiClient";
 import { getUserDisplayName, userService } from "@/shared/services/userService";
 import { capitalizeWords } from "@/lib/utils";
 import { useToast } from "@/components/ui/use-toast";
@@ -207,12 +208,12 @@ export default function DatabaseDetail({ platformId }) {
             academic_programs: "Programas académicos",
             status: "Estado",
           })[key] || key,
-          message: Array.isArray(value) ? value.join(", ") : String(value),
+          message: extractApiErrorText(value) || "Revisa este campo.",
         }));
       const message = fieldErrors.length
         ? fieldErrors.map((item) => `${item.field}: ${item.message}`).join("\n")
         : payload.detail || payload.message || payload.error || err.message || "No se pudo publicar la plataforma.";
-      const fieldErrorData = Object.fromEntries(Object.entries(payload).filter(([key]) => !["detail", "message", "error"].includes(key)));
+      const fieldErrorData = normalizeApiFieldErrors(payload);
       toast({
         title: "No se pudo publicar la plataforma",
         description: fieldErrors.length ? (
@@ -554,9 +555,29 @@ export default function DatabaseDetail({ platformId }) {
                       {platform.valid_sintaxis
                         ? typeof platform.valid_sintaxis === "object"
                           ? capitalizeWords(platform.valid_sintaxis.name)
-                          : capitalizeWords(catalogs.sintaxis?.find(s => s.id === Number(platform.valid_sintaxis))?.name || "Sintaxis estándar")
-                        : "Sintaxis estándar"}
+                          : capitalizeWords(catalogs.sintaxis?.find(s => s.id === Number(platform.valid_sintaxis))?.name || "Sin sintaxis")
+                        : "Sin sintaxis"}
                     </span>
+                  </div>
+                </div>
+                <div>
+                  <span className="text-xs uppercase tracking-wide text-gray-500 font-semibold block">Imagen</span>
+                  <div className="mt-1.5 flex items-center gap-3 rounded-lg bg-slate-50 p-2.5">
+                    {platform.url_image ? (
+                      <img
+                        src={platform.url_image}
+                        alt={`Imagen de ${platform.name}`}
+                        onError={(event) => {
+                          event.currentTarget.style.display = "none";
+                          event.currentTarget.nextElementSibling?.classList.remove("hidden");
+                        }}
+                        className="h-24 w-24 rounded-lg object-cover"
+                      />
+                    ) : null}
+                    <span className={platform.url_image ? "hidden text-xs text-slate-400" : "text-xs text-slate-400"}>Sin imagen</span>
+                    <Button variant="outline" href={`/admin/bases-de-datos/${platform.id}?edit=true`} className="text-xs">
+                      Reemplazar / eliminar
+                    </Button>
                   </div>
                 </div>
               </div>
