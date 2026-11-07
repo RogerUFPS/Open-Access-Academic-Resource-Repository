@@ -36,7 +36,7 @@ servicios, clasificación y API.
 | `test_journal_serializer_rejects_invalid_issn` | Rechaza un ISSN con formato inválido mediante error de validación. |
 | `test_sync_relations_deduplicates_repeated_ids` | IDs repetidos en las relaciones no generan registros duplicados en las tablas intermedias. |
 | `test_knowledge_areas_are_derived_from_academic_programs` | Las áreas del conocimiento se generan automáticamente a partir de los programas académicos seleccionados. |
-| `test_knowledge_areas_accept_manual_selection` | Permite seleccionar áreas manuales y combinarlas sin duplicados con las derivadas. |
+| `test_knowledge_areas_are_read_only` | Ignora `knowledge_areas` enviadas por API y solo materializa las áreas derivadas de los programas. |
 | `test_patch_without_academic_programs_preserves_derived_relations` | Un `PATCH` que no incluye `academic_programs` conserva los programas existentes y sus áreas del conocimiento derivadas. |
 | `test_empty_academic_programs_clears_derived_knowledge_areas` | Enviar `academic_programs: []` elimina lógicamente las relaciones con programas y elimina las áreas derivadas que dejan de corresponder. |
 | `test_changing_academic_programs_recalculates_knowledge_areas` | Cambiar los programas académicos recalcula las áreas del conocimiento, realizando una unión sin duplicados. |
@@ -111,7 +111,7 @@ servicios, clasificación y API.
 | Prueba | Resultado Esperado |
 | --- | --- |
 | `test_create_journal_endpoint` | `POST /api/journals/` crea una revista correctamente mediante la API y retorna HTTP 201. |
-| `test_create_journal_endpoint_derives_knowledge_areas` | La creación por API combina áreas manuales con las derivadas desde `academic_programs` y expone su procedencia. |
+| `test_create_journal_endpoint_derives_knowledge_areas` | La creación por API ignora `knowledge_areas` manuales y deriva las áreas desde `academic_programs`. |
 | `test_publish_accepts_manual_effective_knowledge_area` | La publicación cuenta un área manual vigente como clasificación efectiva. |
 | `test_knowledge_area_catalog_filters_by_journal_origin` | Los filtros contextuales separan origen, editabilidad y opciones disponibles para una Journal. |
 | `test_create_journal_endpoint_allows_draft_platform` | La API permite crear una revista asociada a una plataforma en `BORRADOR` sin alterar su estado. |
@@ -139,8 +139,9 @@ servicios, clasificación y API.
 Además de las validaciones previamente existentes, la suite actual verifica explícitamente las siguientes reglas:
 
 - El administrador selecciona únicamente `academic_programs` para clasificar una revista.
-- `knowledge_areas` admite selección manual y devuelve `is_manual`,
-  `is_derived` y `editable` junto con las áreas derivadas.
+- `knowledge_areas` es de solo lectura: se ignora si se envía y siempre se
+  deriva de los programas académicos. La respuesta incluye `is_manual`,
+  `is_derived` y `editable`.
 - Las áreas del conocimiento se calculan mediante `AcademicProgram -> SharedAcademicProgramKnowledgeArea -> KnowledgeArea`.
 - La derivación elimina duplicados cuando varios programas comparten una misma área.
 - Un `PATCH` sin `academic_programs` no modifica la clasificación existente.

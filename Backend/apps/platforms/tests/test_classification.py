@@ -79,6 +79,57 @@ class PlatformClassificationTests(TestCase):
         self.assertIsNone(platform.validated_by)
         self.assertIsNone(platform.validated_at)
 
+    def test_manual_academic_program_derives_knowledge_areas(self):
+        platform = models.Platform.objects.create(
+            name="platform manual program", created_by=self.user
+        )
+        models.SharedPlatformAcademicProgram.objects.create(
+            platform=platform,
+            academic_program=self.program,
+            created_by=self.user,
+        )
+
+        recalculate_platforms([platform.pk], user=self.user)
+
+        link = models.SharedPlatformKnowledgeArea.objects.get(
+            platform=platform, knowledge_area=self.area
+        )
+        self.assertFalse(link.is_manual)
+        self.assertTrue(link.is_derived)
+
+    def test_catalog_change_recalculates_platforms_with_manual_programs(self):
+        from apps.journal.classification import propagate_catalog_change
+
+        platform = models.Platform.objects.create(
+            name="platform direct program", created_by=self.user
+        )
+        models.SharedPlatformAcademicProgram.objects.create(
+            platform=platform,
+            academic_program=self.program,
+            created_by=self.user,
+        )
+        recalculate_platforms([platform.pk], user=self.user)
+
+        extra_area = KnowledgeArea.objects.create(
+            name="area extra", created_by=self.user
+        )
+        SharedAcademicProgramKnowledgeArea.objects.create(
+            academic_program=self.program,
+            knowledge_area=extra_area,
+            created_by=self.user,
+        )
+
+        propagate_catalog_change([self.program.pk], user=self.user)
+
+        self.assertEqual(
+            set(
+                models.SharedPlatformKnowledgeArea.objects.filter(
+                    platform=platform
+                ).values_list("knowledge_area_id", flat=True)
+            ),
+            {self.area.pk, extra_area.pk},
+        )
+
     def test_effective_manual_journal_area_is_derived_in_platform(self):
         platform = models.Platform.objects.create(
             name="platform manual journal area", created_by=self.user

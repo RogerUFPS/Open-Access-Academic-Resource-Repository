@@ -194,7 +194,18 @@ def propagate_catalog_change(program_ids: Iterable[int], *, user) -> set[int]:
     changed_journal_ids = recalculate_journals(
         journal_ids, user=user, invalidate_on_change=True
     )
-    platform_ids = related_platform_ids(changed_journal_ids)
+    # Una Platform puede referenciar el programa directamente (selección
+    # manual), sin que exista una Journal intermedia. Esas Platforms también
+    # deben recalcular sus áreas derivadas.
+    from apps.platforms import models as platform_models
+
+    direct_platform_ids = set(
+        platform_models.SharedPlatformAcademicProgram.objects.filter(
+            academic_program_id__in=ids,
+            platform__deleted_at__isnull=True,
+        ).values_list("platform_id", flat=True)
+    )
+    platform_ids = related_platform_ids(changed_journal_ids) | direct_platform_ids
     if platform_ids:
         from apps.platforms.classification import recalculate_platforms
         recalculate_platforms(platform_ids, user=user)
