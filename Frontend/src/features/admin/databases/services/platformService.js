@@ -55,14 +55,31 @@ export const platformService = {
 
   /**
    * Create a new platform (POST /api/platforms/)
-   * Regla de negocio: La creación crea un registro en borrador y solo envía
-   * los datos mínimos necesarios (name y public_url).
+   * Regla de negocio: La creación crea un registro en borrador y conserva
+   * los campos administrativos admitidos por el formulario.
    */
   createPlatform: async (data) => {
     const payload = {
       name: data?.name ? String(data.name).trim() : "",
       public_url: data?.public_url ? String(data.public_url).trim() : "",
     };
+    const editableFields = [
+      "is_harvestable",
+      "base_api_url",
+      "api_key",
+      "url_image",
+      "requires_registration",
+      "has_access_text",
+      "valid_sintaxis",
+      "institutions",
+      "languages",
+      "countries",
+      "material_types",
+      "academic_programs",
+    ];
+    editableFields.forEach((field) => {
+      if (data?.[field] !== undefined) payload[field] = data[field];
+    });
     return apiClient.post("/api/platforms/", payload);
   },
 

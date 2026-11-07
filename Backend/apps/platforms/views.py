@@ -199,9 +199,56 @@ class ValidSintaxisViewSet(AuditableViewSet):
             "failure_confirmed=true devuelve solo URLs vigentes comprobadas, "
             "no disponibles y con al menos cinco fallos consecutivos. "
             "failure_confirmed=false devuelve su complemento dentro de URLs vigentes. "
-            "Requiere platforms.link-check-logs.view."
+            "failure_confirmed es solo un filtro: no es un campo de cada resultado. "
+            "unavailable incluye fallos no confirmados y caídas confirmadas. "
+            "El estado de correo failure_notified_at no condiciona la consulta. "
+            "Requiere platforms.link-check-logs.view.\n\n"
+            "Combinaciones recomendadas:\n"
+            "- Todos los vigentes: current=true.\n"
+            "- Todos los no disponibles: current=true&verification_status=unavailable.\n"
+            "- Caídas confirmadas: current=true&failure_confirmed=true.\n"
+            "- No disponibles sin confirmar: "
+            "current=true&verification_status=unavailable&failure_confirmed=false.\n\n"
+            "Un éxito genera un nuevo evento available con fail_count=0 y el contexto "
+            "sale del conjunto confirmado; los fallos anteriores permanecen en el historial."
         ),
         parameters=[
+            OpenApiParameter(
+                name="current",
+                type=OpenApiTypes.BOOL,
+                location=OpenApiParameter.QUERY,
+                description=(
+                    "true: último evento no eliminado por contexto vigente "
+                    "(created_at DESC, pk DESC), nunca por last_check. "
+                    "false: logs que ya no pertenecen al conjunto vigente. "
+                    "Omitido: sin restricción de vigencia, salvo la impuesta por otros filtros. "
+                    "Los filtros failure_confirmed=true y false restringen a contextos vigentes."
+                ),
+            ),
+            OpenApiParameter(
+                name="verification_status",
+                type=OpenApiTypes.STR,
+                enum=["unverified", "available", "unavailable"],
+                location=OpenApiParameter.QUERY,
+                description=(
+                    "unverified: last_check nulo. available: comprobado y disponible. "
+                    "unavailable: comprobado y no disponible; incluye fallos no confirmados "
+                    "y caídas confirmadas. No restringe por sí solo a URLs vigentes."
+                ),
+            ),
+            OpenApiParameter(
+                name="failure_confirmed",
+                type=OpenApiTypes.BOOL,
+                location=OpenApiParameter.QUERY,
+                description=(
+                    "Filtro, no atributo de LinkCheckLogSerializer. true: URL vigente "
+                    "comprobada, no disponible y con cinco o más fallos consecutivos. "
+                    "false: complemento dentro de URLs vigentes, incluidos disponibles "
+                    "y sin verificar. Combinar false con verification_status=unavailable "
+                    "para consultar solo fallos no confirmados. Omitido: no aplica este filtro. "
+                    "Independiente del envío de correo y de failure_notified_at."
+                ),
+            ),
             OpenApiParameter(
                 name="page_size",
                 type=OpenApiTypes.INT,

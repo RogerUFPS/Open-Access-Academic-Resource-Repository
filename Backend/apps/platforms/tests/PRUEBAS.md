@@ -393,7 +393,45 @@ contador sin incrementos perdidos y dos notificadores con un único envío.
 Requieren PostgreSQL y se omiten en SQLite. Verifican también que el request HTTP
 del checker no se ejecute dentro de una transacción. Se mockean HTTP y Resend.
 
-No se ejecutó esta cobertura. Generar/aplicar la migración antes de probar;
-comandos actuales desde la raíz general y pendientes externos en
+El desarrollador reportó posteriormente `check` sin problemas, migración `0007`
+aplicada y una suite previa de 116 pruebas: 114 correctas y dos de concurrencia
+omitidas en SQLite. Eso no valida automáticamente ampliaciones posteriores.
+Comandos desde la raíz general y pendientes externos en
 `Backend/docs/ENDPOINTS_PLATFORMS.md`, sección «Monitoreo automático de enlaces».
+
+## Contrato del monitor y Frontend — 5 de noviembre de 2026
+
+Se reutiliza `test_monitoring.py` sin duplicar los tests existentes del checker,
+Soft Delete, entrega de correo o respuestas tardías de URLs sustituidas.
+
+- `CheckStateTests.test_five_failures_recovery_and_new_incident`: ahora verifica
+  cada contador 1–5 de la nueva caída después de recuperarse, no solo el último.
+- `CheckStateTests.test_success_interrupts_the_consecutive_failure_sequence`:
+  protege el ejemplo `1,2,3,0,1,2,3,4`, sin caída confirmada.
+- `MonitorQueryContractTests.test_registered_url_is_unverified_and_not_confirmed`:
+  consulta HTTP de una URL recién registrada, estado inicial y ausencia del
+  atributo `failure_confirmed` en el serializer.
+- `MonitorQueryContractTests.test_recommended_query_combinations_for_platform_and_journal_links`:
+  las cuatro combinaciones oficiales para los dos contextos, con estados sin
+  verificar/disponibles, fallos 1–4 y confirmados 5–6; también el complemento de
+  `failure_confirmed=false` y `current=false` sin historia.
+- `MonitorQueryContractTests.test_replaced_urls_are_history_for_both_link_contexts`:
+  consulta sin filtros, `current=true`, `current=false`, URL reemplazada sin
+  verificar e identificador correcto de la relación Journal–Platform.
+- `MonitorQueryContractTests.test_manual_and_celery_results_are_queryable_before_email_and_after_recovery`:
+  cuatro verificaciones manuales, quinto fallo vía task en ambos contextos,
+  mismo checker real con HTTP mockeado, visibilidad antes de terminar la ronda,
+  recuperación, historia conservada y siguiente fallo en 1.
+- `MonitorQueryContractTests.test_confirmed_query_is_independent_of_recipients_delivery_and_round_state`:
+  el filtro HTTP incluye caídas con correo pendiente, ya notificado, sin
+  destinatarios, envío fallido o ronda incompleta.
+- `NotificationTests.test_monitor_url_preserves_configured_location_and_overrides_state_filters`:
+  URL absoluta completa del monitor configurada por ambiente, conservación de
+  otros parámetros/fragmento y sustitución de los dos filtros por `true`.
+  Se conserva el test existente que comprueba el CTA dentro del HTML enviado.
+
+Todos los resultados del helper de consultas de la clase nueva verifican que
+`failure_confirmed` no aparezca como campo de respuesta. No se modifica el contrato
+para introducirlo. **Esta ampliación no se ejecutó**: la validación queda a cargo
+del desarrollador, junto con PostgreSQL para las dos pruebas de concurrencia.
 

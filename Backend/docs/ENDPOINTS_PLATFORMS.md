@@ -941,11 +941,15 @@ enlace, título de Journal si aplica, URL, última comprobación y fallos. Orden
 marcados al terminar. Sin nuevas caídas o sin destinatarios no hay envío ni marca.
 `EmailDeliveryError` produce reintentos Celery con backoff/jitter (máximo cinco).
 
-`LINK_FAILURE_FRONTEND_URL` permite configurar la URL absoluta del módulo real
-`/admin/alertas`; se añaden `current=true&failure_confirmed=true`. No se inventa
-dominio. Si está vacía o inválida, el resumen explica que debe accederse al
-módulo administrativo y que el acceso directo filtrado está pendiente. Configurar
-el botón solo cuando Frontend soporte esos parámetros; hoy la vista los ignora.
+`LINK_FAILURE_FRONTEND_URL` representa la **URL absoluta completa del monitor**:
+`https://<host-del-frontend>/admin/alertas`, sustituyendo el host según el ambiente.
+No representa solamente una base: `affected_links_url()` no agrega la ruta
+`/admin/alertas`. Conserva la ubicación configurada y establece
+`current=true&failure_confirmed=true`, reemplazando valores anteriores de esos
+dos parámetros; conserva otros query params y el fragmento. Configurar la URL del
+monitor sin filtros adicionales contradictorios. No se fija dominio en el código.
+Si está vacía o inválida, se envían instrucciones textuales sin CTA directo.
+La interpretación del enlace en Frontend debe respetar el contrato siguiente.
 
 Consulta completa del Backend:
 
@@ -960,27 +964,97 @@ de URLs vigentes; no incluye historia. `current=true` permite consultar todos
 los estados vigentes. La respuesta del log añade `failure_notified_at` nullable.
 No se obliga a Frontend a reconstruir el umbral de cinco fallos.
 
+### Contrato oficial de consulta del monitor — 5 de noviembre de 2026
+
+Fuente de verdad: `apps/platforms`. **`failure_confirmed` es un filtro de
+consulta, no un atributo de `LinkCheckLogSerializer`.** No se devuelve
+`"failure_confirmed": true` en cada fila y Frontend no debe leer
+`row.failure_confirmed`. La pertenencia al conjunto filtrado es lo que establece
+la clasificación de caída confirmada vigente.
+
+| Objetivo | Query params |
+| --- | --- |
+| Todos los vigentes | `current=true` |
+| Todos los que están fallando | `current=true&verification_status=unavailable` |
+| Caídas confirmadas | `current=true&failure_confirmed=true` |
+| Fallando todavía sin confirmar | `current=true&verification_status=unavailable&failure_confirmed=false` |
+
+Todas son consultas GET a `/api/platforms/link-check-logs/`.
+
+**`current`:** `true` obtiene un solo evento vigente por contexto no eliminado,
+ordenado por `created_at DESC, pk DESC`, nunca por `last_check`. `false` obtiene
+logs no eliminados que no pertenecen al conjunto vigente: historia reemplazada
+o de contextos ya no vigentes. Omitirlo no restringe la vigencia, salvo lo que
+impongan los demás filtros; no equivale a `false`.
+
+**`verification_status`:** `unverified` significa `last_check=null`, `available`
+significa comprobado y disponible, y `unavailable` significa comprobado y no
+disponible. `unavailable` incluye tanto fallos 1–4 como caídas confirmadas 5+;
+no equivale a fallo temporal. Este filtro aislado puede seleccionar historia.
+
+**`failure_confirmed`:** `true` requiere URL vigente, comprobada como no
+disponible y con cinco o más fallos consecutivos. `false` devuelve el complemento
+dentro del conjunto vigente, incluyendo disponibles y sin verificar; para solo
+fallidos no confirmados agregar `verification_status=unavailable`. Omitirlo no
+aplica la clasificación. Tanto `true` como `false` restringen a vigentes, de modo
+que combinarlos con `current=false` produce una intersección vacía.
+
+**Secuencia y recuperación:** cada fallo consecutivo registra 1, 2, 3, 4, 5;
+el quinto confirma. Un éxito registra `is_active=true`, `fail_count=0`, estado
+`available` y limpia `failure_notified_at`. El contexto sale inmediatamente de
+la consulta confirmada al persistir ese evento. Un fallo posterior comienza
+en 1: `fallo, fallo, fallo, éxito, fallo, fallo, fallo, fallo` produce
+`1, 2, 3, 0, 1, 2, 3, 4` y no confirma una caída.
+
+**Historia:** si A=`unavailable/4`, B=`unavailable/5` y C=`available/0` son
+eventos sucesivos del mismo contexto, la consulta sin filtros puede devolver
+los tres. Con `current=true` devuelve C y con
+`current=true&failure_confirmed=true` no devuelve ese contexto. Reemplazar la
+URL también vuelve histórico el evento anterior; una respuesta tardía del
+checker no puede restaurarlo como vigente.
+
+**Contextos:** `journal_platform=null` representa la URL general de Platform.
+Un valor identifica la relación Journal–Platform, **no el ID de Journal**.
+Las mismas combinaciones se aplican a ambos contextos. No reducirlos a una sola
+fila por Platform.
+
+**Manual y automático:** `check_platform_link`, `check_platform_links` y la
+verificación global manual convergen en `check_link_context`. Celery utiliza
+`check_link_batch → check_link_context → LinkCheckLog`. Los resultados
+persistidos están disponibles en el listado sin esperar la finalización del
+resto de lotes; las tablas de rondas no sustituyen el estado del enlace.
+
+**Correo:** los filtros del monitor no comprueban `failure_notified_at`, usuarios
+destinatarios, configuración de Resend ni finalización de la ronda. Una caída
+confirmada se consulta antes del correo, sin destinatarios, ante error de envío,
+durante la ronda o después de notificar. Estado del enlace y notificación son
+independientes. No se envía correo de recuperación.
+
+**CTA y estado actual:**
+
+```text
+correo
+→ /admin/alertas?current=true&failure_confirmed=true
+→ GET /api/platforms/link-check-logs/?current=true&failure_confirmed=true
+```
+
+Frontend lee y conserva ambos parámetros. Si el enlace se recupera después del
+correo pero antes de abrirlo, ya no pertenece al resultado filtrado. El correo
+no transporta una lista estática para restaurarla como si siguiera caída. Un
+listado vacío al abrir una alerta antigua puede ser correcto.
+
 ### MENSAJE PARA RESPONSABLE DE FRONTEND
 
-La pantalla ya existe en `/admin/alertas`:
-`Frontend/src/app/admin/(panel)/alertas/page.jsx`,
-`features/admin/harvesting/components/LinkAlerts.jsx` y `harvesting.js`.
-Actualmente descarga el historial, agrupa únicamente por Platform, elige por
-fecha de comprobación y usa un umbral de dos fallos. Todavía no ofrece la vista
-completa de URLs vigentes por contexto ni interpreta los parámetros del correo.
-
-Adaptar esa pantalla para consumir el listado paginado de
-`/api/platforms/link-check-logs/?current=true&failure_confirmed=true`, respetar
-`current` y `failure_confirmed` de la URL y distinguir Platform de relación
-Journal–Platform. Usar `verification_status` para disponible/no disponible/sin
-verificar y el filtro del Backend para caída confirmada (cinco fallos); se puede
-mostrar `fail_count` como detalle. No usar `is_active=false` solo para inferir
-una caída ni elegir la URL vigente por `last_check`. Mantener estados de carga,
-paginación y control del permiso `platforms.link-check-logs.view`.
-
-El correo podrá abrir esa vista filtrada al configurar su URL. El Backend realiza
-la comprobación automática y no envía correo de recuperación. Frontend no
-programa cron, Celery ni RabbitMQ. No se modificó ningún archivo de Frontend.
+El documento listo para entregar es
+[INTEGRACION_FRONTEND_MONITOREO_ENLACES.md](INTEGRACION_FRONTEND_MONITOREO_ENLACES.md).
+Incluye consultas completas, campos reales, estados, filtros, paginación,
+permisos, acciones manuales y recorrido del CTA. La pantalla existente es
+`/admin/alertas` (`LinkAlerts.jsx` y `harvesting.js`). Debe consultar `current=true`
+en el modo actual, conservar los filtros del correo y dejar de utilizar
+`row.failure_confirmed`. La etiqueta de confirmación procede de la categoría
+solicitada al Backend. Resolver Journal por relación, no por coincidencia de URL.
+No se modifica Frontend en este cierre ni se agrega un booleano al serializer
+para adaptarse a una suposición de la pantalla.
 
 ### MENSAJE PARA RESPONSABLE DE CRON / INFRAESTRUCTURA
 
@@ -1009,27 +1083,26 @@ programa cron, Celery ni RabbitMQ. No se modificó ningún archivo de Frontend.
 
 ### Migración, pruebas y comandos a ejecutar por el desarrollador
 
-No se generó ni aplicó una migración. `makemigrations platforms` debe agregar
-`LinkCheckLog.failure_notified_at`, la FK interna nullable `LinkCheckLog.check_batch`
-y crear `LinkCheckRun`/`LinkCheckBatch` con sus claves foráneas. No necesita
-migración de datos: marcas históricas nulas
-significan pendiente de notificación si la URL vigente ya tiene cinco fallos.
+La migración existente es
+`0007_linkcheckbatch_linkchecklog_failure_notified_at_and_more.py`: agrega la
+marca de notificación y la FK de lote, y crea las tablas de coordinación. El
+desarrollador reportó que ya la generó, aplicó localmente y conservó en el host.
+En un despliegue nuevo debe aplicarse con las migraciones existentes. Este cierre
+de documentación y tests no cambia modelos ni requiere otra migración.
 
 Desde la **raíz general** y con los archivos de entorno suministrados:
 
 ```powershell
 docker compose build backend worker
-docker compose run --rm --volume "${PWD}/Backend:/app" backend python manage.py makemigrations platforms --name automatic_link_monitoring
-docker compose build backend worker
-docker compose run --rm backend python manage.py migrate
-docker compose run --rm backend python manage.py check
-docker compose run --rm backend python manage.py test apps.platforms apps.account.tests.test_email apps.account.tests.test_permissions apps.account.tests.test_sessions
-docker compose run --rm backend python manage.py spectacular --validate --file /tmp/schema.yaml
-docker compose up -d backend worker
+docker compose up -d --no-deps backend worker
+docker compose exec backend python manage.py check
+docker compose exec -e DJANGO_TESTING=1 backend python manage.py test apps.platforms
+docker compose exec backend python manage.py spectacular --validate --file /tmp/schema.yaml
 ```
 
-El bind mount conserva la migración generada en `Backend/` del host. La segunda
-construcción la incorpora a las imágenes: Compose no monta el código como volumen.
+La reconstrucción incorpora los archivos modificados: este Compose no monta el
+código como volumen. Los comandos suponen la migración ya aplicada y el broker
+existente disponible para el worker; no crean otra infraestructura.
 
 Usar la BD PostgreSQL de pruebas con permisos para crear la base de test.
 `DJANGO_TESTING=1` usa SQLite y **omite las dos pruebas reales de concurrencia**;
@@ -1037,13 +1110,23 @@ no es suficiente para verificar los bloqueos. Las pruebas mockean HTTP, Resend
 y publicaciones Celery; no requieren ejecutar otro broker de pruebas. El worker
 de aplicación sí necesita acceso al RabbitMQ existente en ejecución real.
 
+Para las dos pruebas de concurrencia con PostgreSQL, sin utilizar el modo SQLite:
+
+```powershell
+docker compose exec -e DJANGO_TESTING=0 backend python manage.py test apps.platforms.tests.test_monitoring.MonitorConcurrencyTests
+```
+
 Se añadieron pruebas en `apps/platforms/tests/test_monitoring.py` y se amplió
 `apps/account/tests/test_email.py`. Incluyen selección actual, Soft Delete,
 límites de retries, contador/recuperación, triggers/permisos/CSRF, chunking,
 redelivery, agrupación, BCC, errores de correo y concurrencia PostgreSQL.
-**Ningún comando de esta sección ni tests, Docker, Django, base de datos o Git
-se ejecutó durante esta implementación.** OpenAPI, migración y entrega real
-de correo están pendientes de validación por el desarrollador.
+La ampliación del contrato incorpora `MonitorQueryContractTests`, extiende las
+pruebas de recuperación y protege la URL configurada del CTA. La matriz de
+casos se detalla en `apps/platforms/tests/PRUEBAS.md`. Los nuevos casos todavía
+no se han ejecutado: deben distinguirse de los resultados de la suite previa
+reportados abajo. En este cierre no se ejecutaron tests, Docker, Django,
+migraciones ni Git. El esquema global conserva los diagnósticos de cuentas;
+no se modifica esa app ni se ocultan sus advertencias para validar este contrato.
 
 ### Conventional Commits recomendados
 
@@ -1061,41 +1144,21 @@ documentación del autenticador y de las vistas de cuentas queda fuera del alcan
 actual. Usar cookies no impide documentar la API; los diagnósticos se conservan
 como pendientes externos. No declarar el esquema global libre de errores.
 
-No se ejecutó Git. Los siguientes grupos incluyen únicamente archivos editados
-en esta tarea, con rutas relativas a la raíz general.
+Para este cierre, sin volver a incluir la implementación anterior:
 
-**`Feat(platforms): Implementar monitoreo asíncrono y notificación de enlaces caídos`**
+**`Test(platforms): Ampliar pruebas del contrato de monitoreo de enlaces`**
 
-Archivos:
+Archivo: `Backend/apps/platforms/tests/test_monitoring.py`. Agrupa los casos
+nuevos de contrato HTTP, recuperación, integración con tasks, independencia
+del correo y URL del CTA, más el ajuste de la prueba de nuevo incidente.
 
-```text
-Backend/apps/platforms/models.py
-Backend/apps/platforms/services.py
-Backend/apps/platforms/filters.py
-Backend/apps/platforms/serializers.py
-Backend/apps/platforms/views.py
-Backend/apps/platforms/tasks.py
-Backend/apps/platforms/notifications.py
-Backend/apps/platforms/permissions.py
-Backend/apps/account/email.py
-Backend/config/settings.py
-Backend/.env.example
-```
+**`Docs(platforms): Documentar contrato de monitoreo de enlaces para Frontend`**
 
-Agrupación: la coordinación, el estado, los triggers y
-la notificación forman una funcionalidad integrada sobre servicios existentes.
-Incluir también la migración de `platforms` **después de generarla y revisarla**;
-todavía no existe un archivo nuevo de migración que pueda enumerarse.
-
-**`Test(platforms): Validar monitoreo de enlaces y difusión de alertas`**
-
-Archivos: `Backend/apps/platforms/tests/test_monitoring.py`,
-`Backend/apps/account/tests/test_email.py`. Agrupación: cobertura del mismo flujo
-de negocio y de la ampliación compatible del helper de correo.
-
-**`Docs(platforms): Documentar monitoreo de enlaces e integración con cron`**
-
-Archivos: `Backend/docs/ENDPOINTS_PLATFORMS.md`,
-`Backend/docs/BITACORA_PLATFORMS.md`, `Backend/context.md`,
-`Backend/apps/platforms/tests/PRUEBAS.md`. Agrupación: contrato, operación,
-contexto, bitácora y alcance de validación de la funcionalidad.
+Archivos: `Backend/apps/platforms/views.py` (solo metadatos OpenAPI),
+`Backend/docs/ENDPOINTS_PLATFORMS.md`,
+`Backend/docs/INTEGRACION_FRONTEND_MONITOREO_ENLACES.md`,
+`Backend/context.md` y `Backend/apps/platforms/tests/PRUEBAS.md`.
+Agrupa Swagger, referencia técnica, guía de entrega, decisión de contrato y
+cobertura documentada. No incluye cambios funcionales, nuevas migraciones ni
+archivos de Frontend/account/core. Si existen otros cambios locales en alguno
+de estos archivos, seleccionar únicamente los bloques de este cierre.

@@ -48,6 +48,12 @@ JOURNAL_RELATION_CONFIG = (
         relation_field="academic_program",
     ),
     RelationConfig(
+        data_field="licenses",
+        through_model=models.SharedJournalLicense,
+        relation_field="license",
+        ordering=("license__name",),
+    ),
+    RelationConfig(
         data_field="platforms",
         through_model=models.SharedJournalPlatform,
         relation_field="platform",
@@ -147,11 +153,7 @@ class JournalLicenseSerializer(serializers.Serializer):
 
 
 class JournalPublishSerializer(serializers.Serializer):
-    licenses = serializers.PrimaryKeyRelatedField(
-        many=True,
-        queryset=models.License.objects.all(),
-        required=False,
-    )
+    pass
 
 
 def _normalize_issn(value: str) -> str:
@@ -388,7 +390,12 @@ class JournalSerializer(
         write_only=True,
     )
 
-    licenses = serializers.SerializerMethodField()
+    licenses = serializers.PrimaryKeyRelatedField(
+        many=True,
+        queryset=models.License.objects.filter(deleted_at__isnull=True),
+        required=False,
+        write_only=True,
+    )
 
     class Meta:
         model = models.Journal
@@ -512,16 +519,12 @@ class JournalSerializer(
             _represent_journal_platform(link, include_relation_key=True)
             for link in _journal_platform_links(instance)
         ]
-        return representation
-
-    @extend_schema_field(
-        serializers.ListField(child=serializers.IntegerField())
-    )
-    def get_licenses(self, instance):
-        return list(
-            instance.license_links.order_by("license__name")
+        representation["licenses"] = list(
+            instance.license_links.filter(deleted_at__isnull=True)
+            .order_by("license__name")
             .values_list("license_id", flat=True)
         )
+        return representation
 
     def _clear_validation(self, journal):
         """

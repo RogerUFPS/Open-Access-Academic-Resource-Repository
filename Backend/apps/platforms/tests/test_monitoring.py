@@ -1,6 +1,7 @@
 from concurrent.futures import ThreadPoolExecutor
 from threading import Barrier
 from unittest.mock import patch
+from urllib.parse import parse_qs, urlsplit
 
 from django.db import close_old_connections, connection
 from django.test import TestCase, TransactionTestCase, override_settings, skipUnlessDBFeature
@@ -112,11 +113,25 @@ class CheckStateTests(MonitorFixtures, TestCase):
             self.assertIsNone(success.failure_notified_at)
             self.assertFalse(services.confirmed_link_failures().exists())
             check.return_value = (500, False)
-            for _ in range(5):
+            for count in range(1, 6):
                 next_incident = services.check_link_context(platform=self.platform, user=self.user)
+                self.assertEqual(next_incident.fail_count, count)
+                self.assertEqual(services.confirmed_link_failures().exists(), count == 5)
             self.assertEqual(next_incident.fail_count, 5)
             self.assertIsNone(next_incident.failure_notified_at)
             send.assert_not_called()
+
+    @patch("apps.platforms.services._validate_safe_http_url")
+    @patch("apps.platforms.services._perform_link_check")
+    def test_success_interrupts_the_consecutive_failure_sequence(self, check, _safe):
+        self.log()
+        check.side_effect = [(503, False)] * 3 + [(200, True)] + [(503, False)] * 4
+        for expected_count in (1, 2, 3, 0, 1, 2, 3, 4):
+            with self.subTest(count=expected_count):
+                result = services.check_link_context(platform=self.platform, user=self.user)
+                self.assertEqual(result.fail_count, expected_count)
+                self.assertEqual(result.is_active, expected_count == 0)
+                self.assertFalse(services.confirmed_link_failures().exists())
 
     @patch("apps.platforms.services._validate_safe_http_url")
     @patch("apps.platforms.services._perform_link_check", return_value=(200, True))
@@ -222,6 +237,184 @@ class MonitorAPITests(MonitorFixtures, APITestCase):
         enqueue.assert_not_called()
 
 
+class MonitorQueryContractTests(MonitorFixtures, APITestCase):
+    """Contrato HTTP del monitor, independiente del envío de correo."""
+
+    endpoint = "/api/platforms/link-check-logs/"
+
+    def setUp(self):
+        super().setUp()
+        self.client.force_authenticate(self.user)
+        self.journal = Journal.objects.create(
+            issn="2026-1105", title="Contrato del monitor", created_by=self.user,
+        )
+        self.relation = SharedJournalPlatform.objects.create(
+            platform=self.platform, journal=self.journal, created_by=self.user,
+        )
+
+    def query_rows(self, **query):
+        response = self.client.get(self.endpoint, {"page_size": 100, **query})
+        self.assertEqual(response.status_code, 200)
+        rows = response.data["results"]
+        for row in rows:
+            # El filtro clasifica el conjunto; no agrega atributos al serializer.
+            self.assertNotIn("failure_confirmed", row)
+        return rows
+
+    def query_ids(self, **query):
+        return {row["id"] for row in self.query_rows(**query)}
+
+    def test_registered_url_is_unverified_and_not_confirmed(self):
+        log = services.register_link_url(
+            platform=self.platform, url="https://8.8.8.8/new", user=self.user,
+        )
+        rows = self.query_rows(current="true")
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["id"], log.pk)
+        self.assertIsNone(rows[0]["last_check"])
+        self.assertFalse(rows[0]["is_active"])
+        self.assertEqual(rows[0]["fail_count"], 0)
+        self.assertEqual(rows[0]["verification_status"], "unverified")
+        self.assertEqual(self.query_ids(current="true", failure_confirmed="true"), set())
+
+    def test_recommended_query_combinations_for_platform_and_journal_links(self):
+        expected = {"current": set(), "unavailable": set(), "confirmed": set(), "pending": set()}
+        states = [(0, False, False), (0, True, True)]
+        states.extend((count, True, False) for count in range(1, 7))
+        for kind in ("platform", "journal"):
+            for index, (count, checked, active) in enumerate(states):
+                platform = self.another_platform(f"{kind}-{index}")
+                relation = None
+                if kind == "journal":
+                    relation = SharedJournalPlatform.objects.create(
+                        platform=platform, journal=self.journal, created_by=self.user,
+                    )
+                log = self.log(
+                    platform, count=count, checked=checked, is_active=active,
+                    journal_platform=relation,
+                )
+                expected["current"].add(log.pk)
+                if checked and not active:
+                    expected["unavailable"].add(log.pk)
+                    expected["confirmed" if count >= 5 else "pending"].add(log.pk)
+
+        cases = (
+            ({"current": "true"}, "current"),
+            ({"current": "true", "verification_status": "unavailable"}, "unavailable"),
+            ({"current": "true", "failure_confirmed": "true"}, "confirmed"),
+            ({"current": "true", "verification_status": "unavailable", "failure_confirmed": "false"}, "pending"),
+        )
+        for query, category in cases:
+            with self.subTest(query=query):
+                self.assertSetEqual(self.query_ids(**query), expected[category])
+        # false por sí solo incluye también disponibles y sin verificar.
+        self.assertSetEqual(
+            self.query_ids(failure_confirmed="false"),
+            expected["current"] - expected["confirmed"],
+        )
+        self.assertSetEqual(self.query_ids(current="false"), set())
+
+    def test_replaced_urls_are_history_for_both_link_contexts(self):
+        history = set()
+        current = set()
+        for relation in (None, self.relation):
+            with self.subTest(journal_platform=getattr(relation, "pk", None)):
+                old = self.log(count=5, checked=True, journal_platform=relation)
+                new = services.register_link_url(
+                    platform=self.platform, journal_platform=relation,
+                    url="https://8.8.8.8/replaced", user=self.user,
+                )
+                history.add(old.pk)
+                current.add(new.pk)
+                response = self.query_rows(
+                    current="true", journal_platform__isnull="true" if relation is None else "false",
+                )
+                self.assertEqual(len(response), 1)
+                self.assertEqual(response[0]["journal_platform"], getattr(relation, "pk", None))
+                self.assertEqual(response[0]["verification_status"], "unverified")
+        self.assertSetEqual(self.query_ids(), history | current)
+        self.assertSetEqual(self.query_ids(current="false"), history)
+        self.assertSetEqual(self.query_ids(current="true"), current)
+        self.assertSetEqual(self.query_ids(current="true", failure_confirmed="true"), set())
+
+    @patch("apps.platforms.tasks.notify_link_failures.delay")
+    @patch("apps.platforms.services._validate_safe_http_url")
+    @patch("apps.platforms.services._perform_link_check", return_value=(503, False))
+    def test_manual_and_celery_results_are_queryable_before_email_and_after_recovery(self, http, _safe, notify):
+        self.log()
+        journal_log = self.log(count=4, checked=True, journal_platform=self.relation)
+        with patch("apps.platforms.services.check_link_context", wraps=services.check_link_context) as checker:
+            for count in range(1, 5):
+                response = self.client.post(f"/api/platforms/{self.platform.pk}/check-link/", {}, format="json")
+                self.assertEqual(response.status_code, 200)
+                self.assertEqual(response.data["fail_count"], count)
+                self.assertEqual(self.query_ids(current="true", failure_confirmed="true"), set())
+            public_log = services.latest_platform_link_log(self.platform)
+            run = models.LinkCheckRun.objects.create(mode="failed", requested_by=self.user, planned=True)
+            batch = models.LinkCheckBatch.objects.create(run=run, link_ids=[public_log.pk, journal_log.pk])
+            models.LinkCheckBatch.objects.create(run=run, link_ids=[])
+            with self.captureOnCommitCallbacks(execute=True):
+                tasks.check_link_batch.run(batch.pk)
+            self.assertEqual(checker.call_count, 6)  # Cuatro manuales y dos automáticas.
+            self.assertEqual(sum(call.kwargs.get("check_batch_id") == batch.pk for call in checker.call_args_list), 2)
+
+        run.refresh_from_db()
+        self.assertIsNone(run.finished_at)
+        notify.assert_not_called()
+        confirmed = self.query_rows(current="true", failure_confirmed="true")
+        self.assertEqual(len(confirmed), 2)
+        self.assertSetEqual({row["journal_platform"] for row in confirmed}, {None, self.relation.pk})
+        for row in confirmed:
+            self.assertEqual(row["fail_count"], 5)
+            self.assertFalse(row["is_active"])
+            self.assertIsNotNone(row["last_check"])
+            self.assertEqual(row["http_status_code"], 503)
+            self.assertEqual(row["verification_status"], "unavailable")
+            self.assertIsNone(row["failure_notified_at"])
+
+        historical_confirmed = {row["id"] for row in confirmed}
+        http.return_value = (200, True)
+        response = self.client.post(f"/api/platforms/{self.platform.pk}/check-links/", {}, format="json")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(self.query_ids(current="true", failure_confirmed="true"), set())
+        recovered = self.query_rows(current="true")
+        self.assertEqual(len(recovered), 2)
+        for row in recovered:
+            self.assertTrue(row["is_active"])
+            self.assertEqual(row["fail_count"], 0)
+            self.assertEqual(row["verification_status"], "available")
+        self.assertTrue(historical_confirmed.issubset(self.query_ids()))
+        self.assertTrue(historical_confirmed.isdisjoint(self.query_ids(current="true")))
+
+        http.return_value = (503, False)
+        response = self.client.post(f"/api/platforms/{self.platform.pk}/check-links/", {}, format="json")
+        self.assertEqual(response.status_code, 200)
+        for row in self.query_rows(current="true"):
+            self.assertEqual(row["fail_count"], 1)
+        self.assertEqual(self.query_ids(current="true", failure_confirmed="true"), set())
+
+    @patch("apps.platforms.notifications.email.send_email", side_effect=EmailDeliveryError("failed"))
+    def test_confirmed_query_is_independent_of_recipients_delivery_and_round_state(self, send):
+        pending = self.log(count=5, checked=True)
+        notified = self.log(
+            self.another_platform("notified"), count=5, checked=True,
+            failure_notified_at=timezone.now(),
+        )
+        run = models.LinkCheckRun.objects.create(mode="all", requested_by=self.user, planned=True)
+        batch = models.LinkCheckBatch.objects.create(run=run, link_ids=[])
+        unfinished = self.log(count=5, checked=True, journal_platform=self.relation, check_batch=batch)
+        expected = {pending.pk, notified.pk, unfinished.pk}
+        with patch("apps.platforms.notifications.failure_recipients", return_value=[]):
+            self.assertEqual(notifications.notify_confirmed_failures(), 0)
+            self.assertSetEqual(self.query_ids(current="true", failure_confirmed="true"), expected)
+        send.assert_not_called()
+        with self.assertRaises(EmailDeliveryError):
+            notifications.notify_confirmed_failures()
+        self.assertSetEqual(self.query_ids(current="true", failure_confirmed="true"), expected)
+        pending.refresh_from_db()
+        self.assertIsNone(pending.failure_notified_at)
+
+
 class MonitorTaskTests(MonitorFixtures, TestCase):
     @override_settings(LINK_CHECK_BATCH_SIZE=2)
     @patch("apps.platforms.tasks.check_link_batch.delay")
@@ -285,6 +478,22 @@ class MonitorTaskTests(MonitorFixtures, TestCase):
 
 @override_settings(LINK_FAILURE_FRONTEND_URL="https://repository.example/admin/alertas")
 class NotificationTests(MonitorFixtures, TestCase):
+    @override_settings(
+        LINK_FAILURE_FRONTEND_URL=(
+            "https://portal.example.test/admin/alertas"
+            "?source=email&current=false&failure_confirmed=false#listado"
+        ),
+    )
+    def test_monitor_url_preserves_configured_location_and_overrides_state_filters(self):
+        url = urlsplit(notifications.affected_links_url())
+        self.assertEqual(url.scheme, "https")
+        self.assertEqual(url.netloc, "portal.example.test")
+        self.assertEqual(url.path, "/admin/alertas")
+        self.assertEqual(url.fragment, "listado")
+        self.assertEqual(parse_qs(url.query), {
+            "source": ["email"], "current": ["true"], "failure_confirmed": ["true"],
+        })
+
     def test_recipients_use_direct_and_preset_permissions_and_superadmin(self):
         direct = User.objects.create_user(email="direct@example.org", permissions=CHECK_PERMISSION)
         preset_user = User.objects.create_user(email="preset@example.org")

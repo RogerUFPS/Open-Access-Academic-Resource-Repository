@@ -534,7 +534,7 @@ export default function JournalTable() {
                         ) : (
                           <button
                             onClick={() => handleOpenPublish(journal)}
-                            title="Publicar revista (asignar licencias)"
+                            title="Publicar revista"
                             className="p-1.5 rounded-lg border border-emerald-200 text-emerald-600 hover:bg-emerald-600 hover:text-white hover:border-emerald-600 transition-all cursor-pointer"
                           >
                             <Play className="w-4 h-4" />

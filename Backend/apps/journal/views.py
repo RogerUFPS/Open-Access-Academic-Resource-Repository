@@ -249,28 +249,6 @@ class JournalViewSet(ResourceImageMixin, AuditableViewSet):
         body = serializers.JournalPublishSerializer(data=request.data)
         body.is_valid(raise_exception=True)
 
-        if "licenses" in body.validated_data:
-            selected = {item.pk for item in body.validated_data["licenses"]}
-            existing = {
-                link.license_id: link
-                for link in models.SharedJournalLicense.all_objects.filter(journal=journal)
-            }
-            for license_id, link in existing.items():
-                if license_id in selected:
-                    if link.is_deleted:
-                        link.restore()
-                elif not link.is_deleted:
-                    link.soft_delete(
-                        user=user,
-                        explanation="Licencia retirada durante la publicación.",
-                    )
-            for license_id in selected - existing.keys():
-                models.SharedJournalLicense.objects.create(
-                    journal=journal,
-                    license_id=license_id,
-                    created_by=user,
-                )
-
         services.validate_journal_for_publication(journal)
 
         journal.active = True
