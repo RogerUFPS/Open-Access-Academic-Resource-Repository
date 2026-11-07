@@ -23,8 +23,7 @@ import DerivedKnowledgeAreas from "@/shared/components/classification/DerivedKno
 import useDerivedKnowledgeAreas from "@/shared/components/classification/useDerivedKnowledgeAreas";
 import { toFieldErrors } from "@/shared/utils/formErrors";
 import { buildPlatformChecklist, isChecklistComplete } from "@/shared/utils/publishChecklists";
-import { SyntaxSelector } from "./SyntaxSelector";
-import { ValidSintaxisModal } from "./ValidSintaxisModal";
+import { ValidSintaxisPanel } from "./ValidSintaxisPanel";
 import { ArrowLeft, CheckCircle2, Save } from "lucide-react";
 
 const STATUS_LABELS = {
@@ -135,7 +134,6 @@ export default function DatabaseForm({ initialData = null, isEdit = false, publi
   });
   const [loadingCatalogs, setLoadingCatalogs] = useState(true);
   const [syntaxError, setSyntaxError] = useState("");
-  const [syntaxModal, setSyntaxModal] = useState(null);
   const [syntaxPermissions, setSyntaxPermissions] = useState({ create: false, update: false, delete: false });
   const [pendingImage, setPendingImage] = useState(null);
 
@@ -418,8 +416,9 @@ export default function DatabaseForm({ initialData = null, isEdit = false, publi
           <div className="space-y-6 min-w-0">
             {/* 1. Información general */}
             <FormSection id="platform-general" number={1} title="Información general">
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                <div id={fieldAnchorId("name")} className={`${cardClass} md:col-span-2`}>
+              {/* items-start: la imagen va en su propia fila para no estirar el nombre. */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3 items-start">
+                <div id={fieldAnchorId("name")} className={cardClass}>
                   <label htmlFor="name" className={labelClass}>Nombre *</label>
                   <Input
                     id="name"
@@ -434,21 +433,7 @@ export default function DatabaseForm({ initialData = null, isEdit = false, publi
                   <FieldError field="name" message={fieldErrors.name} />
                 </div>
 
-                <div id={fieldAnchorId("url_image")} className={`${cardClass} md:row-span-2`}>
-                  <span className={labelClass}>Imagen (opcional)</span>
-                  <ResourceImageUploader
-                    value={formData.url_image}
-                    alt={`Imagen de ${formData.name || "la plataforma"}`}
-                    resourceId={recordId}
-                    uploadImage={platformService.uploadPlatformImage}
-                    deleteImage={platformService.deletePlatformImage}
-                    onImageChange={(urlImage) => setFormData((current) => ({ ...current, url_image: urlImage || "" }))}
-                    onPendingFileChange={setPendingImage}
-                  />
-                  <FieldError field="url_image" message={fieldErrors.url_image} />
-                </div>
-
-                <div id={fieldAnchorId("public_url")} className={`${cardClass} md:col-span-2`}>
+                <div id={fieldAnchorId("public_url")} className={cardClass}>
                   <label htmlFor="public_url" className={labelClass}>URL pública de acceso</label>
                   <Input
                     id="public_url"
@@ -463,12 +448,26 @@ export default function DatabaseForm({ initialData = null, isEdit = false, publi
                   <p className="text-[10px] text-gray-400">Se verifica automáticamente (check-link) al publicar.</p>
                   <FieldError field="public_url" message={fieldErrors.public_url} />
                 </div>
+                <div id={fieldAnchorId("url_image")} className={`${cardClass} md:col-span-2`}>
+                  <span className={labelClass}>Imagen (opcional)</span>
+                  <ResourceImageUploader
+                    value={formData.url_image}
+                    alt={`Imagen de ${formData.name || "la plataforma"}`}
+                    resourceId={recordId}
+                    uploadImage={platformService.uploadPlatformImage}
+                    deleteImage={platformService.deletePlatformImage}
+                    onImageChange={(urlImage) => setFormData((current) => ({ ...current, url_image: urlImage || "" }))}
+                    onPendingFileChange={setPendingImage}
+                  />
+                  <FieldError field="url_image" message={fieldErrors.url_image} />
+                </div>
+
               </div>
             </FormSection>
 
             {/* 2. Cobertura y acceso */}
             <FormSection id="platform-access" number={2} title="Cobertura y acceso">
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3 items-start">
                 <div className={cardClass}>
                   <span className={labelClass}>Fecha de registro (solo lectura)</span>
                   <p className="text-xs font-semibold text-gray-700 h-6 flex items-center">
@@ -510,7 +509,7 @@ export default function DatabaseForm({ initialData = null, isEdit = false, publi
 
             {/* 3. Cosecha */}
             <FormSection id="platform-harvest" number={3} title="Cosecha">
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-3 items-start">
                 <div id={fieldAnchorId("is_harvestable")} className={cardClass}>
                   <span id="is_harvestable-label" className={labelClass}>Cosechable vía API</span>
                   <button
@@ -688,22 +687,18 @@ export default function DatabaseForm({ initialData = null, isEdit = false, publi
             {/* 6. Sintaxis de búsqueda */}
             <FormSection id="platform-syntax" number={6} title="Sintaxis de búsqueda">
               <div id={fieldAnchorId("valid_sintaxis")} className={cardClass}>
-                <label htmlFor="valid_sintaxis" className={labelClass}>Sintaxis de búsqueda admitida</label>
-                <SyntaxSelector
+                <ValidSintaxisPanel
                   options={catalogs.sintaxis || []}
                   value={formData.valid_sintaxis}
-                  loading={false}
-                  error={syntaxError}
+                  loadError={syntaxError}
                   canCreate={syntaxPermissions.create}
                   canUpdate={syntaxPermissions.update}
+                  canDelete={syntaxPermissions.delete}
                   onChange={(validSintaxis) => updateField("valid_sintaxis", validSintaxis)}
-                  onCreate={() => setSyntaxModal({ mode: "create" })}
-                  onEdit={() => {
-                    const selected = (catalogs.sintaxis || []).find(
-                      (syntax) => syntax.id === Number(formData.valid_sintaxis)
-                    );
-                    if (selected) setSyntaxModal({ mode: "edit", item: selected });
-                  }}
+                  onOptionsChange={(updater) =>
+                    setCatalogs((current) => ({ ...current, sintaxis: updater(current.sintaxis || []) }))
+                  }
+                  describedBy={describedBy("valid_sintaxis")}
                 />
                 <FieldError field="valid_sintaxis" message={fieldErrors.valid_sintaxis} />
               </div>
@@ -759,32 +754,6 @@ export default function DatabaseForm({ initialData = null, isEdit = false, publi
         </div>
       </form>
 
-      {syntaxModal && (
-        <ValidSintaxisModal
-          mode={syntaxModal.mode}
-          item={syntaxModal.item}
-          canDelete={syntaxPermissions.delete}
-          onClose={() => setSyntaxModal(null)}
-          onSaved={(saved) => {
-            setCatalogs((current) => ({
-              ...current,
-              sintaxis: current.sintaxis.some((syntax) => syntax.id === saved.id)
-                ? current.sintaxis.map((syntax) => (syntax.id === saved.id ? saved : syntax))
-                : [...current.sintaxis, saved],
-            }));
-            updateField("valid_sintaxis", saved.id);
-            setSyntaxModal(null);
-          }}
-          onDeleted={(id) => {
-            setCatalogs((current) => ({ ...current, sintaxis: current.sintaxis.filter((syntax) => syntax.id !== id) }));
-            setFormData((current) => ({
-              ...current,
-              valid_sintaxis: current.valid_sintaxis === id ? null : current.valid_sintaxis,
-            }));
-            setSyntaxModal(null);
-          }}
-        />
-      )}
     </>
   );
 }

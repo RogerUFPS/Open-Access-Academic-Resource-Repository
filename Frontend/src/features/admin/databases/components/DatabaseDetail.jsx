@@ -596,8 +596,8 @@ export default function DatabaseDetail({ platformId }) {
                       />
                     ) : null}
                     <span className={platform.url_image ? "hidden text-xs text-slate-400" : "text-xs text-slate-400"}>Sin imagen</span>
-                    <Button variant="outline" href={`/admin/bases-de-datos/${platform.id}?edit=true`} className="text-xs">
-                      Reemplazar / eliminar
+                    <Button asChild variant="outline" className="text-xs">
+                      <Link href={`/admin/bases-de-datos/${platform.id}?edit=true`}>Reemplazar / eliminar</Link>
                     </Button>
                   </div>
                 </div>
