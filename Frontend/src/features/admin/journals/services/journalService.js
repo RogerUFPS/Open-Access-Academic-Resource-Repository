@@ -112,8 +112,7 @@ export const journalService = {
    * Valida en el backend que la ficha esté completa.
    */
   publishJournal: async (id, licenses = []) => {
-    const body = Array.isArray(licenses) && licenses.length > 0 ? { licenses } : {};
-    return apiClient.post(`/api/journals/${id}/publish/`, body);
+    return apiClient.post(`/api/journals/${id}/publish/`, {});
   },
 
   /**
@@ -237,7 +236,7 @@ export const journalService = {
    * Load catalog options required by the journal form.
    */
   loadFormCatalogs: async (journalId = null) => {
-    const [languages, countries, materialTypes, academicPrograms, editorials, publishedPlatforms, knowledgeAreas] =
+    const [languages, countries, materialTypes, academicPrograms, editorials, publishedPlatforms, knowledgeAreas, licenses] =
       await Promise.all([
         journalService.getCatalogData("/api/catalog/languages/", [
           { id: 1, abbreviation: "ES", name: "Español" },
@@ -267,6 +266,7 @@ export const journalService = {
         }),
         journalService.getPublishedPlatforms(),
         journalService.getKnowledgeAreasForJournal(journalId),
+        journalService.getLicenses(),
       ]);
 
     return {
@@ -277,6 +277,7 @@ export const journalService = {
       editorials,
       publishedPlatforms,
       knowledgeAreas,
+      licenses,
     };
   },
 };

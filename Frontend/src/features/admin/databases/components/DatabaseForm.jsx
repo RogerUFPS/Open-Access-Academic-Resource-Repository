@@ -131,30 +131,12 @@ export default function DatabaseForm({ initialData = null, isEdit = false }) {
       return;
     }
 
-    if (!formData.public_url.trim()) {
-      setFormError("La URL pública de acceso es obligatoria.");
-      setFieldErrors({ public_url: "La URL pública es requerida." });
-      return;
-    }
-
     const hasBaseApiUrl = Boolean(formData.base_api_url && formData.base_api_url.trim());
     const hasApiKeyInput = Boolean(formData.api_key && formData.api_key.trim());
-
-    // Si es cosechable, la URL base de API es obligatoria
-    if (formData.is_harvestable && !hasBaseApiUrl) {
-      setFormError("Si la base de datos es cosechable, la URL Base de API es obligatoria.");
-      setFieldErrors({ base_api_url: "Obligatoria cuando 'Cosechable vía API' está activado." });
-      return;
-    }
 
     if (hasApiKeyInput && !hasBaseApiUrl) {
       setFormError("Combinación inválida: No se puede enviar una API Key sin haber especificado la URL base de API (base_api_url).");
       setFieldErrors({ base_api_url: "URL base de API requerida si especifica una API Key." });
-      return;
-    }
-
-    if (!formData.valid_sintaxis) {
-      setFormError("Debe seleccionar una sintaxis de búsqueda admitida (valid_sintaxis).");
       return;
     }
 
@@ -164,14 +146,14 @@ export default function DatabaseForm({ initialData = null, isEdit = false }) {
       // Build clean payload. public_url is sent natively for the backend to handle.
       const payload = {
         name: formData.name.trim(),
-        public_url: formData.public_url.trim(),
+        public_url: formData.public_url ? formData.public_url.trim() : null,
         is_harvestable: formData.is_harvestable,
         // Si no es cosechable, enviar null para evitar HTTP 400 del backend
         base_api_url: formData.is_harvestable && formData.base_api_url ? formData.base_api_url.trim() : null,
         url_image: formData.url_image ? formData.url_image.trim() : null,
         requires_registration: formData.requires_registration,
         has_access_text: formData.has_access_text,
-        valid_sintaxis: Number(formData.valid_sintaxis),
+        valid_sintaxis: formData.valid_sintaxis ? Number(formData.valid_sintaxis) : null,
         institutions: formData.institutions,
         languages: formData.languages,
         countries: formData.countries,
@@ -309,21 +291,20 @@ export default function DatabaseForm({ initialData = null, isEdit = false }) {
             />
           </div>
 
-          {/* URL Pública (Obligatoria) */}
+          {/* URL Pública */}
           <div className="bg-white border border-gray-200 rounded-xl p-3 shadow-2xs space-y-1 md:col-span-3">
             <Label htmlFor="public_url" className="text-[11px] font-medium text-gray-500 block">
-              URL Pública de Acceso *
+              URL Pública de Acceso
             </Label>
             <Input
               id="public_url"
               type="url"
-              required
               value={formData.public_url}
               onChange={(e) => {
                 setFormData({ ...formData, public_url: e.target.value });
                 if (fieldErrors.public_url) setFieldErrors((prev) => ({ ...prev, public_url: null }));
               }}
-              placeholder="https://www.scielo.org (Obligatoria)"
+              placeholder="https://www.scielo.org"
               className="border-0 p-0 text-xs shadow-none focus-visible:ring-0 h-6 text-gray-900 font-semibold"
             />
             {fieldErrors.public_url && (
@@ -357,15 +338,14 @@ export default function DatabaseForm({ initialData = null, isEdit = false }) {
             </select>
           </div>
 
-          {/* base_api_url (Obligatoria si is_harvestable) */}
+          {/* base_api_url */}
           <div className="bg-white border border-gray-200 rounded-xl p-3 shadow-2xs space-y-1 md:col-span-2">
             <Label htmlFor="base_api_url" className="text-[11px] font-medium text-gray-500 block">
-              URL Base API de cosecha {formData.is_harvestable ? "*" : "(opcional)"}
+              URL Base API de cosecha
             </Label>
             <Input
               id="base_api_url"
               type="url"
-              required={formData.is_harvestable}
               disabled={!formData.is_harvestable}
               value={formData.base_api_url}
               onChange={(e) => {
@@ -443,7 +423,7 @@ export default function DatabaseForm({ initialData = null, isEdit = false }) {
           <div className="bg-white border border-gray-200 rounded-xl p-4 shadow-2xs space-y-2.5">
             <div className="flex items-center justify-between pb-1 border-b border-gray-100">
               <Label className="text-[11px] font-bold text-gray-700 uppercase tracking-wider block">
-                Institución responsable *
+                Institución responsable
               </Label>
               <span className="text-[10px] bg-slate-100 text-slate-600 font-semibold px-2 py-0.5 rounded-full">
                 {formData.institutions.length} seleccionados
@@ -477,7 +457,7 @@ export default function DatabaseForm({ initialData = null, isEdit = false }) {
           <div className="bg-white border border-gray-200 rounded-xl p-4 shadow-2xs space-y-2.5">
             <div className="flex items-center justify-between pb-1 border-b border-gray-100">
               <Label className="text-[11px] font-bold text-gray-700 uppercase tracking-wider block">
-                País *
+                País
               </Label>
               <span className="text-[10px] bg-slate-100 text-slate-600 font-semibold px-2 py-0.5 rounded-full">
                 {formData.countries.length} seleccionados
@@ -513,7 +493,7 @@ export default function DatabaseForm({ initialData = null, isEdit = false }) {
           <div className="bg-white border border-gray-200 rounded-xl p-4 shadow-2xs space-y-2.5">
             <div className="flex items-center justify-between pb-1 border-b border-gray-100">
               <Label className="text-[11px] font-bold text-gray-700 uppercase tracking-wider block">
-                Tipo de material *
+                Tipo de material
               </Label>
               <span className="text-[10px] bg-slate-100 text-slate-600 font-semibold px-2 py-0.5 rounded-full">
                 {formData.material_types.length} seleccionados
@@ -547,7 +527,7 @@ export default function DatabaseForm({ initialData = null, isEdit = false }) {
           <div className="bg-white border border-gray-200 rounded-xl p-4 shadow-2xs space-y-2.5">
             <div className="flex items-center justify-between pb-1 border-b border-gray-100">
               <Label className="text-[11px] font-bold text-gray-700 uppercase tracking-wider block">
-                Idiomas *
+                Idiomas
               </Label>
               <span className="text-[10px] bg-slate-100 text-slate-600 font-semibold px-2 py-0.5 rounded-full">
                 {formData.languages.length} seleccionados
@@ -583,7 +563,7 @@ export default function DatabaseForm({ initialData = null, isEdit = false }) {
           <div className="bg-white border border-gray-200 rounded-xl p-4 shadow-2xs space-y-2.5">
             <div className="flex items-center justify-between pb-1 border-b border-gray-100">
               <Label className="text-[11px] font-bold text-gray-700 uppercase tracking-wider block">
-                Programas académicos *
+                Programas académicos
               </Label>
               <span className="text-[10px] bg-slate-100 text-slate-600 font-semibold px-2 py-0.5 rounded-full">
                 {formData.academic_programs.length} seleccionados
@@ -624,7 +604,7 @@ export default function DatabaseForm({ initialData = null, isEdit = false }) {
           {/* ¿Exige registro previo? * */}
           <div className="bg-white border border-gray-200 rounded-xl p-3 shadow-2xs space-y-1">
             <Label htmlFor="requires_registration" className="text-[11px] font-medium text-gray-500 block">
-              ¿Exige registro previo? *
+              ¿Exige registro previo?
             </Label>
             <select
               id="requires_registration"
@@ -640,7 +620,7 @@ export default function DatabaseForm({ initialData = null, isEdit = false }) {
           {/* ¿Texto completo disponible? * */}
           <div className="bg-white border border-gray-200 rounded-xl p-3 shadow-2xs space-y-1">
             <Label htmlFor="has_access_text" className="text-[11px] font-medium text-gray-500 block">
-              ¿Texto completo disponible? *
+              ¿Texto completo disponible?
             </Label>
             <select
               id="has_access_text"

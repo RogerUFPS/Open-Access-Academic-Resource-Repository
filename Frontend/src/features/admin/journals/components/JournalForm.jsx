@@ -58,6 +58,7 @@ export default function JournalForm({ initialData = null, isEdit = false }) {
     editorials: [],
     publishedPlatforms: [],
     knowledgeAreas: [],
+    licenses: [],
   });
   const [loadingCatalogs, setLoadingCatalogs] = useState(true);
 
@@ -72,6 +73,7 @@ export default function JournalForm({ initialData = null, isEdit = false }) {
     material_types: [],
     academic_programs: [],
     knowledge_areas: [],
+    licenses: [],
     editorial: "",
     platforms: [],
   });
@@ -98,6 +100,7 @@ export default function JournalForm({ initialData = null, isEdit = false }) {
             countries: extractIds(initialData.countries),
             material_types: extractIds(initialData.material_types),
             academic_programs: extractIds(initialData.academic_programs),
+            licenses: extractIds(initialData.licenses),
             knowledge_areas: extractIds(
               (initialData.knowledge_areas || []).filter((area) =>
                 typeof area !== "object" || area.is_manual === true
@@ -188,37 +191,9 @@ export default function JournalForm({ initialData = null, isEdit = false }) {
       return;
     }
 
-    if (!formData.publication_date) {
-      setFormError("La fecha de publicación u origen es obligatoria.");
-      setFieldErrors({ publication_date: "La fecha de publicación es requerida." });
-      return;
-    }
-
-    if (!formData.editorial) {
-      setFormError("Debe seleccionar una editorial.");
-      setFieldErrors({ editorial: "La editorial es requerida." });
-      return;
-    }
-
-    // Al crear una revista nueva, se exige al menos una plataforma vinculada
-    if (!isEdit && formData.platforms.length === 0) {
-      setFormError("Debe vincular al menos una plataforma a la revista.");
-      setFieldErrors({
-        platforms: "La selección de al menos una plataforma es obligatoria al crear una revista.",
-      });
-      return;
-    }
-
-    // Validar cada plataforma vinculada
     for (let i = 0; i < formData.platforms.length; i++) {
       const row = formData.platforms[i];
-      if (!row.platform) {
-        setFormError(`La plataforma en la fila #${i + 1} es obligatoria.`);
-        setFieldErrors({ platforms: `Seleccione una plataforma en la fila ${i + 1}.` });
-        return;
-      }
-      if (!row.journal_url || !row.journal_url.trim()) {
-        setFormError(`La URL de la revista en la plataforma #${i + 1} es obligatoria.`);
+      if (row.platform && (!row.journal_url || !row.journal_url.trim())) {
         setFieldErrors({
           platforms: `La URL específica de la revista es requerida en la fila ${i + 1}.`,
         });
@@ -232,16 +207,17 @@ export default function JournalForm({ initialData = null, isEdit = false }) {
       const payload = {
         title: formData.title.trim(),
         issn: formData.issn.trim(),
-        publication_date: formData.publication_date,
+        publication_date: formData.publication_date || null,
         url_image: formData.url_image ? formData.url_image.trim() : null,
         has_apc: Boolean(formData.has_apc),
         languages: formData.languages,
         countries: formData.countries,
         material_types: formData.material_types,
         academic_programs: formData.academic_programs,
+        licenses: formData.licenses,
         knowledge_areas: formData.knowledge_areas,
-        editorial: Number(formData.editorial),
-        platforms: formData.platforms.map((row) => ({
+        editorial: formData.editorial ? Number(formData.editorial) : null,
+        platforms: formData.platforms.filter((row) => row.platform).map((row) => ({
           platform: Number(row.platform),
           journal_url: row.journal_url.trim(),
           has_full_text: Boolean(row.has_full_text),
@@ -368,12 +344,11 @@ export default function JournalForm({ initialData = null, isEdit = false }) {
               htmlFor="publication_date"
               className="text-[11px] font-medium text-gray-500 uppercase block"
             >
-              Fecha de publicación *
+              Fecha de publicación
             </Label>
             <Input
               id="publication_date"
               type="date"
-              required
               value={formData.publication_date}
               onChange={(e) => {
                 setFormData({ ...formData, publication_date: e.target.value });
@@ -387,7 +362,7 @@ export default function JournalForm({ initialData = null, isEdit = false }) {
 
           <div className="bg-white border border-gray-200 rounded-xl p-3 shadow-2xs space-y-1">
             <Label htmlFor="has_apc" className="text-[11px] font-medium text-gray-500 uppercase block">
-              ¿Tiene APC? *
+              ¿Tiene APC?
             </Label>
             <select
               id="has_apc"
@@ -430,7 +405,7 @@ export default function JournalForm({ initialData = null, isEdit = false }) {
           <div className="bg-white border border-gray-200 rounded-xl p-4 shadow-2xs space-y-2.5">
             <div className="flex items-center justify-between pb-1 border-b border-gray-100">
               <Label className="text-[11px] font-bold text-gray-700 uppercase tracking-wider block">
-                Idiomas *
+                Idiomas
               </Label>
               <span className="text-[10px] bg-slate-100 text-slate-600 font-semibold px-2 py-0.5 rounded-full">
                 {formData.languages.length} seleccionados
@@ -475,7 +450,7 @@ export default function JournalForm({ initialData = null, isEdit = false }) {
           <div className="bg-white border border-gray-200 rounded-xl p-4 shadow-2xs space-y-2.5">
             <div className="flex items-center justify-between pb-1 border-b border-gray-100">
               <Label className="text-[11px] font-bold text-gray-700 uppercase tracking-wider block">
-                País *
+                País
               </Label>
               <span className="text-[10px] bg-slate-100 text-slate-600 font-semibold px-2 py-0.5 rounded-full">
                 {formData.countries.length} seleccionados
@@ -518,7 +493,7 @@ export default function JournalForm({ initialData = null, isEdit = false }) {
           <div className="bg-white border border-gray-200 rounded-xl p-4 shadow-2xs space-y-2.5">
             <div className="flex items-center justify-between pb-1 border-b border-gray-100">
               <Label className="text-[11px] font-bold text-gray-700 uppercase tracking-wider block">
-                Tipo de material *
+                Tipo de material
               </Label>
               <span className="text-[10px] bg-slate-100 text-slate-600 font-semibold px-2 py-0.5 rounded-full">
                 {formData.material_types.length} seleccionados
@@ -559,7 +534,7 @@ export default function JournalForm({ initialData = null, isEdit = false }) {
           <div className="bg-white border border-gray-200 rounded-xl p-4 shadow-2xs space-y-2.5">
             <div className="flex items-center justify-between pb-1 border-b border-gray-100">
               <Label className="text-[11px] font-bold text-gray-700 uppercase tracking-wider block">
-                Programas académicos *
+                Programas académicos
               </Label>
               <span className="text-[10px] bg-slate-100 text-slate-600 font-semibold px-2 py-0.5 rounded-full">
                 {formData.academic_programs.length} seleccionados
@@ -638,13 +613,53 @@ export default function JournalForm({ initialData = null, isEdit = false }) {
             {renderFieldError("knowledge_areas")}
           </div>
 
+          {/* Licencias */}
+          <div className="bg-white border border-gray-200 rounded-xl p-4 shadow-2xs space-y-2.5 md:col-span-2">
+            <div className="flex items-center justify-between pb-1 border-b border-gray-100">
+              <Label className="text-[11px] font-bold text-gray-700 uppercase tracking-wider block">
+                Licencias
+              </Label>
+              <span className="text-[10px] bg-slate-100 text-slate-600 font-semibold px-2 py-0.5 rounded-full">
+                {formData.licenses.length} seleccionadas
+              </span>
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 max-h-64 overflow-y-auto pr-1">
+              {catalogs.licenses.map((license) => {
+                const isSelected = formData.licenses.includes(license.id);
+                return (
+                  <div
+                    key={license.id}
+                    onClick={() => handleMultiSelectToggle("licenses", license.id)}
+                    className={`flex items-center justify-between p-2.5 rounded-lg text-xs cursor-pointer border transition-all ${
+                      isSelected
+                        ? "bg-rose-50/70 border-[#C8102E] text-gray-900 font-semibold shadow-2xs"
+                        : "bg-white border-gray-200 text-gray-700 hover:bg-gray-50 hover:border-gray-300"
+                    }`}
+                  >
+                    <span className="truncate pr-1">{capitalizeWords(license.name)}</span>
+                    <div
+                      className={`w-4 h-4 rounded flex items-center justify-center border transition-all shrink-0 ${
+                        isSelected
+                          ? "bg-[#C8102E] border-[#C8102E] text-white"
+                          : "border-gray-300 bg-white"
+                      }`}
+                    >
+                      {isSelected && <Check className="w-3 h-3" />}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+            {renderFieldError("licenses")}
+          </div>
+
           {/* Editorial */}
           <div className="bg-white border border-gray-200 rounded-xl p-3 shadow-2xs space-y-1 md:col-span-2">
             <Label
               htmlFor="editorial"
               className="text-[11px] font-bold text-gray-700 uppercase tracking-wider block"
             >
-              Editorial *
+              Editorial
             </Label>
             <select
               id="editorial"
@@ -733,7 +748,7 @@ export default function JournalForm({ initialData = null, isEdit = false }) {
                     {/* Selector de plataforma */}
                     <div className="space-y-1.5">
                       <Label className="text-xs font-bold text-slate-700 uppercase tracking-wide block">
-                        Plataforma *
+                        Plataforma
                       </Label>
                       <select
                         value={row.platform ?? ""}
@@ -752,11 +767,10 @@ export default function JournalForm({ initialData = null, isEdit = false }) {
                     {/* URL de la revista en la plataforma (obligatorio) */}
                     <div className="space-y-1.5">
                       <Label className="text-xs font-bold text-slate-700 uppercase tracking-wide block">
-                        URL de la revista en esta plataforma *
+                        URL de la revista en esta plataforma
                       </Label>
                       <Input
                         type="url"
-                        required
                         value={row.journal_url}
                         onChange={(e) => updatePlatformRow(index, { journal_url: e.target.value })}
                         placeholder="https://plataforma.org/revistas/mi-revista"

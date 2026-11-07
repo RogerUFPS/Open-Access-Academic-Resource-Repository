@@ -189,16 +189,39 @@ export default function DatabaseDetail({ platformId }) {
       const payload = err.data && typeof err.data === "object" ? err.data : {};
       const fieldErrors = Object.entries(payload)
         .filter(([key]) => !["detail", "message", "error"].includes(key))
-        .map(([key, value]) => `${key}: ${Array.isArray(value) ? value.join(", ") : String(value)}`);
+        .map(([key, value]) => ({
+          field: ({
+            name: "Nombre",
+            url: "URL pública",
+            url_image: "URL de imagen",
+            public_url: "URL pública",
+            base_api_url: "URL base de API",
+            is_harvestable: "Cosechable vía API",
+            start_period: "Fecha de registro",
+            finish_period: "Fecha de obsolescencia",
+            valid_sintaxis: "Sintaxis de búsqueda",
+            institutions: "Instituciones responsables",
+            countries: "Países",
+            material_types: "Tipos de material",
+            languages: "Idiomas",
+            academic_programs: "Programas académicos",
+            status: "Estado",
+          })[key] || key,
+          message: Array.isArray(value) ? value.join(", ") : String(value),
+        }));
       const message = fieldErrors.length
-        ? fieldErrors.join("\n")
+        ? fieldErrors.map((item) => `${item.field}: ${item.message}`).join("\n")
         : payload.detail || payload.message || payload.error || err.message || "No se pudo publicar la plataforma.";
       const fieldErrorData = Object.fromEntries(Object.entries(payload).filter(([key]) => !["detail", "message", "error"].includes(key)));
       toast({
         title: "No se pudo publicar la plataforma",
         description: fieldErrors.length ? (
           <div>
-            <ul className="list-disc space-y-1 pl-4">{fieldErrors.map((item, index) => <li key={`${item}-${index}`}>{item}</li>)}</ul>
+            <ul className="list-disc space-y-1 pl-4">
+              {fieldErrors.map((item, index) => (
+                <li key={`${item.field}-${index}`}><span className="font-semibold">{item.field}:</span> {item.message}</li>
+              ))}
+            </ul>
             <Link href={`/admin/bases-de-datos/${platform.id}?edit=true&publishErrors=${encodeURIComponent(JSON.stringify(fieldErrorData))}`} className="mt-2 inline-block font-semibold text-[#7f1218] underline">Revisar datos de la plataforma</Link>
           </div>
         ) : message,

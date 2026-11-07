@@ -157,11 +157,43 @@ export default function DatabaseTable() {
     } catch (err) {
       const detail = err.data?.detail || err.data?.message || err.data?.error;
       const fields = err.data && typeof err.data === "object"
-        ? Object.entries(err.data).filter(([key]) => !["detail", "message", "error"].includes(key)).map(([key, value]) => `${key}: ${Array.isArray(value) ? value.join(", ") : value}`)
+        ? Object.entries(err.data).filter(([key]) => !["detail", "message", "error"].includes(key)).map(([key, value]) =>
+            ({
+              field: ({
+                name: "Nombre",
+                url: "URL pública",
+                url_image: "URL de imagen",
+                public_url: "URL pública",
+                base_api_url: "URL base de API",
+                is_harvestable: "Cosechable vía API",
+                start_period: "Fecha de registro",
+                finish_period: "Fecha de obsolescencia",
+                valid_sintaxis: "Sintaxis de búsqueda",
+                institutions: "Instituciones responsables",
+                countries: "Países",
+                material_types: "Tipos de material",
+                languages: "Idiomas",
+                academic_programs: "Programas académicos",
+                status: "Estado",
+              })[key] || key,
+              message: Array.isArray(value) ? value.join(", ") : String(value),
+            })
+          )
         : [];
       toast({
         title: `No se pudo publicar “${name}”.`,
-        description: fields.length ? fields.join("\n") : detail || err.message || "No se pudo publicar.",
+        description: fields.length ? (
+          <div>
+            <p className="mb-2 font-medium">Complete los siguientes datos:</p>
+            <ul className="list-disc space-y-1.5 pl-4">
+              {fields.map((item, index) => (
+                <li key={`${item.field}-${index}`}>
+                  <span className="font-semibold">{item.field}:</span> {item.message}
+                </li>
+              ))}
+            </ul>
+          </div>
+        ) : detail || err.message || "No se pudo publicar.",
         variant: "destructive",
         duration: 9000,
       });
