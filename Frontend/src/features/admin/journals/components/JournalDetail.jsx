@@ -466,25 +466,26 @@ export default function JournalDetail({ journalId }) {
                   </div>
                 </div>
 
-                {journal.url_image && (
-                  <div className="sm:col-span-2">
-                    <span className="text-xs uppercase tracking-wide text-gray-500 font-semibold block">
-                      URL de imagen
-                    </span>
-                    <div className="mt-1.5 p-3 bg-blue-50 border border-blue-200/80 rounded-lg flex items-center gap-2">
-                      <Link2 className="w-4 h-4 text-blue-500 shrink-0" />
-                      <a
-                        href={journal.url_image}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="font-semibold text-blue-700 hover:underline text-[14px] sm:text-[15px] break-all flex items-center gap-1.5"
-                      >
-                        {journal.url_image}
-                        <ExternalLink className="w-3.5 h-3.5 shrink-0" />
-                      </a>
-                    </div>
+                <div className="sm:col-span-2">
+                  <span className="text-xs uppercase tracking-wide text-gray-500 font-semibold block">Imagen</span>
+                  <div className="mt-1.5 flex items-center gap-3 rounded-lg bg-slate-50 p-3">
+                    {journal.url_image ? (
+                      <img
+                        src={journal.url_image}
+                        alt={`Imagen de ${journal.title}`}
+                        onError={(event) => {
+                          event.currentTarget.style.display = "none";
+                          event.currentTarget.nextElementSibling?.classList.remove("hidden");
+                        }}
+                        className="h-24 w-24 rounded-lg object-cover"
+                      />
+                    ) : null}
+                    <span className={journal.url_image ? "hidden text-xs text-slate-400" : "text-xs text-slate-400"}>Sin imagen</span>
+                    <Button variant="outline" href={`/admin/revistas/${journal.id}?edit=true`} className="text-xs">
+                      Reemplazar / eliminar
+                    </Button>
                   </div>
-                )}
+                </div>
               </div>
             </CardContent>
           </Card>

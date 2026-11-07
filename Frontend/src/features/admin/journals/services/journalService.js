@@ -1,4 +1,4 @@
-import { apiClient } from "@/shared/services/apiClient";
+import { apiClient, deleteMultipart, uploadMultipart } from "@/shared/services/apiClient";
 
 const FORBIDDEN_FIELDS = [
   "status",
@@ -60,12 +60,7 @@ export const journalService = {
    */
   createJournal: async (data) => {
     const clean = sanitizePayload(data);
-    // Asegurar estructura de knowledge_areas como array de IDs
-    if (clean.knowledge_areas && Array.isArray(clean.knowledge_areas)) {
-      clean.knowledge_areas = clean.knowledge_areas.map((ka) =>
-        typeof ka === "object" && ka !== null ? ka.id : Number(ka)
-      );
-    }
+    delete clean.knowledge_areas;
     // Asegurar estructura de platforms
     if (clean.platforms && Array.isArray(clean.platforms)) {
       clean.platforms = clean.platforms.map((p) => ({
@@ -85,14 +80,7 @@ export const journalService = {
    */
   patchJournal: async (id, data) => {
     const clean = sanitizePayload(data);
-
-    if (clean.knowledge_areas !== undefined) {
-      if (Array.isArray(clean.knowledge_areas)) {
-        clean.knowledge_areas = clean.knowledge_areas.map((ka) =>
-          typeof ka === "object" && ka !== null ? ka.id : Number(ka)
-        );
-      }
-    }
+    delete clean.knowledge_areas;
 
     if (clean.platforms !== undefined) {
       if (Array.isArray(clean.platforms)) {
@@ -145,6 +133,10 @@ export const journalService = {
   restoreJournal: async (id) => {
     return apiClient.post(`/api/journals/${id}/restore/`, {});
   },
+  uploadJournalImage: async (id, file) =>
+    uploadMultipart(`/api/journals/${id}/image/`, "image", file),
+  deleteJournalImage: async (id) =>
+    deleteMultipart(`/api/journals/${id}/image/`),
 
   /**
    * List licenses (GET /api/journals/licenses/)

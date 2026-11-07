@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { getSafeUrl } from "@/shared/utils/getSafeUrl";
+import ResourceThumb from "@/features/public/components/ResourceThumb";
 
 const detailTitleClass = "text-2xl font-bold text-[#1f1a1a]";
 const detailTextClass = "text-sm leading-7 text-[#5c5252]";
@@ -48,10 +49,19 @@ export default function ResourceDetail({ resource, type, includedDatabases = [] 
         <Link className="hover:text-[#a3141c]" href="/directorio">Directorio</Link><span className="mx-2">/</span>{isDatabase ? "Bases de datos" : "Revistas"}<span className="mx-2">/</span><span className="text-[#1f1a1a]">{resource.name}</span>
       </nav>
       <header className="mt-7 grid gap-7 border-b border-[#e7dfd9] pb-8 sm:grid-cols-[1fr_auto] sm:items-end sm:pb-10">
-        <div>
+        <div className="flex flex-col items-start gap-4 sm:flex-row sm:gap-6">
+          <ResourceThumb
+            className="h-20 w-20 sm:h-24 sm:w-24"
+            fallback={isDatabase ? "BD" : "R"}
+            imageClassName="h-20 w-20 shrink-0 rounded-md border border-[#e7dfd9] bg-white p-2 sm:h-24 sm:w-24"
+            name={resource.name}
+            src={resource.url_image}
+          />
+          <div>
           <p className="text-xs font-bold uppercase tracking-[0.16em] text-[#7f1218]">{isDatabase ? "Base de datos" : "Revista académica"}</p>
           <h1 className="mt-3 max-w-4xl text-4xl font-bold leading-tight text-[#1f1a1a] sm:text-5xl">{resource.name}</h1>
           <p className="mt-3 text-sm text-[#5c5252]">{resource.institution} · {resource.country}</p>
+          </div>
         </div>
         {officialUrl && <a className="inline-flex min-h-12 items-center justify-center gap-3 rounded-md bg-[#a3141c] px-6 text-sm font-semibold text-white transition hover:bg-[#8a1018] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#a3141c]" href={officialUrl} rel="noopener noreferrer" target="_blank">
           {resource.access_label || "Abrir sitio oficial"} <span aria-hidden="true">↗</span>

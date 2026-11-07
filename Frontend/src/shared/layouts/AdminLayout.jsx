@@ -76,14 +76,13 @@ function AdminLayoutContent({ children, userName }) {
     }
   }
 
-  // Mapeo de rutas fusionado (Tus rutas + Sintaxis válidas y Papelera)
+  // Mapeo de rutas administrativas
   const menuGroups = [
     {
       title: "DIRECTORIO",
       items: [
         { name: "Indicadores", href: "/admin/indicadores", icon: LayoutGrid },
         { name: "Recursos", href: "/admin/bases-de-datos", icon: Book },
-        { name: "Sintaxis válidas", href: "/admin/sintaxis-validas", icon: Book },
         { name: "Cosecha", href: "/admin/cosecha", icon: RefreshCw },
       ]
     },

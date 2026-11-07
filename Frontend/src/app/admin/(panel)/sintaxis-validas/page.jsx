@@ -1,5 +1,5 @@
-import ValidSintaxisManager from "@/features/admin/sintaxis/components/ValidSintaxisManager";
+import { redirect } from "next/navigation";
 
 export default function ValidSintaxisPage() {
-  return <ValidSintaxisManager />;
+  redirect("/admin/bases-de-datos");
 }
