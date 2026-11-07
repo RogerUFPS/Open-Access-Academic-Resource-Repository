@@ -1,4 +1,6 @@
 import os
+import boto3
+from botocore.config import Config
 
 from dotenv import load_dotenv
 
@@ -55,8 +57,6 @@ CELERY_TASK_ACKS_LATE = True
 CELERY_TASK_REJECT_ON_WORKER_LOST = True
 CELERY_WORKER_PREFETCH_MULTIPLIER = 1
 LINK_CHECK_BATCH_SIZE = max(1, int(os.getenv("LINK_CHECK_BATCH_SIZE", "50")))
-# Ruta real existente. Vacío evita inventar un dominio o enlazar una vista que
-# todavía no soporte el contrato de caídas confirmadas.
 LINK_FAILURE_FRONTEND_URL = os.getenv("LINK_FAILURE_FRONTEND_URL", "")
 FRONTEND_LOGIN_URL = os.getenv(
     "FRONTEND_LOGIN_URL",
@@ -98,6 +98,15 @@ else:
             "OPTIONS": {"sslmode": "require"},
         }
     }
+
+s3 = boto3.client(
+        "s3",
+        endpoint_url=os.environ["S3_ENDPOINT"],
+        aws_access_key_id=os.environ["RUSTFS_ACCESS_KEY"],
+        aws_secret_access_key=os.environ["RUSTFS_SECRET_KEY"],
+        region_name="us-east-1",
+        config=Config(s3={"addressing_style": "path"}),
+)
 
 SPECTACULAR_SETTINGS = {
     "TITLE": "API Sistema de Revistas",
