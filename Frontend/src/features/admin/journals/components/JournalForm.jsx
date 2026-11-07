@@ -114,6 +114,7 @@ export default function JournalForm({ initialData = null, isEdit = false, publis
     materialTypes: [],
     academicPrograms: [],
     editorials: [],
+    platforms: [],
     publishedPlatforms: [],
     licenses: [],
   });
@@ -161,12 +162,20 @@ export default function JournalForm({ initialData = null, isEdit = false, publis
     savedAreas: record ? record.knowledge_areas || [] : undefined,
   });
 
-  const publishedIds = useMemo(
-    () => new Set(catalogs.publishedPlatforms.map((platform) => String(platform.id))),
-    [catalogs.publishedPlatforms]
+  // Se pueden asociar plataformas en cualquier estado (no eliminadas).
+  const platformsById = useMemo(
+    () => new Map(catalogs.platforms.map((platform) => [String(platform.id), platform])),
+    [catalogs.platforms]
   );
-  const isRowPublished = (row) =>
-    publishedIds.has(String(row.platform)) || row.is_public === true || String(row.status || "").toUpperCase() === "PUBLICADO";
+  const unpublishedPlatforms = useMemo(
+    () => catalogs.platforms.filter((platform) => String(platform.status || "").toUpperCase() !== "PUBLICADO"),
+    [catalogs.platforms]
+  );
+  const isRowPublished = (row) => {
+    const platform = platformsById.get(String(row.platform));
+    const status = platform?.status ?? row.status;
+    return String(status || "").toUpperCase() === "PUBLICADO" || (!platform && row.is_public === true);
+  };
 
   const checklist = buildJournalChecklist({
     issn: formData.issn,
@@ -367,7 +376,7 @@ export default function JournalForm({ initialData = null, isEdit = false, publis
         <div className="space-y-6 min-w-0">
           {/* 1. Identificación */}
           <FormSection id="journal-identification" number={1} title="Identificación">
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3 items-start">
               <div id={fieldAnchorId("issn")} className={cardClass}>
                 <label htmlFor="issn" className={labelClass}>ISSN *</label>
                 <Input
@@ -436,7 +445,7 @@ export default function JournalForm({ initialData = null, isEdit = false, publis
 
           {/* 2. Acceso y licencias */}
           <FormSection id="journal-access" number={2} title="Acceso y licencias">
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3 items-start">
               <div id={fieldAnchorId("url_image")} className={cardClass}>
                 <span className={labelClass}>Imagen (opcional)</span>
                 <ResourceImageUploader
@@ -451,7 +460,7 @@ export default function JournalForm({ initialData = null, isEdit = false, publis
                 <FieldError field="url_image" message={fieldErrors.url_image} />
               </div>
 
-              <div id={fieldAnchorId("has_apc")} className={`${cardClass} h-fit`}>
+              <div id={fieldAnchorId("has_apc")} className={cardClass}>
                 <label htmlFor="has_apc" className={labelClass}>¿Tiene APC?</label>
                 <select
                   id="has_apc"
@@ -553,7 +562,7 @@ export default function JournalForm({ initialData = null, isEdit = false, publis
             id="journal-platforms"
             number={5}
             title="Plataformas"
-            description="Para publicar, al menos una plataforma asociada debe estar publicada."
+            description="Puedes asociar plataformas sin publicar. Para publicar la revista, al menos una de ellas debe estar publicada."
             aside={
               <Button
                 type="button"
@@ -586,9 +595,7 @@ export default function JournalForm({ initialData = null, isEdit = false, publis
             ) : (
               <div className="space-y-4">
                 {formData.platforms.map((row, index) => {
-                  const selectedPlatform = catalogs.publishedPlatforms.find(
-                    (p) => String(p.id) === String(row.platform)
-                  );
+                  const selectedPlatform = platformsById.get(String(row.platform));
                   const publicUrl = selectedPlatform?.public_url;
                   const rowPublished = isRowPublished(row);
                   const selectId = `platform-row-${row._key}`;
@@ -630,17 +637,30 @@ export default function JournalForm({ initialData = null, isEdit = false, publis
                             }
                             className={`${platformFieldClass} cursor-pointer`}
                           >
-                            <option value="">Seleccione una plataforma publicada</option>
+                            <option value="">Seleccione una plataforma</option>
                             {row.platform && !selectedPlatform && (
                               <option value={row.platform}>
-                                {capitalizeWords(row.name) || `Plataforma #${row.platform}`} (no publicada)
+                                {capitalizeWords(row.name) || `Plataforma #${row.platform}`}
                               </option>
                             )}
-                            {catalogs.publishedPlatforms.map((p) => (
-                              <option key={p.id} value={p.id}>
-                                {capitalizeWords(p.name)}
-                              </option>
-                            ))}
+                            {catalogs.publishedPlatforms.length > 0 && (
+                              <optgroup label="Publicadas">
+                                {catalogs.publishedPlatforms.map((p) => (
+                                  <option key={p.id} value={p.id}>
+                                    {capitalizeWords(p.name)}
+                                  </option>
+                                ))}
+                              </optgroup>
+                            )}
+                            {unpublishedPlatforms.length > 0 && (
+                              <optgroup label="Sin publicar">
+                                {unpublishedPlatforms.map((p) => (
+                                  <option key={p.id} value={p.id}>
+                                    {capitalizeWords(p.name)} ({String(p.status || "borrador").toLowerCase()})
+                                  </option>
+                                ))}
+                              </optgroup>
+                            )}
                           </select>
                         </div>
 

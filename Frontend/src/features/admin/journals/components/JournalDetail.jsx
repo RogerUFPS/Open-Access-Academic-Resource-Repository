@@ -61,7 +61,7 @@ export default function JournalDetail({ journalId }) {
     countries: [],
     materialTypes: [],
     editorials: [],
-    publishedPlatforms: [],
+    platforms: [],
     licenses: [],
   });
   const [loading, setLoading] = useState(true);
@@ -224,7 +224,7 @@ export default function JournalDetail({ journalId }) {
     }
     if (entry.platform_name) return capitalizeWords(entry.platform_name);
     if (entry.name) return capitalizeWords(entry.name);
-    return formatItemName(entry.platform, catalogs.publishedPlatforms);
+    return formatItemName(entry.platform, catalogs.platforms);
   };
 
   const resolvePlatformId = (entry) => {
@@ -238,7 +238,7 @@ export default function JournalDetail({ journalId }) {
       return entry.platform.public_url;
     }
     const platId = resolvePlatformId(entry);
-    const found = catalogs.publishedPlatforms.find((p) => String(p.id) === String(platId));
+    const found = catalogs.platforms.find((p) => String(p.id) === String(platId));
     return found?.public_url || null;
   };
 
@@ -480,8 +480,8 @@ export default function JournalDetail({ journalId }) {
                       />
                     ) : null}
                     <span className={journal.url_image ? "hidden text-xs text-slate-400" : "text-xs text-slate-400"}>Sin imagen</span>
-                    <Button variant="outline" href={`/admin/revistas/${journal.id}?edit=true`} className="text-xs">
-                      Reemplazar / eliminar
+                    <Button asChild variant="outline" className="text-xs">
+                      <Link href={`/admin/revistas/nueva?id=${journal.id}`}>Reemplazar / eliminar</Link>
                     </Button>
                   </div>
                 </div>

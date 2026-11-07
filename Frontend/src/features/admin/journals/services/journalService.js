@@ -192,6 +192,19 @@ export const journalService = {
   },
 
   /**
+   * Todas las plataformas vigentes (no eliminadas), en cualquier estado.
+   * Una revista puede asociarse a una plataforma sin publicar; para publicar
+   * la revista basta con que al menos una de sus plataformas esté publicada.
+   */
+  getAssignablePlatforms: async () => {
+    try {
+      return await fetchAllPages("/api/platforms/", { ordering: "name" });
+    } catch {
+      return journalService.getPublishedPlatforms();
+    }
+  },
+
+  /**
    * Helper to load catalog list safely from /api/catalog/{resource}/
    */
   getCatalogData: async (endpoint, fallback = []) => {
@@ -206,7 +219,7 @@ export const journalService = {
    * Load catalog options required by the journal form.
    */
   loadFormCatalogs: async () => {
-    const [languages, countries, materialTypes, academicPrograms, editorials, publishedPlatforms, licenses] =
+    const [languages, countries, materialTypes, academicPrograms, editorials, platforms, licenses] =
       await Promise.all([
         journalService.getCatalogData("/api/catalog/languages/", [
           { id: 1, abbreviation: "ES", name: "Español" },
@@ -230,7 +243,7 @@ export const journalService = {
           if (Array.isArray(list) && list.length > 0) return list;
           return journalService.getCatalogData("/api/catalog/editoriales/", []);
         }),
-        journalService.getPublishedPlatforms(),
+        journalService.getAssignablePlatforms(),
         journalService.getLicenses(),
       ]);
 
@@ -240,7 +253,8 @@ export const journalService = {
       materialTypes,
       academicPrograms,
       editorials,
-      publishedPlatforms,
+      platforms,
+      publishedPlatforms: platforms.filter((p) => !p.status || String(p.status).toUpperCase() === "PUBLICADO"),
       licenses,
     };
   },
