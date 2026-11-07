@@ -176,6 +176,19 @@ export function getLinkAlerts(query = {}, signal) {
   return listAll("/api/platforms/link-check-logs/", query, signal);
 }
 
+/**
+ * Primera página de verificaciones: útil para conocer `total_items` sin
+ * descargar todo el listado (menú de notificaciones).
+ */
+export function getLinkAlertsPage(query = {}, { page = 1, pageSize = 10 } = {}, signal) {
+  return list("/api/platforms/link-check-logs/", { ...query, page, page_size: pageSize }, signal);
+}
+
+/** Revistas vinculadas a una plataforma (incluye `platforms[].relation_id`). */
+export function getPlatformJournals(platformId, signal) {
+  return listAll("/api/journals/", { platform: platformId }, signal);
+}
+
 export function getHarvestSources(platforms) {
   return platforms.filter((platform) => platform.is_harvestable === true);
 }
@@ -185,6 +198,21 @@ function checkPlatformLink(platformId, url, mutateAction) {
     method: "POST",
     body: url === undefined ? {} : { url },
   }, mutateAction);
+}
+
+// Verifica la URL general y todas las relaciones Journal–Platform vigentes (síncrono, 200).
+function checkPlatformLinks(platformId, mutateAction) {
+  return request(`/api/platforms/${platformId}/check-links/`, { method: "POST" }, mutateAction);
+}
+
+// Encola la verificación global de enlaces vigentes (202: solo confirma el encolado).
+function checkAllLinksAsync(mutateAction) {
+  return request("/api/platforms/check-links-async/", { method: "POST" }, mutateAction);
+}
+
+// Encola reintentos de enlaces vigentes con 1–4 fallos consecutivos (202).
+function checkFailedLinksAsync(mutateAction) {
+  return request("/api/platforms/check-failed-links/", { method: "POST" }, mutateAction);
 }
 
 function createSchedule(payload, mutateAction) {
@@ -230,6 +258,9 @@ function resumeHarvest(id, mutateAction) {
 export function createHarvestingApi(mutateAction) {
   return {
     checkPlatformLink: (id, url) => checkPlatformLink(id, url, mutateAction),
+    checkPlatformLinks: (id) => checkPlatformLinks(id, mutateAction),
+    checkAllLinksAsync: () => checkAllLinksAsync(mutateAction),
+    checkFailedLinksAsync: () => checkFailedLinksAsync(mutateAction),
     createSchedule: (payload) => createSchedule(payload, mutateAction),
     deactivateSchedule: (id, explanation) => deactivateSchedule(id, explanation, mutateAction),
     prepareImmediateSchedule: (schedule) => prepareImmediateSchedule(schedule, mutateAction),
