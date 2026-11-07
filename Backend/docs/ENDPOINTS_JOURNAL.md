@@ -251,6 +251,14 @@ lógicamente. No se exige que esté `PUBLICADO`.
 | POST | `/api/journals/{id}/restore/` | Restaurar revista eliminada | 200 |
 | POST | `/api/journals/{id}/publish/` | Activar y validar revista | 200 |
 | POST | `/api/journals/{id}/deactivate/` | Marcar revista como inactiva | 200 |
+| POST | `/api/journals/{id}/image/` | Subir imagen y asignar `url_image` | 200/400/503 |
+| DELETE | `/api/journals/{id}/image/` | Quitar imagen de la ficha | 200 |
+
+`url_image` es opcional. `POST /api/journals/{id}/image/` recibe
+`multipart/form-data` con el campo `image` (JPEG, PNG, GIF o WebP, máximo
+5 MB por defecto), lo almacena en el bucket `imagenes` de RustFS y devuelve la
+ficha con una URL pública permanente, sin expiración ni firma. Las imágenes
+externas existentes, incluidas las obtenidas por cosecha, se conservan.
 
 `active`, `validated_by` y `validated_at` son campos de solo lectura en el
 serializer administrativo. El cliente puede consultarlos, pero no controlarlos

@@ -2,11 +2,13 @@ from datetime import timedelta
 from typing import Any, cast
 from unittest.mock import patch
 
+from django.core.files.uploadedfile import SimpleUploadedFile
 from django.utils import timezone
 from rest_framework.response import Response
 from rest_framework.test import APITestCase
 
 from apps.account.models import User
+from apps.core.storage import StoredImage
 from apps.catalog.models import (
     AcademicProgram,
     Country,
@@ -213,6 +215,65 @@ class PlatformAPITests(APITestCase):
                 journal_platform__isnull=True,
                 url="https://8.8.8.8/scopus",
             ).exists()
+        )
+
+    @patch("apps.core.viewsets.upload_image")
+    def test_upload_image_action_sets_permanent_url(self, upload_image):
+        platform = models.Platform.objects.create(
+            name="Plataforma con imagen",
+            created_by=self.system,
+        )
+        upload_image.return_value = StoredImage(
+            key="platforms/logo.png",
+            url="http://localhost:9000/imagenes/platforms/logo.png",
+            content_type="image/png",
+            size=40,
+        )
+
+        response = self.client.post(
+            f"/api/platforms/{platform.pk}/image/",
+            {
+                "image": SimpleUploadedFile(
+                    "logo.png",
+                    b"\x89PNG\r\n\x1a\n" + (b"\x00" * 32),
+                    content_type="image/png",
+                )
+            },
+            format="multipart",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            response.data["url_image"],
+            "http://localhost:9000/imagenes/platforms/logo.png",
+        )
+
+        platform.refresh_from_db()
+        self.assertEqual(
+            platform.url_image,
+            "http://localhost:9000/imagenes/platforms/logo.png",
+        )
+        self.assertEqual(platform.updated_by_id, self.system.pk)
+
+    @patch("apps.core.viewsets.delete_image_by_url")
+    def test_delete_image_action_clears_url(self, delete_image_by_url):
+        platform = models.Platform.objects.create(
+            name="Plataforma sin imagen",
+            url_image="http://localhost:9000/imagenes/platforms/logo.png",
+            created_by=self.system,
+        )
+
+        response = self.client.delete(
+            f"/api/platforms/{platform.pk}/image/",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIsNone(response.data["url_image"])
+
+        platform.refresh_from_db()
+        self.assertIsNone(platform.url_image)
+        delete_image_by_url.assert_called_once_with(
+            "http://localhost:9000/imagenes/platforms/logo.png"
         )
 
     def test_create_platform_defaults_to_not_harvestable(self):

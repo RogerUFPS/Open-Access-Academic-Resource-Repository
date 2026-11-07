@@ -7,6 +7,14 @@ from rest_framework.response import Response
 
 from apps.account.models import User
 
+from .serializers import ImageUploadSerializer
+from .storage import (
+    ImageStorageError,
+    delete_image,
+    delete_image_by_url,
+    upload_image,
+)
+
 SYSTEM_USER_CODE = 0
 
 
@@ -14,6 +22,82 @@ def get_acting_user(request):
     if request.user and request.user.is_authenticated:
         return request.user
     return User.all_objects.get(code=SYSTEM_USER_CODE)
+
+
+class ResourceImageMixin:
+    """
+    Acciones compartidas para administrar la imagen de una ficha.
+
+    La imagen es opcional y se publica como URL permanente en RustFS.
+    Las URLs externas existentes (por ejemplo, las obtenidas por
+    cosecha) nunca se eliminan del almacenamiento.
+    """
+
+    image_folder = ""
+
+    def _upload_resource_image(self, request):
+        instance = self.get_object()
+
+        body = ImageUploadSerializer(data=request.data)
+        body.is_valid(raise_exception=True)
+
+        previous_url = instance.url_image
+
+        try:
+            stored = upload_image(
+                file=body.validated_data["image"],
+                folder=self.image_folder,
+            )
+        except ImageStorageError as error:
+            return Response(
+                {"image": [error.message]},
+                status=error.status_code,
+            )
+
+        try:
+            instance.url_image = stored.url
+            instance.updated_by = get_acting_user(request)
+            instance.updated_at = timezone.now()
+            instance.save(
+                update_fields=[
+                    "url_image",
+                    "updated_by",
+                    "updated_at",
+                ]
+            )
+        except Exception:
+            delete_image(stored.key)
+            raise
+
+        if previous_url and previous_url != stored.url:
+            delete_image_by_url(previous_url)
+
+        return Response(
+            self.get_serializer(instance).data,
+            status=status.HTTP_200_OK,
+        )
+
+    def _delete_resource_image(self, request):
+        instance = self.get_object()
+        previous_url = instance.url_image
+
+        instance.url_image = None
+        instance.updated_by = get_acting_user(request)
+        instance.updated_at = timezone.now()
+        instance.save(
+            update_fields=[
+                "url_image",
+                "updated_by",
+                "updated_at",
+            ]
+        )
+
+        delete_image_by_url(previous_url)
+
+        return Response(
+            self.get_serializer(instance).data,
+            status=status.HTTP_200_OK,
+        )
 
 
 class DeleteSerializer(serializers.Serializer):

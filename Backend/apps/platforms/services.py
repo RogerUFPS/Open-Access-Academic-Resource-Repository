@@ -303,11 +303,6 @@ def validate_platform_for_publication(
             "Una plataforma cosechable debe tener una URL base de API."
         )
 
-    if not platform.url_image:
-        errors["url_image"] = (
-            "La plataforma debe tener una URL de imagen para publicarse."
-        )
-
     if not platform.is_harvestable and (
         platform.base_api_url or platform.encrypted_api_key
     ):

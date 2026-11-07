@@ -1,9 +1,12 @@
 from typing import Any
+from unittest.mock import patch
 
+from django.core.files.uploadedfile import SimpleUploadedFile
 from django.utils import timezone
 from rest_framework.test import APITestCase
 
 from apps.account.models import User
+from apps.core.storage import StoredImage
 from apps.catalog.models import (
     AcademicProgram,
     Country,
@@ -220,6 +223,68 @@ class JournalAPITests(APITestCase):
         self.assertFalse(data["active"])
         self.assertIsNone(data["validated_by"])
         self.assertIsNone(data["validated_at"])
+
+    @patch("apps.core.viewsets.upload_image")
+    def test_upload_image_action_sets_permanent_url(self, upload_image):
+        journal = self._create_journal(
+            issn="5555-5555",
+            title="Journal with image",
+        )
+        upload_image.return_value = StoredImage(
+            key="journals/logo.png",
+            url="http://localhost:9000/imagenes/journals/logo.png",
+            content_type="image/png",
+            size=40,
+        )
+
+        response = self.client.post(
+            f"/api/journals/{journal.pk}/image/",
+            {
+                "image": SimpleUploadedFile(
+                    "logo.png",
+                    b"\x89PNG\r\n\x1a\n" + (b"\x00" * 32),
+                    content_type="image/png",
+                )
+            },
+            format="multipart",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            response.data["url_image"],
+            "http://localhost:9000/imagenes/journals/logo.png",
+        )
+
+        journal.refresh_from_db()
+        self.assertEqual(
+            journal.url_image,
+            "http://localhost:9000/imagenes/journals/logo.png",
+        )
+        self.assertEqual(journal.updated_by_id, self.system.pk)
+
+    @patch("apps.core.viewsets.delete_image_by_url")
+    def test_delete_image_action_clears_url(self, delete_image_by_url):
+        journal = self._create_journal(
+            issn="5555-5556",
+            title="Journal without image",
+        )
+        journal.url_image = (
+            "http://localhost:9000/imagenes/journals/logo.png"
+        )
+        journal.save(update_fields=["url_image"])
+
+        response = self.client.delete(
+            f"/api/journals/{journal.pk}/image/",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIsNone(response.data["url_image"])
+
+        journal.refresh_from_db()
+        self.assertIsNone(journal.url_image)
+        delete_image_by_url.assert_called_once_with(
+            "http://localhost:9000/imagenes/journals/logo.png"
+        )
 
     def test_create_cannot_publish_with_read_only_fields(self):
         response = self.client.post(

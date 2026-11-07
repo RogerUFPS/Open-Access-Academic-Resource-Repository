@@ -1,6 +1,4 @@
 import os
-import boto3
-from botocore.config import Config
 
 from dotenv import load_dotenv
 
@@ -99,13 +97,30 @@ else:
         }
     }
 
-s3 = boto3.client(
-        "s3",
-        endpoint_url=os.environ["S3_ENDPOINT"],
-        aws_access_key_id=os.environ["RUSTFS_ACCESS_KEY"],
-        aws_secret_access_key=os.environ["RUSTFS_SECRET_KEY"],
-        region_name="us-east-1",
-        config=Config(s3={"addressing_style": "path"}),
+# --- Almacenamiento S3 (RustFS) ---
+S3_ENDPOINT = os.getenv("S3_ENDPOINT", "")
+S3_PUBLIC_ENDPOINT = os.getenv("S3_PUBLIC_ENDPOINT", S3_ENDPOINT)
+S3_BUCKET = os.getenv("S3_BUCKET", "imagenes")
+S3_REGION = os.getenv("S3_REGION", "us-east-1")
+S3_ACCESS_KEY = os.getenv(
+    "S3_ACCESS_KEY",
+    os.getenv("RUSTFS_ACCESS_KEY", ""),
+)
+S3_SECRET_KEY = os.getenv(
+    "S3_SECRET_KEY",
+    os.getenv("RUSTFS_SECRET_KEY", ""),
+)
+S3_MAX_IMAGE_SIZE = max(
+    1,
+    int(os.getenv("S3_MAX_IMAGE_SIZE", str(5 * 1024 * 1024))),
+)
+S3_ALLOWED_IMAGE_CONTENT_TYPES = tuple(
+    item.strip()
+    for item in os.getenv(
+        "S3_ALLOWED_IMAGE_CONTENT_TYPES",
+        "image/jpeg,image/png,image/gif,image/webp",
+    ).split(",")
+    if item.strip()
 )
 
 SPECTACULAR_SETTINGS = {

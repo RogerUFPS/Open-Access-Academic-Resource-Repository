@@ -15,10 +15,13 @@ from drf_spectacular.utils import (
 from rest_framework import serializers as drf_serializers
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
+from rest_framework.parsers import FormParser, MultiPartParser
 from rest_framework.response import Response
 
+from apps.core.serializers import ImageUploadSerializer
 from apps.core.viewsets import (
     AuditableViewSet,
+    ResourceImageMixin,
     get_acting_user,
 )
 from apps.core.pagination import CustomPageNumberPagination
@@ -328,13 +331,14 @@ class LinkCheckLogViewSet(viewsets.ReadOnlyModelViewSet):
         tags=["Plataformas - Administración"],
     ),
 )
-class PlatformViewSet(AuditableViewSet):
+class PlatformViewSet(ResourceImageMixin, AuditableViewSet):
     """
     CRUD y ciclo de vida administrativo de plataformas.
     """
 
     queryset = _with_public_link_logs(models.Platform.objects.all())
     serializer_class = serializers.PlatformSerializer
+    image_folder = "platforms"
 
     search_fields = [
         "name",
@@ -457,6 +461,35 @@ class PlatformViewSet(AuditableViewSet):
             self.get_serializer(updated_platform).data,
             status=status.HTTP_200_OK,
         )
+
+    @extend_schema(
+        summary="Administrar imagen de plataforma",
+        description=(
+            "``POST`` sube una imagen JPEG, PNG, GIF o WebP a RustFS y la "
+            "asigna a ``url_image``; la imagen es opcional y la respuesta "
+            "incluye una URL pública permanente, sin expiración. "
+            "``DELETE`` quita la imagen. Si fue subida por este backend, "
+            "también se elimina de RustFS; las URLs externas solo se "
+            "desasocian."
+        ),
+        request=ImageUploadSerializer,
+        responses={
+            200: serializers.PlatformSerializer,
+            400: None,
+            503: None,
+        },
+        tags=["Plataformas - Administración"],
+    )
+    @action(
+        detail=True,
+        methods=["post", "delete"],
+        url_path="image",
+        parser_classes=[MultiPartParser, FormParser],
+    )
+    def image(self, request, pk=None):
+        if request.method == "DELETE":
+            return self._delete_resource_image(request)
+        return self._upload_resource_image(request)
 
     @extend_schema(
         summary="Verificar enlace de plataforma",

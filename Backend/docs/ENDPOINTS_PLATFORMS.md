@@ -216,9 +216,17 @@ fields
 | POST | `/api/platforms/{id}/publish/` | `BORRADOR → PUBLICADO` | 200 |
 | POST | `/api/platforms/{id}/mark-obsolete/` | `PUBLICADO → OBSOLETO` | 200 |
 | POST | `/api/platforms/{id}/reactivate/` | `OBSOLETO → BORRADOR` | 200 |
+| POST | `/api/platforms/{id}/image/` | Subir imagen y asignar `url_image` | 200/400/503 |
+| DELETE | `/api/platforms/{id}/image/` | Quitar imagen de la ficha | 200 |
 | POST | `/api/platforms/{id}/check-link/` | Verificar y registrar URL pública | 200/400 |
 
 `status` no se modifica mediante `POST`, `PUT` o `PATCH`. Las transiciones se realizan únicamente mediante las acciones de ciclo de vida.
+
+`url_image` es opcional. `POST /api/platforms/{id}/image/` recibe
+`multipart/form-data` con el campo `image` (JPEG, PNG, GIF o WebP, máximo
+5 MB por defecto), lo almacena en el bucket `imagenes` de RustFS y devuelve la
+ficha con una URL pública permanente, sin expiración ni firma. Las imágenes
+externas existentes, incluidas las obtenidas por cosecha, se conservan.
 
 Cuando una plataforma eliminada se restaura, vuelve a `BORRADOR` y se limpian `validated_by` y `validated_at`.
 
@@ -702,7 +710,8 @@ queda registrada en `LinkCheckLog` para su verificación. Los demás requisitos 
 último resultado exitoso, sintaxis vigente,
 campos técnicos condicionales y al menos un valor efectivo en institución,
 idioma, país, tipo de material, programa académico y área de conocimiento.
-La publicación no requiere Journals asociadas.
+La publicación no requiere Journals asociadas ni imagen (`url_image` es
+opcional).
 
 Si la URL vigente nunca fue comprobada, `publish` indica que debe verificarse.
 Si ya fue comprobada pero su último resultado falló, indica que no se encuentra
