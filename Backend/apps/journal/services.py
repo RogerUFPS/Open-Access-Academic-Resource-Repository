@@ -96,6 +96,14 @@ def validate_journal_for_publication(journal: models.Journal) -> None:
         errors["platforms"] = (
             "La revista tiene plataformas asociadas, pero ninguna se encuentra publicada."
         )
+    elif any(
+        platform_services.latest_journal_link_log(link) is None
+        for link in platform_links
+    ):
+        errors["platforms"] = (
+            "Cada plataforma asociada debe tener una URL pública registrada "
+            "antes de publicar la revista."
+        )
 
     if not models.SharedJournalLicense.objects.filter(
         journal=journal,
@@ -469,7 +477,7 @@ def create_journal(
     title: str,
     user,
     platform_id: int,
-    journal_url: str,
+    journal_url: str | None = None,
     editorial_id: int | None = None,
     publication_date: date | None = None,
     url_image: str | None = None,
@@ -490,7 +498,7 @@ def create_journal(
     - Si el ISSN ya existe, actualiza esa revista.
     - Si la revista con ese ISSN estaba eliminada, la restaura.
     - Sincroniza únicamente las clasificaciones suministradas.
-    - Exige y registra la plataforma y URL contextual de procedencia.
+    - Registra la URL contextual de procedencia cuando se proporciona.
     - Actualiza fetched_at.
 
     None en una colección significa "no modificar".
@@ -507,9 +515,14 @@ def create_journal(
     normalized_issn = _normalize_issn(
         issn
     )
-    if not journal_url or not journal_url.strip():
-        raise ValidationError({"journal_url": "La URL contextual de la revista es obligatoria."})
-    platform_services.validate_safe_http_url(journal_url, field_name="journal_url")
+    if journal_url is not None:
+        if not journal_url.strip():
+            journal_url = None
+        else:
+            platform_services.validate_safe_http_url(
+                journal_url,
+                field_name="journal_url",
+            )
 
     normalized_title = (
         title.strip()
@@ -703,12 +716,13 @@ def create_journal(
         has_full_text=has_full_text,
         user=user,
     )
-    platform_services.register_link_url(
-        platform=journal_platform.platform,
-        journal_platform=journal_platform,
-        url=journal_url,
-        user=user,
-    )
+    if journal_url is not None:
+        platform_services.register_link_url(
+            platform=journal_platform.platform,
+            journal_platform=journal_platform,
+            url=journal_url,
+            user=user,
+        )
 
     recalculate_journals(
         [journal.pk],
