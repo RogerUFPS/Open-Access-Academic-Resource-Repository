@@ -9,6 +9,12 @@ function NewJournalPageInner() {
   const searchParams = useSearchParams();
   const journalId = searchParams.get("id");
   const isEdit = Boolean(journalId);
+  let publishErrors = null;
+  try {
+    publishErrors = JSON.parse(searchParams.get("publishErrors") || "null");
+  } catch {
+    publishErrors = null;
+  }
 
   const [journalData, setJournalData] = useState(null);
   const [loading, setLoading] = useState(isEdit);
@@ -49,7 +55,7 @@ function NewJournalPageInner() {
       );
     }
 
-    return <JournalForm initialData={journalData} isEdit={true} />;
+    return <JournalForm initialData={journalData} isEdit={true} publishErrors={publishErrors} />;
   }
 
   return <JournalForm isEdit={false} />;
