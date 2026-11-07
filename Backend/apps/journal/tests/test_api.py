@@ -351,15 +351,17 @@ class JournalAPITests(APITestCase):
         data = self._get_data(response)
 
         self.assertEqual(response.status_code, 201)
+        # El área enviada manualmente se ignora; solo se deriva la que
+        # corresponde al programa académico.
         self.assertEqual(
             {item["id"] for item in data["knowledge_areas"]},
-            {self.knowledge_area.pk, manual_area.pk},
+            {self.knowledge_area.pk},
         )
         by_id = {item["id"]: item for item in data["knowledge_areas"]}
         self.assertTrue(by_id[self.knowledge_area.pk]["is_derived"])
+        self.assertFalse(by_id[self.knowledge_area.pk]["is_manual"])
         self.assertFalse(by_id[self.knowledge_area.pk]["editable"])
-        self.assertTrue(by_id[manual_area.pk]["is_manual"])
-        self.assertTrue(by_id[manual_area.pk]["editable"])
+        self.assertNotIn(manual_area.pk, by_id)
 
     def test_create_journal_endpoint_allows_draft_platform(self):
         draft_platform = Platform.objects.create(

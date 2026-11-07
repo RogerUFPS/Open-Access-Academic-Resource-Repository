@@ -52,10 +52,10 @@ services:
     <<: *service
     build: ./Backend
     image: harvest-backend
+    pull_policy: never
     depends_on:
       rabbitmq:
         condition: service_healthy
-    pull_policy: never
     env_file: ./Backend/.env
     command: ["celery", "-A", "project", "worker",
               "--loglevel=INFO", "--queues=harvesting", "--concurrency=2"]

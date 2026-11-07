@@ -231,18 +231,6 @@ REQUIRED_PLATFORM_RELATIONS = (
         "language",
         "un idioma activo asociado",
     ),
-    (
-        "knowledge_areas",
-        models.SharedPlatformKnowledgeArea,
-        "knowledge_area",
-        "un área de conocimiento activa asociada",
-    ),
-    (
-        "academic_programs",
-        models.SharedPlatformAcademicProgram,
-        "academic_program",
-        "un programa académico activo asociado",
-    ),
 )
 
 

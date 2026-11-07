@@ -127,8 +127,7 @@ El cliente selecciona únicamente:
 academic_programs
 ```
 
-`knowledge_areas` acepta una lista de IDs como selección manual y también se
-deriva automáticamente mediante:
+`knowledge_areas` es de **solo lectura** y se deriva automáticamente mediante:
 
 ```text
 AcademicProgram
@@ -140,31 +139,31 @@ KnowledgeArea
 SharedJournalKnowledgeArea
 ```
 
-La respuesta administrativa no devuelve una lista simple, sino la procedencia:
+Enviar `knowledge_areas` en `POST`, `PUT` o `PATCH` no crea ni modifica
+relaciones: el campo se ignora. La respuesta administrativa devuelve la
+procedencia de las áreas efectivas:
 
 ```json
 {
   "id": 1,
   "name": "Educación",
-  "is_manual": true,
+  "is_manual": false,
   "is_derived": true,
   "editable": false
 }
 ```
-
-Una relación es editable únicamente cuando `is_manual=true` e
-`is_derived=false`. Mientras `is_derived=true`, no puede retirarse manualmente.
-Si desaparece la última fuente derivada, una selección manual permanece y
-vuelve a ser editable; una relación puramente derivada se elimina lógicamente.
 
 Reglas de actualización:
 
 - si `academic_programs` no viene en un `PATCH`, se conservan programas y áreas;
 - si llega una lista nueva, se sincronizan los programas y se recalculan las áreas;
 - si llega `"academic_programs": []`, se eliminan lógicamente los programas y
-  solo las áreas puramente derivadas; las manuales se conservan;
-- si `knowledge_areas` se omite, se conserva la selección manual;
-- si se envía, sincroniza exclusivamente el origen manual.
+  sus áreas derivadas;
+- `knowledge_areas` nunca se envía desde el cliente.
+
+Para publicar una Journal es obligatorio seleccionar al menos un programa
+académico. Las áreas del conocimiento no se exigen por separado porque son una
+consecuencia automática de los programas.
 
 ### 4.4. Relación con plataformas
 
@@ -315,8 +314,8 @@ El ISSN se almacena normalizado como `1476-4687`. La revista se crea pendiente:
 `active=false`, `validated_by=null` y `validated_at=null`, aunque el cliente
 intente enviar valores diferentes para esos campos de solo lectura.
 
-La respuesta incluye las `knowledge_areas` efectivas, manuales y/o derivadas,
-con sus flags de procedencia y el indicador `editable`.
+La respuesta incluye las `knowledge_areas` efectivas derivadas de los
+programas académicos, con sus flags de procedencia y el indicador `editable`.
 
 ### 6.2. Crear una revista asociada a una plataforma
 
@@ -593,9 +592,9 @@ docker compose -f docker/docker-compose.yml exec web python manage.py check
 La autenticación JWT, los permisos y la protección de escritura se implementarán en la Fase B.
 # Clasificación académica vigente
 
-El Frontend administra `academic_programs` y la selección manual de
-`knowledge_areas`. El origen derivado se calcula como la unión sin duplicados
-de las áreas activas de todos los programas vigentes. Por ejemplo:
+El Frontend administra únicamente `academic_programs`. `knowledge_areas` es de
+solo lectura y se calcula como la unión sin duplicados de las áreas activas de
+todos los programas vigentes. Por ejemplo:
 
 ```json
 {
@@ -605,10 +604,12 @@ de las áreas activas de todos los programas vigentes. Por ejemplo:
 }
 ```
 
-`knowledge_areas` puede enviarse como lista de IDs manuales. Omitirla conserva
-el origen manual vigente. Un `PATCH` que omite `academic_programs` conserva los
-programas; una lista vacía elimina sus vínculos y retira solamente el origen
-derivado que ya no tenga fuente.
+Enviar `knowledge_areas` no tiene efecto. Un `PATCH` que omite
+`academic_programs` conserva los programas y sus áreas; una lista vacía elimina
+sus vínculos y retira las áreas derivadas que ya no tengan fuente.
+
+Para publicar se exige al menos un programa académico vigente. Las áreas no se
+validan por separado.
 
 Filtros contextuales del catálogo `/api/catalog/knowledge-areas/`:
 

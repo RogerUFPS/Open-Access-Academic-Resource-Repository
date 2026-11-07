@@ -362,7 +362,7 @@ class JournalSerializersTests(TestCase):
             },
         )
 
-    def test_knowledge_areas_accept_manual_selection(self):
+    def test_knowledge_areas_are_read_only(self):
         serializer = serializers.JournalSerializer(
             data={
                 "issn": "3456-7890",
@@ -377,19 +377,21 @@ class JournalSerializersTests(TestCase):
         )
 
         self.assertTrue(serializer.is_valid(), serializer.errors)
+        self.assertNotIn("knowledge_areas", serializer.validated_data)
         journal = serializer.save(created_by=self.system)
 
+        # Solo se materializa el área derivada del programa seleccionado.
         self.assertEqual(
             set(journal.knowledge_area_links.values_list(
                 "knowledge_area_id", flat=True,
             )),
-            {self.knowledge_area.pk, self.knowledge_area_secondary.pk},
+            {self.knowledge_area.pk},
         )
-        manual = journal.knowledge_area_links.get(
-            knowledge_area=self.knowledge_area_secondary
+        derived = journal.knowledge_area_links.get(
+            knowledge_area=self.knowledge_area
         )
-        self.assertTrue(manual.is_manual)
-        self.assertFalse(manual.is_derived)
+        self.assertFalse(derived.is_manual)
+        self.assertTrue(derived.is_derived)
 
     def test_patch_without_academic_programs_preserves_derived_relations(self):
         journal = self._journal(
