@@ -9,6 +9,9 @@ import { getUserDisplayName, userService } from "@/shared/services/userService";
 import { capitalizeWords } from "@/lib/utils";
 import { useToast } from "@/components/ui/use-toast";
 import DeleteModal from "./DeleteModal";
+import { PublishChecklist } from "@/shared/components/forms/FormParts";
+import OriginBadge, { originOf } from "@/shared/components/classification/OriginBadge";
+import { buildPlatformChecklist, isChecklistComplete } from "@/shared/utils/publishChecklists";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { 
@@ -27,7 +30,9 @@ import {
   RefreshCw,
   Link2,
   XCircle,
-  HelpCircle
+  HelpCircle,
+  GraduationCap,
+  Lock,
 } from "lucide-react";
 
 export default function DatabaseDetail({ platformId }) {
@@ -35,12 +40,10 @@ export default function DatabaseDetail({ platformId }) {
   const [platform, setPlatform] = useState(null);
   const [linkLogs, setLinkLogs] = useState([]);
   const [catalogs, setCatalogs] = useState({
-    academicPrograms: [],
     institutions: [],
     languages: [],
     countries: [],
     materialTypes: [],
-    knowledgeAreas: [],
   });
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -61,10 +64,9 @@ export default function DatabaseDetail({ platformId }) {
     setLoading(true);
     setError(null);
     try {
-      const [data, catData, kaData] = await Promise.all([
+      const [data, catData] = await Promise.all([
         platformService.getPlatformById(platformId),
         platformService.loadFormCatalogs(),
-        platformService.getCatalogData("/api/catalog/knowledge-areas/"),
       ]);
 
       const auditUserIds = [...new Set(
@@ -84,7 +86,7 @@ export default function DatabaseDetail({ platformId }) {
 
       setPlatform(data);
       setUserNames(Object.fromEntries(resolvedUsers));
-      setCatalogs({ ...catData, knowledgeAreas: kaData });
+      setCatalogs(catData);
 
       // Determine initial verification status from platform or latest log
       let initialStatus = data.verification_status || "unverified";
@@ -172,12 +174,31 @@ export default function DatabaseDetail({ platformId }) {
     }
   };
 
+  // Requisitos de publicación (sección 3.4). La URL debe estar verificada.
+  const publishChecklist = platform
+    ? buildPlatformChecklist({
+        publicUrl: platform.public_url,
+        urlStatus: verificationStatus,
+        validSintaxis: typeof platform.valid_sintaxis === "object" ? platform.valid_sintaxis?.id : platform.valid_sintaxis,
+        institutions: platform.institutions,
+        countries: platform.countries,
+        languages: platform.languages,
+        materialTypes: platform.material_types,
+        isHarvestable: platform.is_harvestable,
+        baseApiUrl: platform.base_api_url,
+        hasApiKey: false, // write-only: el backend no la devuelve
+      }).map((item) => ({ ...item, failed: item.key === "public_url" && verificationStatus === "unavailable" }))
+    : [];
+
   // Action Handlers
   const handlePublish = async () => {
-    if (verificationStatus !== "available") {
+    if (!isChecklistComplete(publishChecklist)) {
       toast({
         title: "No se pudo publicar la plataforma",
-        description: "La URL pública debe verificarse y estar disponible antes de publicar.",
+        description: publishChecklist
+          .filter((item) => !item.done)
+          .map((item) => `• ${item.label}`)
+          .join("\n"),
         variant: "destructive",
       });
       return;
@@ -371,7 +392,7 @@ export default function DatabaseDetail({ platformId }) {
   }
 
   const currentStatus = (platform.status || "BORRADOR").toUpperCase();
-  const canPublish = currentStatus === "BORRADOR" && verificationStatus === "available";
+  const canPublish = currentStatus === "BORRADOR" && isChecklistComplete(publishChecklist);
 
   return (
     <div className="space-y-6 max-w-5xl mx-auto">
@@ -431,7 +452,7 @@ export default function DatabaseDetail({ platformId }) {
               </Button>
               {!canPublish && (
                 <span className="hidden group-hover:block absolute right-0 top-full mt-1 w-64 p-2 bg-[#7f1218] text-white text-[11px] rounded-lg shadow-lg z-20">
-                  Para publicar, la URL pública debe estar verificada y disponible.
+                  Para publicar, completa los requisitos de publicación (panel lateral).
                 </span>
               )}
             </div>
@@ -685,6 +706,81 @@ export default function DatabaseDetail({ platformId }) {
 
         {/* Sidebar Cards (1 Col) */}
         <div className="space-y-6">
+          {currentStatus === "BORRADOR" && (
+            <PublishChecklist
+              items={publishChecklist}
+              description="Programas académicos y áreas no son obligatorios para publicar."
+            />
+          )}
+
+          {/* Clasificación académica (opcional) */}
+          <Card className="rounded-2xl border-gray-200/80 shadow-xs bg-white">
+            <CardHeader className="border-b border-gray-100 pb-4">
+              <CardTitle className="text-base font-bold text-gray-900 flex items-center gap-2">
+                <GraduationCap className="w-4 h-4 text-blue-600" />
+                Clasificación académica
+              </CardTitle>
+              <CardDescription className="text-xs text-gray-500">
+                Opcional. Las áreas se derivan de los programas.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="pt-6 space-y-4">
+              <div>
+                <span className="text-xs uppercase tracking-wide text-gray-500 font-semibold block">Programas académicos</span>
+                <div className="mt-1.5 p-2.5 bg-slate-50 border border-slate-100 rounded-lg">
+                  {Array.isArray(platform.academic_programs) && platform.academic_programs.length > 0 ? (
+                    <ul className="flex flex-wrap gap-1.5">
+                      {platform.academic_programs.map((program, i) => {
+                        const { isManual, isDerived } = originOf(program);
+                        return (
+                          <li key={(typeof program === "object" && program?.id) || i}>
+                            <span
+                              aria-disabled={isDerived ? "true" : undefined}
+                              className="bg-white border border-gray-200 text-slate-800 font-semibold px-2.5 py-1 rounded-md text-xs inline-flex items-center gap-1.5"
+                            >
+                              {isDerived && <Lock className="w-3 h-3 text-gray-500" aria-hidden="true" />}
+                              {formatItemName(program)}
+                              <OriginBadge isManual={isManual} isDerived={isDerived} />
+                            </span>
+                          </li>
+                        );
+                      })}
+                    </ul>
+                  ) : (
+                    <span className="text-slate-400 italic text-xs">Clasificación académica opcional.</span>
+                  )}
+                </div>
+              </div>
+
+              <div>
+                <span className="text-xs uppercase tracking-wide text-gray-500 font-semibold block">Áreas del conocimiento (automáticas)</span>
+                <div className="mt-1.5 p-2.5 bg-slate-50 border border-slate-100 rounded-lg">
+                  {Array.isArray(platform.knowledge_areas) && platform.knowledge_areas.length > 0 ? (
+                    <ul className="flex flex-wrap gap-1.5">
+                      {platform.knowledge_areas.map((area, i) => {
+                        const { isManual, isDerived } = originOf(area);
+                        return (
+                          <li key={(typeof area === "object" && area?.id) || i}>
+                            <span
+                              aria-disabled="true"
+                              className="bg-white border border-gray-200 text-slate-800 font-semibold px-2.5 py-1 rounded-md text-xs inline-flex items-center gap-1.5"
+                            >
+                              <Lock className="w-3 h-3 text-gray-500" aria-hidden="true" />
+                              {formatItemName(area)}
+                              <OriginBadge isManual={isManual} isDerived={isDerived} />
+                            </span>
+                          </li>
+                        );
+                      })}
+                    </ul>
+                  ) : (
+                    <span className="text-slate-400 italic text-xs">Sin áreas derivadas. Puedes publicar sin clasificación.</span>
+                  )}
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+
           {/* Clasificación y Relaciones Card */}
           <Card className="rounded-2xl border-gray-200/80 shadow-xs bg-white">
             <CardHeader className="border-b border-gray-100 pb-4">
