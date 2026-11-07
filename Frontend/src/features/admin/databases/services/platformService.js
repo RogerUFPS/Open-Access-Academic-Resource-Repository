@@ -1,4 +1,5 @@
 import { apiClient, deleteMultipart, uploadMultipart } from "@/shared/services/apiClient";
+import { fetchAllPages } from "@/shared/services/catalogService";
 
 const FORBIDDEN_FIELDS = [
   "status",
@@ -13,6 +14,8 @@ const FORBIDDEN_FIELDS = [
   "deleted_by",
   "deleted_at",
   "encrypted_api_key",
+  // Solo lectura: el backend deriva las áreas de los programas académicos.
+  "knowledge_areas",
 ];
 
 function sanitizePayload(data) {
@@ -188,10 +191,7 @@ export const platformService = {
    */
   getCatalogData: async (endpoint, fallback = []) => {
     try {
-      const res = await apiClient.get(endpoint);
-      if (Array.isArray(res)) return res;
-      if (res && Array.isArray(res.results)) return res.results;
-      return fallback;
+      return await fetchAllPages(endpoint);
     } catch {
       return fallback;
     }
@@ -205,7 +205,7 @@ export const platformService = {
       (sintaxis) => ({ sintaxis: Array.isArray(sintaxis) ? sintaxis : sintaxis.results || [] }),
       (error) => ({ sintaxis: [], sintaxisError: error })
     );
-    const [sintaxis, institutions, languages, countries, materialTypes, academicPrograms] = await Promise.all([
+    const [sintaxis, institutions, languages, countries, materialTypes] = await Promise.all([
       Promise.resolve(sintaxisResult.sintaxis),
       platformService.getCatalogData("/api/catalog/institutions/", [
         { id: 1, name: "SciELO Network" },
@@ -227,12 +227,6 @@ export const platformService = {
         { id: 2, name: "Libros y Monografías" },
         { id: 3, name: "Tesis y Disertaciones" },
       ]),
-      platformService.getCatalogData("/api/catalog/academic-programs/", [
-        { id: 1, name: "Ingeniería de Sistemas" },
-        { id: 2, name: "Ingeniería Industrial" },
-        { id: 3, name: "Medicina" },
-        { id: 4, name: "Todos los programas" },
-      ]),
     ]);
 
     return {
@@ -242,7 +236,6 @@ export const platformService = {
       languages,
       countries,
       materialTypes,
-      academicPrograms,
     };
   },
 };
