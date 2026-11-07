@@ -11,7 +11,6 @@ import {
   Bell, 
   Clock, 
   Users, 
-  Trash2, 
   Cpu, 
   Tag, 
   MessageSquare, 
@@ -94,7 +93,6 @@ function AdminLayoutContent({ children, userName }) {
         { name: "Bitácora", href: "/admin/bitacora", icon: Clock },
         { name: "Administrativos", href: "/admin/usuarios", icon: Users },
         { name: "Presets", href: "/admin/usuarios?vista=presets", icon: Users },
-        { name: "Papelera", href: "/admin/papelera", icon: Trash2 },
       ]
     },
     {
