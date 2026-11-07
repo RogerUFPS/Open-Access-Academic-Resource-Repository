@@ -554,9 +554,29 @@ export default function DatabaseDetail({ platformId }) {
                       {platform.valid_sintaxis
                         ? typeof platform.valid_sintaxis === "object"
                           ? capitalizeWords(platform.valid_sintaxis.name)
-                          : capitalizeWords(catalogs.sintaxis?.find(s => s.id === Number(platform.valid_sintaxis))?.name || "Sintaxis estándar")
-                        : "Sintaxis estándar"}
+                          : capitalizeWords(catalogs.sintaxis?.find(s => s.id === Number(platform.valid_sintaxis))?.name || "Sin sintaxis")
+                        : "Sin sintaxis"}
                     </span>
+                  </div>
+                </div>
+                <div>
+                  <span className="text-xs uppercase tracking-wide text-gray-500 font-semibold block">Imagen</span>
+                  <div className="mt-1.5 flex items-center gap-3 rounded-lg bg-slate-50 p-2.5">
+                    {platform.url_image ? (
+                      <img
+                        src={platform.url_image}
+                        alt={`Imagen de ${platform.name}`}
+                        onError={(event) => {
+                          event.currentTarget.style.display = "none";
+                          event.currentTarget.nextElementSibling?.classList.remove("hidden");
+                        }}
+                        className="h-24 w-24 rounded-lg object-cover"
+                      />
+                    ) : null}
+                    <span className={platform.url_image ? "hidden text-xs text-slate-400" : "text-xs text-slate-400"}>Sin imagen</span>
+                    <Button variant="outline" href={`/admin/bases-de-datos/${platform.id}/editar`} className="text-xs">
+                      Reemplazar / eliminar
+                    </Button>
                   </div>
                 </div>
               </div>

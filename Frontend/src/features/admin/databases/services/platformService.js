@@ -1,4 +1,4 @@
-import { apiClient } from "@/shared/services/apiClient";
+import { apiClient, deleteMultipart, uploadMultipart } from "@/shared/services/apiClient";
 
 const FORBIDDEN_FIELDS = [
   "status",
@@ -150,26 +150,27 @@ export const platformService = {
    * Get valid syntax options (GET /api/platforms/valid-sintaxis/)
    */
   getValidSintaxis: async () => {
-    try {
-      const res = await apiClient.get("/api/platforms/valid-sintaxis/");
-      return Array.isArray(res) ? res : res.results || [];
-    } catch {
-      return [
-        { id: 1, name: "AND, OR, NOT; comillas; filtros por año y colección" },
-        { id: 2, name: "OAI-PMH / Dublin Core" },
-        { id: 3, name: "REST API / JSON Search Syntax" },
-      ];
-    }
+    const res = await apiClient.get("/api/platforms/valid-sintaxis/", { page_size: 100 });
+    return Array.isArray(res) ? res : res.results || [];
   },
 
   getValidSintaxisList: async () => {
-    const response = await apiClient.get("/api/platforms/valid-sintaxis/");
+    const response = await apiClient.get("/api/platforms/valid-sintaxis/", { page_size: 100 });
     return Array.isArray(response) ? response : response.results || [];
   },
+  getValidSintaxisById: async (id) =>
+    apiClient.get(`/api/platforms/valid-sintaxis/${id}/`),
   createValidSintaxis: async (data) => apiClient.post("/api/platforms/valid-sintaxis/", data),
   updateValidSintaxis: async (id, data) => apiClient.patch(`/api/platforms/valid-sintaxis/${id}/`, data),
-  deleteValidSintaxis: async (id) => apiClient.delete(`/api/platforms/valid-sintaxis/${id}/`),
+  deleteValidSintaxis: async (id, deleteExplanation = "") => apiClient.delete(
+    `/api/platforms/valid-sintaxis/${id}/`,
+    deleteExplanation ? { delete_explanation: deleteExplanation } : null
+  ),
   findSimilarSintaxis: async (data) => apiClient.post("/api/platforms/valid-sintaxis/similar/", data),
+  uploadPlatformImage: async (id, file) =>
+    uploadMultipart(`/api/platforms/${id}/image/`, "image", file),
+  deletePlatformImage: async (id) =>
+    deleteMultipart(`/api/platforms/${id}/image/`),
 
   /**
    * Get link check logs history (GET /api/platforms/link-check-logs/)

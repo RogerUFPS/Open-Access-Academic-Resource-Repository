@@ -199,6 +199,37 @@ export const apiClient = {
   },
 };
 
+export async function uploadMultipart(endpoint, fieldName, file) {
+  const url = buildUrl(endpoint);
+  const csrfToken = getCsrfToken();
+  const formData = new FormData();
+  formData.append(fieldName, file);
+  const response = await fetch(url, {
+    method: "POST",
+    headers: {
+      Accept: "application/json",
+      ...(csrfToken ? { "X-CSRFToken": csrfToken } : {}),
+    },
+    credentials: "include",
+    body: formData,
+  });
+  return handleResponse(response, endpoint);
+}
+
+export async function deleteMultipart(endpoint) {
+  const url = buildUrl(endpoint);
+  const csrfToken = getCsrfToken();
+  const response = await fetch(url, {
+    method: "DELETE",
+    headers: {
+      Accept: "application/json",
+      ...(csrfToken ? { "X-CSRFToken": csrfToken } : {}),
+    },
+    credentials: "include",
+  });
+  return handleResponse(response, endpoint);
+}
+
 // Read-only requests use the same-origin proxy. Mutations run through the
 // Server Action supplied by AccountsGateway, which owns session and CSRF cookies.
 async function accountsRequest(path, { method = "GET", body, signal } = {}, mutateAction) {

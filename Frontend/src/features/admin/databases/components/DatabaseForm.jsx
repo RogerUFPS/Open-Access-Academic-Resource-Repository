@@ -7,6 +7,10 @@ import { capitalizeWords } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { useAccountsApi } from "@/shared/components/AccountsProvider";
+import { ResourceImageUploader } from "@/shared/components/ResourceImageUploader";
+import { SyntaxSelector } from "./SyntaxSelector";
+import { ValidSintaxisModal } from "./ValidSintaxisModal";
 import { 
   ArrowLeft, 
   AlertCircle, 
@@ -15,6 +19,7 @@ import {
 
 export default function DatabaseForm({ initialData = null, isEdit = false }) {
   const router = useRouter();
+  const accountsApi = useAccountsApi();
 
   // Catalogs state
   const [catalogs, setCatalogs] = useState({
@@ -26,6 +31,11 @@ export default function DatabaseForm({ initialData = null, isEdit = false }) {
     academicPrograms: [],
   });
   const [loadingCatalogs, setLoadingCatalogs] = useState(true);
+  const [syntaxLoading, setSyntaxLoading] = useState(true);
+  const [syntaxError, setSyntaxError] = useState("");
+  const [syntaxModal, setSyntaxModal] = useState(null);
+  const [syntaxPermissions, setSyntaxPermissions] = useState({ create: false, update: false, delete: false });
+  const [pendingImage, setPendingImage] = useState(null);
 
   // Form State (strictly fields of Platform model)
   const [formData, setFormData] = useState({
@@ -37,7 +47,7 @@ export default function DatabaseForm({ initialData = null, isEdit = false }) {
     url_image: "",
     requires_registration: false,
     has_access_text: true,
-    valid_sintaxis: "",
+    valid_sintaxis: null,
     institutions: [],
     languages: [],
     countries: [],
@@ -57,6 +67,7 @@ export default function DatabaseForm({ initialData = null, isEdit = false }) {
       try {
         const catData = await platformService.loadFormCatalogs();
         setCatalogs(catData);
+        setSyntaxError("");
 
         if (initialData) {
           setFormData({
@@ -68,7 +79,9 @@ export default function DatabaseForm({ initialData = null, isEdit = false }) {
             url_image: initialData.url_image || "",
             requires_registration: Boolean(initialData.requires_registration),
             has_access_text: Boolean(initialData.has_access_text),
-            valid_sintaxis: initialData.valid_sintaxis?.id || initialData.valid_sintaxis || "",
+            valid_sintaxis: typeof initialData.valid_sintaxis === "object"
+              ? initialData.valid_sintaxis?.id ?? null
+              : initialData.valid_sintaxis ?? null,
             institutions: extractIds(initialData.institutions),
             languages: extractIds(initialData.languages),
             countries: extractIds(initialData.countries),
@@ -78,7 +91,6 @@ export default function DatabaseForm({ initialData = null, isEdit = false }) {
         } else {
           setFormData((prev) => ({
             ...prev,
-            valid_sintaxis: catData.sintaxis[0]?.id || 1,
             institutions: catData.institutions.length > 0 ? [catData.institutions[0].id] : [1],
             languages: catData.languages.length > 0 ? [catData.languages[0].id] : [1],
             countries: catData.countries.length > 0 ? [catData.countries[0].id] : [1],
@@ -89,12 +101,27 @@ export default function DatabaseForm({ initialData = null, isEdit = false }) {
         }
       } catch (err) {
         console.error("Error loading catalogs:", err);
+        setSyntaxError("No se pudo cargar el catálogo de sintaxis.");
       } finally {
         setLoadingCatalogs(false);
+        setSyntaxLoading(false);
       }
     }
     loadData();
   }, [initialData]);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    accountsApi.me(controller.signal).then((user) => {
+      const permissions = user?.effective_permissions?.platforms?.["valid-sintaxis"] || {};
+      setSyntaxPermissions({
+        create: Boolean(user?.is_superadmin || permissions.create),
+        update: Boolean(user?.is_superadmin || permissions.update),
+        delete: Boolean(user?.is_superadmin || permissions.delete),
+      });
+    }).catch(() => setSyntaxPermissions({ create: false, update: false, delete: false }));
+    return () => controller.abort();
+  }, [accountsApi]);
 
   function extractIds(list) {
     if (!list || !Array.isArray(list) || list.length === 0) return [];
@@ -150,7 +177,6 @@ export default function DatabaseForm({ initialData = null, isEdit = false }) {
         is_harvestable: formData.is_harvestable,
         // Si no es cosechable, enviar null para evitar HTTP 400 del backend
         base_api_url: formData.is_harvestable && formData.base_api_url ? formData.base_api_url.trim() : null,
-        url_image: formData.url_image ? formData.url_image.trim() : null,
         requires_registration: formData.requires_registration,
         has_access_text: formData.has_access_text,
         valid_sintaxis: formData.valid_sintaxis ? Number(formData.valid_sintaxis) : null,
@@ -179,13 +205,31 @@ export default function DatabaseForm({ initialData = null, isEdit = false }) {
         savedPlatform = await platformService.createPlatform(payload);
       }
 
-      const redirectId = savedPlatform?.id || initialData?.id;
+      const savedId = savedPlatform?.id || initialData?.id;
+      if (pendingImage && savedId) {
+        try {
+          const updated = await platformService.uploadPlatformImage(savedId, pendingImage);
+          setPendingImage(null);
+          setFormData((current) => ({ ...current, url_image: updated.url_image || "" }));
+        } catch (imageError) {
+          setFormError(imageError.message || "La plataforma se guardó, pero no se pudo subir la imagen.");
+        }
+      }
+
+      const redirectId = savedId;
 
       if (actionType === "publish" && redirectId) {
         try {
           await platformService.publishPlatform(redirectId);
         } catch (pubErr) {
           console.warn("Error en la publicación:", pubErr);
+          const message = pubErr.data?.valid_sintaxis || pubErr.message;
+          if (pubErr.data?.valid_sintaxis) {
+            setFieldErrors((current) => ({ ...current, valid_sintaxis: pubErr.data.valid_sintaxis }));
+            setFormError(typeof message === "string" ? message : "Selecciona una sintaxis para publicar.");
+            setSubmitting(false);
+            return;
+          }
         }
       }
 
@@ -216,7 +260,8 @@ export default function DatabaseForm({ initialData = null, isEdit = false }) {
   }
 
   return (
-    <form onSubmit={(e) => handleSubmit(e, "save")} className="space-y-6 max-w-5xl mx-auto">
+    <>
+      <form onSubmit={(e) => handleSubmit(e, "save")} className="space-y-6 max-w-5xl mx-auto">
       {/* Header */}
       <div>
         <div className="flex items-center gap-3">
@@ -276,18 +321,19 @@ export default function DatabaseForm({ initialData = null, isEdit = false }) {
             )}
           </div>
 
-          {/* URL de imagen */}
+          {/* Imagen */}
           <div className="bg-white border border-gray-200 rounded-xl p-3 shadow-2xs space-y-1">
-            <Label htmlFor="url_image" className="text-[11px] font-medium text-gray-500 block">
-              URL de imagen (Texto)
+            <Label className="text-[11px] font-medium text-gray-500 block">
+              Imagen (opcional)
             </Label>
-            <Input
-              id="url_image"
-              type="url"
+            <ResourceImageUploader
               value={formData.url_image}
-              onChange={(e) => setFormData({ ...formData, url_image: e.target.value })}
-              placeholder="https://.../logo.png"
-              className="border-0 p-0 text-xs shadow-none focus-visible:ring-0 h-6 text-gray-800"
+              alt={`Imagen de ${formData.name || "la plataforma"}`}
+              resourceId={initialData?.id}
+              uploadImage={platformService.uploadPlatformImage}
+              deleteImage={platformService.deletePlatformImage}
+              onImageChange={(urlImage) => setFormData((current) => ({ ...current, url_image: urlImage || "" }))}
+              onPendingFileChange={setPendingImage}
             />
           </div>
 
@@ -638,18 +684,28 @@ export default function DatabaseForm({ initialData = null, isEdit = false }) {
             <Label htmlFor="valid_sintaxis" className="text-[11px] font-medium text-gray-500 block">
               Sintaxis de búsqueda admitida
             </Label>
-            <select
-              id="valid_sintaxis"
+            <SyntaxSelector
+              options={catalogs.sintaxis || []}
               value={formData.valid_sintaxis}
-              onChange={(e) => setFormData({ ...formData, valid_sintaxis: e.target.value })}
-              className="w-full text-xs font-semibold text-gray-900 outline-none bg-transparent h-6 cursor-pointer"
-            >
-              {catalogs.sintaxis.map((s) => (
-                <option key={s.id} value={s.id}>
-                  {capitalizeWords(s.name)}
-                </option>
-              ))}
-            </select>
+              loading={syntaxLoading}
+              error={syntaxError}
+              canCreate={syntaxPermissions.create}
+              canUpdate={syntaxPermissions.update}
+              onChange={(validSintaxis) => {
+                setFormData((current) => ({ ...current, valid_sintaxis: validSintaxis }));
+                setFieldErrors((current) => ({ ...current, valid_sintaxis: null }));
+              }}
+              onCreate={() => setSyntaxModal({ mode: "create" })}
+              onEdit={() => {
+                const selected = (catalogs.sintaxis || []).find((syntax) => syntax.id === Number(formData.valid_sintaxis));
+                if (selected) setSyntaxModal({ mode: "edit", item: selected });
+              }}
+            />
+            {fieldErrors.valid_sintaxis && (
+              <p className="text-xs font-medium text-rose-600">
+                {Array.isArray(fieldErrors.valid_sintaxis) ? fieldErrors.valid_sintaxis.join(", ") : fieldErrors.valid_sintaxis}
+              </p>
+            )}
           </div>
         </div>
       </div>
@@ -685,6 +741,33 @@ export default function DatabaseForm({ initialData = null, isEdit = false }) {
           </Button>
         </div>
       </div>
-    </form>
+      </form>
+      {syntaxModal && (
+      <ValidSintaxisModal
+        mode={syntaxModal.mode}
+        item={syntaxModal.item}
+        canDelete={syntaxPermissions.delete}
+        onClose={() => setSyntaxModal(null)}
+        onSaved={(saved) => {
+          setCatalogs((current) => ({
+            ...current,
+            sintaxis: current.sintaxis.some((syntax) => syntax.id === saved.id)
+              ? current.sintaxis.map((syntax) => syntax.id === saved.id ? saved : syntax)
+              : [...current.sintaxis, saved],
+          }));
+          setFormData((current) => ({ ...current, valid_sintaxis: saved.id }));
+          setSyntaxModal(null);
+        }}
+        onDeleted={(id) => {
+          setCatalogs((current) => ({ ...current, sintaxis: current.sintaxis.filter((syntax) => syntax.id !== id) }));
+          setFormData((current) => ({
+            ...current,
+            valid_sintaxis: current.valid_sintaxis === id ? null : current.valid_sintaxis,
+          }));
+          setSyntaxModal(null);
+        }}
+      />
+      )}
+    </>
   );
 }
