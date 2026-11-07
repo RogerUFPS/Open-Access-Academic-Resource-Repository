@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { platformService } from "../services/platformService";
 import { SyntaxFieldsEditor } from "./SyntaxFieldsEditor";
+import { extractApiErrorText, normalizeApiFieldErrors } from "@/shared/services/apiClient";
 
 const KNOWN_OPERATORS = ["AND", "OR", "NOT", "XOR", "NAND", "NOR"];
 
@@ -73,11 +74,13 @@ export function ValidSintaxisModal({ mode, item, canDelete, onClose, onSaved, on
         : await platformService.createValidSintaxis(payload);
       onSaved(saved);
     } catch (err) {
-      if (!mode && err.status === 400 && err.data?.existing_id !== undefined) {
+      if (mode === "create" && err.status === 400 && err.data?.existing_id !== undefined) {
         setExistingId(Number(err.data.existing_id));
       } else {
-        setError(err.data?.detail || err.message || "No se pudo guardar la sintaxis.");
-        if (err.data && typeof err.data === "object") setFieldErrors(err.data);
+        setError(extractApiErrorText(err.data) || err.message || "No se pudo guardar la sintaxis.");
+        if (err.data && typeof err.data === "object") {
+          setFieldErrors(normalizeApiFieldErrors(err.data));
+        }
       }
     } finally {
       setSaving(false);
@@ -88,7 +91,7 @@ export function ValidSintaxisModal({ mode, item, canDelete, onClose, onSaved, on
     event.preventDefault();
     const payload = cleanPayload(form);
     if (!payload.name) {
-      setFieldErrors({ name: ["El nombre es obligatorio."] });
+      setFieldErrors({ name: "El nombre es obligatorio." });
       return;
     }
     if (mode === "edit") {
@@ -112,7 +115,7 @@ export function ValidSintaxisModal({ mode, item, canDelete, onClose, onSaved, on
         await save(payload);
       }
     } catch (err) {
-      setError(err.data?.detail || err.message || "No se pudo comprobar sintaxis similares.");
+      setError(extractApiErrorText(err.data) || err.message || "No se pudo comprobar sintaxis similares.");
     } finally {
       setSaving(false);
     }
@@ -125,7 +128,7 @@ export function ValidSintaxisModal({ mode, item, canDelete, onClose, onSaved, on
       await platformService.deleteValidSintaxis(item.id, deleteExplanation);
       onDeleted(item.id);
     } catch (err) {
-      const detail = err.data?.detail || err.message || "";
+      const detail = extractApiErrorText(err.data) || err.message || "";
       if (err.status === 400 && /delete_explanation|explicación/i.test(JSON.stringify(err.data))) {
         const explanation = window.prompt("Esta sintaxis requiere una explicación de eliminación:");
         if (explanation) {
@@ -174,7 +177,7 @@ export function ValidSintaxisModal({ mode, item, canDelete, onClose, onSaved, on
           <label className="block text-sm font-medium">
             Nombre
             <input required maxLength={150} value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2" />
-            {fieldErrors.name && <span className="mt-1 block text-xs text-rose-600">{fieldErrors.name.join(", ")}</span>}
+            {fieldErrors.name && <span className="mt-1 block text-xs text-rose-600">{fieldErrors.name}</span>}
           </label>
           <fieldset>
             <legend className="mb-2 text-sm font-semibold">Operadores booleanos</legend>

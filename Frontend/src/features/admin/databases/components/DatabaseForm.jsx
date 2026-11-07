@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useAccountsApi } from "@/shared/components/AccountsProvider";
+import { extractApiErrorText, normalizeApiFieldErrors } from "@/shared/services/apiClient";
 import { ResourceImageUploader } from "@/shared/components/ResourceImageUploader";
 import { SyntaxSelector } from "./SyntaxSelector";
 import { ValidSintaxisModal } from "./ValidSintaxisModal";
@@ -67,7 +68,7 @@ export default function DatabaseForm({ initialData = null, isEdit = false }) {
       try {
         const catData = await platformService.loadFormCatalogs();
         setCatalogs(catData);
-        setSyntaxError("");
+        setSyntaxError(catData.sintaxisError ? "No se pudo cargar el catálogo de sintaxis." : "");
 
         if (initialData) {
           setFormData({
@@ -158,6 +159,20 @@ export default function DatabaseForm({ initialData = null, isEdit = false }) {
       return;
     }
 
+    const normalizedPublicUrl = typeof formData.public_url === "string"
+      ? formData.public_url.trim()
+      : "";
+    setFormData((current) => ({ ...current, public_url: normalizedPublicUrl }));
+
+    if (normalizedPublicUrl && !/^https?:\/\/\S+$/i.test(normalizedPublicUrl)) {
+      setFieldErrors((current) => ({
+        ...current,
+        public_url: "Debe empezar con http:// o https://",
+      }));
+      document.getElementById("public_url")?.focus();
+      return;
+    }
+
     const hasBaseApiUrl = Boolean(formData.base_api_url && formData.base_api_url.trim());
     const hasApiKeyInput = Boolean(formData.api_key && formData.api_key.trim());
 
@@ -173,7 +188,7 @@ export default function DatabaseForm({ initialData = null, isEdit = false }) {
       // Build clean payload. public_url is sent natively for the backend to handle.
       const payload = {
         name: formData.name.trim(),
-        public_url: formData.public_url ? formData.public_url.trim() : null,
+        public_url: normalizedPublicUrl || null,
         is_harvestable: formData.is_harvestable,
         // Si no es cosechable, enviar null para evitar HTTP 400 del backend
         base_api_url: formData.is_harvestable && formData.base_api_url ? formData.base_api_url.trim() : null,
@@ -223,9 +238,12 @@ export default function DatabaseForm({ initialData = null, isEdit = false }) {
           await platformService.publishPlatform(redirectId);
         } catch (pubErr) {
           console.warn("Error en la publicación:", pubErr);
-          const message = pubErr.data?.valid_sintaxis || pubErr.message;
+          const message = extractApiErrorText(pubErr.data?.valid_sintaxis) || pubErr.message;
           if (pubErr.data?.valid_sintaxis) {
-            setFieldErrors((current) => ({ ...current, valid_sintaxis: pubErr.data.valid_sintaxis }));
+            setFieldErrors((current) => ({
+              ...current,
+              valid_sintaxis: extractApiErrorText(pubErr.data.valid_sintaxis) || "Selecciona una sintaxis para publicar.",
+            }));
             setFormError(typeof message === "string" ? message : "Selecciona una sintaxis para publicar.");
             setSubmitting(false);
             return;
@@ -242,7 +260,7 @@ export default function DatabaseForm({ initialData = null, isEdit = false }) {
     } catch (err) {
       console.error("Form submit error:", err);
       if (err.data && typeof err.data === "object") {
-        setFieldErrors(err.data);
+        setFieldErrors(normalizeApiFieldErrors(err.data));
       }
       setFormError(err.message || "Error al guardar la plataforma.");
     } finally {
@@ -355,7 +373,9 @@ export default function DatabaseForm({ initialData = null, isEdit = false }) {
             />
             {fieldErrors.public_url && (
               <p className="text-[11px] text-rose-600 font-medium mt-1">
-                {Array.isArray(fieldErrors.public_url) ? fieldErrors.public_url.join(", ") : fieldErrors.public_url}
+                {typeof fieldErrors.public_url === "string"
+                  ? fieldErrors.public_url
+                  : "Revisa la URL pública."}
               </p>
             )}
           </div>

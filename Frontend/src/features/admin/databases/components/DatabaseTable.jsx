@@ -7,6 +7,7 @@ import { platformService } from "../services/platformService";
 import { useToast } from "@/components/ui/use-toast";
 import { capitalizeWords } from "@/lib/utils";
 import { clampPage, sanitizePageValue } from "@/shared/utils/pagination";
+import { extractApiErrorText } from "@/shared/services/apiClient";
 import DeleteModal from "./DeleteModal";
 import {
   Plus,
@@ -155,7 +156,7 @@ export default function DatabaseTable() {
       showSuccess(`Plataforma "${name}" publicada con éxito.`);
       fetchPlatforms();
     } catch (err) {
-      const detail = err.data?.detail || err.data?.message || err.data?.error;
+      const detail = extractApiErrorText(err.data);
       const fields = err.data && typeof err.data === "object"
         ? Object.entries(err.data).filter(([key]) => !["detail", "message", "error"].includes(key)).map(([key, value]) =>
             ({
@@ -176,7 +177,7 @@ export default function DatabaseTable() {
                 academic_programs: "Programas académicos",
                 status: "Estado",
               })[key] || key,
-              message: Array.isArray(value) ? value.join(", ") : String(value),
+              message: extractApiErrorText(value) || "Revisa este campo.",
             })
           )
         : [];

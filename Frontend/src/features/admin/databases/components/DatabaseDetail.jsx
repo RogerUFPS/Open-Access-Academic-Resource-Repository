@@ -4,6 +4,7 @@ import React, { useState, useEffect, useMemo } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { platformService } from "../services/platformService";
+import { extractApiErrorText, normalizeApiFieldErrors } from "@/shared/services/apiClient";
 import { getUserDisplayName, userService } from "@/shared/services/userService";
 import { capitalizeWords } from "@/lib/utils";
 import { useToast } from "@/components/ui/use-toast";
@@ -207,12 +208,12 @@ export default function DatabaseDetail({ platformId }) {
             academic_programs: "Programas académicos",
             status: "Estado",
           })[key] || key,
-          message: Array.isArray(value) ? value.join(", ") : String(value),
+          message: extractApiErrorText(value) || "Revisa este campo.",
         }));
       const message = fieldErrors.length
         ? fieldErrors.map((item) => `${item.field}: ${item.message}`).join("\n")
         : payload.detail || payload.message || payload.error || err.message || "No se pudo publicar la plataforma.";
-      const fieldErrorData = Object.fromEntries(Object.entries(payload).filter(([key]) => !["detail", "message", "error"].includes(key)));
+      const fieldErrorData = normalizeApiFieldErrors(payload);
       toast({
         title: "No se pudo publicar la plataforma",
         description: fieldErrors.length ? (
@@ -574,7 +575,7 @@ export default function DatabaseDetail({ platformId }) {
                       />
                     ) : null}
                     <span className={platform.url_image ? "hidden text-xs text-slate-400" : "text-xs text-slate-400"}>Sin imagen</span>
-                    <Button variant="outline" href={`/admin/bases-de-datos/${platform.id}/editar`} className="text-xs">
+                    <Button variant="outline" href={`/admin/bases-de-datos/${platform.id}?edit=true`} className="text-xs">
                       Reemplazar / eliminar
                     </Button>
                   </div>

@@ -481,7 +481,7 @@ export default function JournalDetail({ journalId }) {
                       />
                     ) : null}
                     <span className={journal.url_image ? "hidden text-xs text-slate-400" : "text-xs text-slate-400"}>Sin imagen</span>
-                    <Button variant="outline" href={`/admin/revistas/${journal.id}/editar`} className="text-xs">
+                    <Button variant="outline" href={`/admin/revistas/${journal.id}?edit=true`} className="text-xs">
                       Reemplazar / eliminar
                     </Button>
                   </div>

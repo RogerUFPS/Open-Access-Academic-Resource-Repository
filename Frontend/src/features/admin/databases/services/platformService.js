@@ -201,8 +201,12 @@ export const platformService = {
    * Load catalog options from /api/catalog/ endpoints
    */
   loadFormCatalogs: async () => {
+    const sintaxisResult = await platformService.getValidSintaxis().then(
+      (sintaxis) => ({ sintaxis: Array.isArray(sintaxis) ? sintaxis : sintaxis.results || [] }),
+      (error) => ({ sintaxis: [], sintaxisError: error })
+    );
     const [sintaxis, institutions, languages, countries, materialTypes, academicPrograms] = await Promise.all([
-      platformService.getValidSintaxis(),
+      Promise.resolve(sintaxisResult.sintaxis),
       platformService.getCatalogData("/api/catalog/institutions/", [
         { id: 1, name: "SciELO Network" },
         { id: 2, name: "Universidad Francisco de Paula Santander" },
@@ -233,6 +237,7 @@ export const platformService = {
 
     return {
       sintaxis: Array.isArray(sintaxis) ? sintaxis : sintaxis.results || [],
+      sintaxisError: sintaxisResult.sintaxisError || null,
       institutions,
       languages,
       countries,

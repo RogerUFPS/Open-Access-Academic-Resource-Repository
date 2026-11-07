@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { extractApiErrorText } from "@/shared/services/apiClient";
 
 const MAX_SIZE = 5 * 1024 * 1024;
 const ACCEPTED_TYPES = ["image/jpeg", "image/png", "image/gif", "image/webp"];
@@ -128,7 +129,9 @@ export function imageErrorMessage(error) {
   if (error?.status === 415) return "Revisa el tipo de envío de la imagen.";
   if (error?.status === 503) return "Servicio de imágenes no disponible. Inténtalo nuevamente.";
   if (error?.status === 400) {
-    return error?.data?.image?.[0] || error?.data?.detail || "Archivo de imagen inválido.";
+    return extractApiErrorText(error?.data?.image)
+      || extractApiErrorText(error?.data?.detail || error?.data?.message)
+      || "Archivo de imagen inválido.";
   }
   return error?.message || "No se pudo procesar la imagen.";
 }
