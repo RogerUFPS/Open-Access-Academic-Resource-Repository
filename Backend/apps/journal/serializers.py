@@ -237,10 +237,11 @@ class JournalPlatformRelationSerializer(
     )
 
     def validate_journal_url(self, value):
-        platform_services.validate_safe_http_url(
-            value,
-            field_name="journal_url",
-        )
+        if value is not None:
+            platform_services.validate_safe_http_url(
+                value,
+                field_name="journal_url",
+            )
         return value
 
     def to_internal_value(self, data):
@@ -490,11 +491,6 @@ class JournalSerializer(
                     platform,
                     field_name="platform",
                 )
-            if platform.pk not in active_platform_ids and not item.get("journal_url"):
-                raise serializers.ValidationError(
-                    "Cada relación nueva requiere journal_url."
-                )
-
         return value
 
     def _prepare_relation_data(self, validated_data):

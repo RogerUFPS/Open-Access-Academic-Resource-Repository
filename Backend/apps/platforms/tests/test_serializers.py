@@ -161,6 +161,17 @@ class PlatformSerializersTests(TestCase):
             [self.knowledge_area.pk],
         )
 
+    def test_platform_draft_can_be_created_without_public_url(self):
+        serializer = serializers.PlatformSerializer(
+            data={"name": "Plataforma en borrador"},
+        )
+
+        self.assertTrue(serializer.is_valid(), serializer.errors)
+        platform = serializer.save(created_by=self.system)
+
+        self.assertEqual(platform.status, models.Platform.Status.BORRADOR)
+        self.assertIsNone(serializers.PlatformSerializer(platform).data["public_url"])
+
     def test_platform_serializer_creates_manual_academic_classification(
         self,
     ):

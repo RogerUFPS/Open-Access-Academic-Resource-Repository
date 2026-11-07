@@ -142,6 +142,22 @@ class JournalSerializersTests(TestCase):
         self.assertIsNone(journal.validated_by)
         self.assertIsNone(journal.validated_at)
 
+    def test_draft_journal_can_be_created_without_platform_url(self):
+        serializer = serializers.JournalSerializer(
+            data={
+                "issn": "2020-3030",
+                "title": "Journal pendiente de URL",
+                "platforms": [{"platform": self.platform.pk}],
+            },
+        )
+
+        self.assertTrue(serializer.is_valid(), serializer.errors)
+        journal = serializer.save(created_by=self.system)
+
+        self.assertFalse(journal.active)
+        self.assertEqual(journal.platform_links.count(), 1)
+        self.assertFalse(journal.platform_links.first().link_check_logs.exists())
+
     def test_journal_serializer_create_with_all_relations(self):
         """
         Crea una revista y sincroniza las seis relaciones configuradas.
