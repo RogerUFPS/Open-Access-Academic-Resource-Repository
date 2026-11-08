@@ -8,7 +8,6 @@ const filled = (value) => (typeof value === "string" ? value.trim().length > 0 :
  * `urlStatus`:
  *  - "available"   → URL registrada y verificada.
  *  - "unavailable" → la última verificación falló.
- *  - "pending"     → URL registrada; se verificará al publicar.
  *  - otro valor    → URL registrada sin verificar.
  */
 export function buildPlatformChecklist({
@@ -24,12 +23,11 @@ export function buildPlatformChecklist({
   hasApiKey,
 }) {
   const hasUrl = filled(publicUrl);
-  const urlVerified = hasUrl && (urlStatus === "available" || urlStatus === "pending");
+  const urlVerified = hasUrl && urlStatus === "available";
   let urlHint;
   if (!hasUrl) urlHint = "Registra la URL pública.";
-  else if (urlStatus === "pending") urlHint = "Se verificará automáticamente al publicar.";
-  else if (urlStatus === "unavailable") urlHint = "La última verificación falló. Vuelve a verificarla.";
-  else if (urlStatus !== "available") urlHint = "Verifica la URL pública (check-link).";
+  else if (urlStatus === "unavailable") urlHint = "La última verificación falló. Verifica la URL antes de publicar.";
+  else if (urlStatus !== "available") urlHint = "Verifica la URL pública antes de publicar.";
 
   const items = [
     { key: "public_url", label: "URL pública registrada y verificada", done: urlVerified, hint: urlHint },
