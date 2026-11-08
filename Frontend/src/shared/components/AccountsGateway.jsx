@@ -30,6 +30,9 @@ const ALLOWED_HARVEST_MUTATIONS = [
   ["DELETE", /^\/api\/harvesting\/schedules\/\d+\/$/],
   ["POST", /^\/api\/harvesting\/harvests\/\d+\/(pause|resume)\/$/],
   ["POST", /^\/api\/platforms\/\d+\/check-link\/$/],
+  ["POST", /^\/api\/platforms\/\d+\/check-links\/$/],
+  ["POST", /^\/api\/platforms\/check-links-async\/$/],
+  ["POST", /^\/api\/platforms\/check-failed-links\/$/],
 ];
 
 async function responseData(response) {
@@ -141,7 +144,8 @@ export default function AccountsGateway({ children }) {
     if (typeof path !== "string" || !ALLOWED_HARVEST_MUTATIONS.some(([verb, pattern]) => verb === method && pattern.test(path))) {
       return { status: 400, data: { detail: "La operación de cosecha solicitada no es válida." } };
     }
-    const longRunning = path === "/api/harvesting/schedules/run-due/" || path.endsWith("/resume/");
+    // check-links de una plataforma es síncrono y puede comprobar muchas URLs.
+    const longRunning = path === "/api/harvesting/schedules/run-due/" || path.endsWith("/resume/") || /^\/api\/platforms\/\d+\/check-links\/$/.test(path);
     return mutateBackend(path, method, body, longRunning ? null : 90000);
   }
 

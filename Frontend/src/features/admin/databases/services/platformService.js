@@ -1,4 +1,7 @@
 import { apiClient, deleteMultipart, uploadMultipart } from "@/shared/services/apiClient";
+import { extractResults, fetchAllPages } from "@/shared/services/catalogService";
+
+const LINK_CHECK_LOGS_ENDPOINT = "/api/platforms/link-check-logs/";
 
 const FORBIDDEN_FIELDS = [
   "status",
@@ -13,6 +16,8 @@ const FORBIDDEN_FIELDS = [
   "deleted_by",
   "deleted_at",
   "encrypted_api_key",
+  // Solo lectura: el backend deriva las áreas de los programas académicos.
+  "knowledge_areas",
 ];
 
 function sanitizePayload(data) {
@@ -149,15 +154,10 @@ export const platformService = {
   /**
    * Get valid syntax options (GET /api/platforms/valid-sintaxis/)
    */
-  getValidSintaxis: async () => {
-    const res = await apiClient.get("/api/platforms/valid-sintaxis/", { page_size: 100 });
-    return Array.isArray(res) ? res : res.results || [];
-  },
+  // Recorre todas las páginas: el selector no debe truncarse a las primeras 100.
+  getValidSintaxis: async () => fetchAllPages("/api/platforms/valid-sintaxis/"),
 
-  getValidSintaxisList: async () => {
-    const response = await apiClient.get("/api/platforms/valid-sintaxis/", { page_size: 100 });
-    return Array.isArray(response) ? response : response.results || [];
-  },
+  getValidSintaxisList: async () => fetchAllPages("/api/platforms/valid-sintaxis/"),
   getValidSintaxisById: async (id) =>
     apiClient.get(`/api/platforms/valid-sintaxis/${id}/`),
   createValidSintaxis: async (data) => apiClient.post("/api/platforms/valid-sintaxis/", data),
@@ -173,25 +173,33 @@ export const platformService = {
     deleteMultipart(`/api/platforms/${id}/image/`),
 
   /**
-   * Get link check logs history (GET /api/platforms/link-check-logs/)
+   * Estado vigente de la URL general de una plataforma:
+   * GET /api/platforms/link-check-logs/?platform={id}&current=true&journal_platform__isnull=true
+   * Devuelve el LinkCheckLog vigente o null si aún no hay registro.
    */
-  getLinkCheckLogs: async (params = {}) => {
-    try {
-      return await apiClient.get("/api/platforms/link-check-logs/", params);
-    } catch {
-      return { results: [] };
-    }
+  getCurrentPlatformLinkLog: async (id) => {
+    const response = await apiClient.get(LINK_CHECK_LOGS_ENDPOINT, {
+      platform: id,
+      current: "true",
+      journal_platform__isnull: "true",
+      page_size: 1,
+    });
+    return extractResults(response)[0] || null;
   },
+
+  /**
+   * Historial completo (vigente y sustituido) de la URL general de una
+   * plataforma, recorriendo todas las páginas. Excluye los enlaces de revistas.
+   */
+  getPlatformLinkHistory: async (id) =>
+    fetchAllPages(LINK_CHECK_LOGS_ENDPOINT, { platform: id, journal_platform__isnull: "true" }),
 
   /**
    * Helper to load catalog list safely from /api/catalog/{resource}/
    */
   getCatalogData: async (endpoint, fallback = []) => {
     try {
-      const res = await apiClient.get(endpoint);
-      if (Array.isArray(res)) return res;
-      if (res && Array.isArray(res.results)) return res.results;
-      return fallback;
+      return await fetchAllPages(endpoint);
     } catch {
       return fallback;
     }
@@ -205,7 +213,7 @@ export const platformService = {
       (sintaxis) => ({ sintaxis: Array.isArray(sintaxis) ? sintaxis : sintaxis.results || [] }),
       (error) => ({ sintaxis: [], sintaxisError: error })
     );
-    const [sintaxis, institutions, languages, countries, materialTypes, academicPrograms] = await Promise.all([
+    const [sintaxis, institutions, languages, countries, materialTypes] = await Promise.all([
       Promise.resolve(sintaxisResult.sintaxis),
       platformService.getCatalogData("/api/catalog/institutions/", [
         { id: 1, name: "SciELO Network" },
@@ -227,12 +235,6 @@ export const platformService = {
         { id: 2, name: "Libros y Monografías" },
         { id: 3, name: "Tesis y Disertaciones" },
       ]),
-      platformService.getCatalogData("/api/catalog/academic-programs/", [
-        { id: 1, name: "Ingeniería de Sistemas" },
-        { id: 2, name: "Ingeniería Industrial" },
-        { id: 3, name: "Medicina" },
-        { id: 4, name: "Todos los programas" },
-      ]),
     ]);
 
     return {
@@ -242,7 +244,6 @@ export const platformService = {
       languages,
       countries,
       materialTypes,
-      academicPrograms,
     };
   },
 };
