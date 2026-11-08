@@ -24,7 +24,14 @@ RabbitMQ delivers tasks from the API to the worker. Its data is kept in a persis
 
 ### Scheduler
 
-A dedicated cron service periodically calls the backend to start harvesting tasks that are due.
+A single Celery Beat service schedules HTTP dispatch tasks in UTC. The tasks use
+the existing RabbitMQ broker and Celery worker to call the backend endpoints;
+the backend then queues long-running harvest and link-check work. Configure
+`SCHEDULER_API_TOKEN` and `SCHEDULER_SERVICE_USER_ID` as deployment secrets and
+point the service user to a non-superadmin account with the `check_link`
+permission. Do not run multiple Beat instances. Link-check endpoints return an
+existing unfinished run for duplicate/idempotent requests, and a database
+constraint prevents overlapping runs of the same mode.
 
 ## Design decisions
 

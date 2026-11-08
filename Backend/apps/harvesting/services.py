@@ -1239,7 +1239,7 @@ def run_scheduled_harvests(now=None) -> list[models.Harvest]:
                 event.error_message = "La programación no tiene plataformas asociadas."
                 event.save(update_fields=["state", "finished_at", "error_message"])
 
-    candidates = list(models.Harvest.objects.filter(
+    candidate_ids = models.Harvest.objects.filter(
         state__in=[
             models.Harvest.State.PENDING,
             models.Harvest.State.RUNNING,
@@ -1249,11 +1249,24 @@ def run_scheduled_harvests(now=None) -> list[models.Harvest]:
     ).filter(
         Q(worker_dispatched_at__isnull=True)
         | Q(worker_dispatched_at__lt=retry_before)
-    ).order_by("created_at"))
+    ).order_by("created_at").values_list("pk", flat=True)
     dispatched = []
-    for harvest in candidates:
-        dispatch_harvest_to_worker(harvest)
-        dispatched.append(harvest)
+    for harvest_id in candidate_ids:
+        with transaction.atomic():
+            harvest = models.Harvest.objects.select_for_update().get(pk=harvest_id)
+            if harvest.state not in {
+                models.Harvest.State.PENDING,
+                models.Harvest.State.RUNNING,
+                models.Harvest.State.PAUSING,
+            }:
+                continue
+            if (
+                harvest.worker_dispatched_at is not None
+                and harvest.worker_dispatched_at >= retry_before
+            ):
+                continue
+            dispatch_harvest_to_worker(harvest)
+            dispatched.append(harvest)
     return dispatched
 
 

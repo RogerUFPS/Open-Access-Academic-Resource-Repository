@@ -50,7 +50,6 @@ services:
 
   worker:
     <<: *service
-    build: ./Backend
     image: harvest-backend
     pull_policy: never
     depends_on:
@@ -60,14 +59,16 @@ services:
     command: ["celery", "-A", "project", "worker",
               "--loglevel=INFO", "--queues=harvesting", "--concurrency=2"]
 
-  cron:
+  beat:
     <<: *service
-    build: ./Cron
-    env_file: ./Cron/.env
-    cap_drop: []
-    cap_add:
-      - SETUID
-      - SETGID
+    image: harvest-backend
+    pull_policy: never
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+    env_file: ./Backend/.env
+    command: ["celery", "-A", "project", "beat", "--loglevel=INFO",
+              "--schedule=/tmp/celerybeat-schedule"]
 
   frontend:
     <<: *service
