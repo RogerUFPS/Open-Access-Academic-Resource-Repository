@@ -8,6 +8,8 @@ import { extractApiErrorText, normalizeApiFieldErrors } from "@/shared/services/
 import { getUserDisplayName, userService } from "@/shared/services/userService";
 import { capitalizeWords } from "@/lib/utils";
 import { useToast } from "@/components/ui/use-toast";
+import { useAccountsApi } from "@/shared/components/AccountsProvider";
+import { canCheckLinks, linkActionError, linkStatus } from "@/features/admin/harvesting/linkMonitoring";
 import DeleteModal from "./DeleteModal";
 import { PublishChecklist } from "@/shared/components/forms/FormParts";
 import OriginBadge, { originOf } from "@/shared/components/classification/OriginBadge";
@@ -39,6 +41,10 @@ export default function DatabaseDetail({ platformId }) {
   const router = useRouter();
   const [platform, setPlatform] = useState(null);
   const [linkLogs, setLinkLogs] = useState([]);
+  const [currentLinkLogId, setCurrentLinkLogId] = useState(null);
+  const [linkLogsError, setLinkLogsError] = useState(null);
+  const [canCheck, setCanCheck] = useState(null); // null mientras se consultan los permisos
+  const accountsApi = useAccountsApi();
   const [catalogs, setCatalogs] = useState({
     institutions: [],
     languages: [],
@@ -58,6 +64,44 @@ export default function DatabaseDetail({ platformId }) {
   // Modals
   const [deleteModalOpen, setDeleteModalOpen] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
+
+  // Permiso efectivo para las acciones POST de verificación de enlaces.
+  useEffect(() => {
+    const controller = new AbortController();
+    accountsApi
+      .me(controller.signal)
+      .then((user) => setCanCheck(canCheckLinks(user)))
+      .catch(() => setCanCheck(false));
+    return () => controller.abort();
+  }, [accountsApi]);
+
+  /**
+   * Estado vigente y historial de la URL general de la plataforma.
+   * - Vigente: current=true&journal_platform__isnull=true (excluye revistas).
+   * - Historial: todas las páginas, solo el enlace general.
+   * `verification_status` es la fuente de verdad del estado mostrado.
+   */
+  const loadLinkState = async () => {
+    const [currentResult, historyResult] = await Promise.allSettled([
+      platformService.getCurrentPlatformLinkLog(platformId),
+      platformService.getPlatformLinkHistory(platformId),
+    ]);
+    if (currentResult.status === "fulfilled") {
+      const current = currentResult.value;
+      setCurrentLinkLogId(current?.id ?? null);
+      setVerificationStatus(current?.verification_status || "unverified");
+    } else {
+      setCurrentLinkLogId(null);
+      setVerificationStatus("unverified");
+    }
+    if (historyResult.status === "fulfilled") {
+      setLinkLogs(historyResult.value);
+      setLinkLogsError(null);
+    } else {
+      setLinkLogs([]);
+      setLinkLogsError(historyResult.reason?.message || "No se pudo cargar el historial de verificaciones.");
+    }
+  };
 
   // Fetch Detail Data & Catalogs
   const loadDetail = async () => {
@@ -88,30 +132,7 @@ export default function DatabaseDetail({ platformId }) {
       setUserNames(Object.fromEntries(resolvedUsers));
       setCatalogs(catData);
 
-      // Determine initial verification status from platform or latest log
-      let initialStatus = data.verification_status || "unverified";
-
-      // Load link check logs history
-      try {
-        const logsData = await platformService.getLinkCheckLogs({ platform: platformId });
-        const logsList = Array.isArray(logsData) ? logsData : logsData.results || [];
-        setLinkLogs(logsList);
-
-        if (!data.verification_status && logsList.length > 0) {
-          const latest = logsList[0];
-          if (latest.verification_status) {
-            initialStatus = latest.verification_status;
-          } else if (latest.is_active || latest.http_status_code === 200 || latest.status === "available") {
-            initialStatus = "available";
-          } else if (latest.is_active === false || latest.status === "unavailable") {
-            initialStatus = "unavailable";
-          }
-        }
-      } catch {
-        setLinkLogs([]);
-      }
-
-      setVerificationStatus(initialStatus);
+      await loadLinkState();
     } catch (err) {
       console.error("Error loading platform detail:", err);
       setError(err.message || "No se pudo cargar la información de la plataforma.");
@@ -138,23 +159,12 @@ export default function DatabaseDetail({ platformId }) {
 
   // Re-check handler calling POST /api/platforms/{id}/check-link/
   const handleCheckLink = async () => {
+    if (!canCheck) return;
     setIsRechecking(true);
     try {
+      // Responde con el LinkCheckLog vigente del enlace general.
       const res = await platformService.checkLink(platformId, null);
-      
-      // Update verification status from response
-      let newStatus = "unverified";
-      if (res) {
-        if (res.verification_status) {
-          newStatus = res.verification_status;
-        } else if (res.is_active === true || res.available === true || res.http_status_code === 200 || res.status === "available") {
-          newStatus = "available";
-        } else if (res.is_active === false || res.available === false || res.status === "unavailable") {
-          newStatus = "unavailable";
-        } else {
-          newStatus = "available";
-        }
-      }
+      const newStatus = res?.verification_status || "unverified";
       setVerificationStatus(newStatus);
       showToast(
         newStatus === "available"
@@ -164,11 +174,14 @@ export default function DatabaseDetail({ platformId }) {
           : "Verificación de enlace ejecutada."
       );
 
-      // Refresh link logs history
-      const logsData = await platformService.getLinkCheckLogs({ platform: platformId });
-      setLinkLogs(Array.isArray(logsData) ? logsData : logsData.results || []);
+      // Refrescar estado vigente e historial.
+      await loadLinkState();
     } catch (err) {
-      alert(`Error al verificar URL: ${err.message}`);
+      toast({
+        title: "No se pudo verificar la URL",
+        description: linkActionError(err),
+        variant: "destructive",
+      });
     } finally {
       setIsRechecking(false);
     }
@@ -526,7 +539,7 @@ export default function DatabaseDetail({ platformId }) {
                         <span className="text-slate-400 italic text-sm">Sin URL pública registrada</span>
                       )}
                     </div>
-                    {platform.public_url && (
+                    {platform.public_url && canCheck && (
                       <Button
                         size="sm"
                         disabled={isRechecking}
@@ -654,50 +667,66 @@ export default function DatabaseDetail({ platformId }) {
                   Historial de Verificaciones de Enlace
                 </CardTitle>
                 <CardDescription className="text-xs text-gray-500">
-                  Registros gestionados por LinkCheckLog
+                  URL general de la plataforma (vigente e historial)
                 </CardDescription>
+                {canCheck === false && (
+                  <p className="mt-1 text-[11px] text-gray-500">
+                    Verificar el enlace requiere el permiso platforms.platforms.check_link.
+                  </p>
+                )}
               </div>
 
-              <Button
-                size="sm"
-                disabled={isRechecking}
-                onClick={handleCheckLink}
-                className="rounded-xl text-xs bg-[#7f1218] hover:bg-[#6a0f14] text-white font-medium gap-1.5 cursor-pointer shadow-2xs"
-              >
-                <RefreshCw className={`w-3.5 h-3.5 ${isRechecking ? "animate-spin" : ""}`} />
-                <span>{isRechecking ? "Verificando..." : "Comprobar enlace"}</span>
-              </Button>
+              {canCheck && (
+                <Button
+                  size="sm"
+                  disabled={isRechecking}
+                  onClick={handleCheckLink}
+                  className="rounded-xl text-xs bg-[#7f1218] hover:bg-[#6a0f14] text-white font-medium gap-1.5 cursor-pointer shadow-2xs"
+                >
+                  <RefreshCw className={`w-3.5 h-3.5 ${isRechecking ? "animate-spin" : ""}`} />
+                  <span>{isRechecking ? "Verificando..." : "Comprobar enlace"}</span>
+                </Button>
+              )}
             </CardHeader>
 
             <CardContent className="pt-4">
-              {linkLogs.length === 0 ? (
+              {linkLogsError ? (
+                <div className="py-6 text-center text-rose-600 text-xs">{linkLogsError}</div>
+              ) : linkLogs.length === 0 ? (
                 <div className="py-6 text-center text-gray-400 text-xs">
                   No hay registros de verificación de enlace aún.
                 </div>
               ) : (
                 <div className="space-y-2 max-h-56 overflow-y-auto">
-                  {linkLogs.map((log, idx) => (
-                    <div
-                      key={log.id || idx}
-                      className="p-3 rounded-xl border border-gray-100 bg-gray-50/50 flex items-center justify-between text-xs"
-                    >
-                      <div className="truncate pr-2">
-                        <span className="text-gray-800 block truncate font-semibold">{log.url || log.link}</span>
-                        <span className="text-[10px] text-gray-400">{formatDate(log.created_at || log.checked_at)}</span>
-                      </div>
-                      <span
-                        className={`px-2.5 py-1 rounded-full text-[10px] font-bold ${
-                          log.is_active || log.http_status_code === 200 || log.verification_status === "available"
-                            ? "bg-emerald-100 text-emerald-800"
-                            : "bg-rose-100 text-rose-800"
-                        }`}
+                  {linkLogs.map((log, idx) => {
+                    const status = linkStatus(log, false);
+                    const isCurrent = log.id != null && log.id === currentLinkLogId;
+                    return (
+                      <div
+                        key={log.id || idx}
+                        className="p-3 rounded-xl border border-gray-100 bg-gray-50/50 flex items-center justify-between text-xs"
                       >
-                        {log.is_active || log.http_status_code === 200 || log.verification_status === "available"
-                          ? "Disponible"
-                          : "No disponible"}
-                      </span>
-                    </div>
-                  ))}
+                        <div className="truncate pr-2">
+                          <span className="text-gray-800 block truncate font-semibold">{log.url}</span>
+                          <span className="text-[10px] text-gray-400">
+                            {log.last_check ? formatDate(log.last_check) : "Nunca comprobada"}
+                            {isCurrent ? " · Vigente" : log.id != null && currentLinkLogId != null ? " · Sustituida" : ""}
+                          </span>
+                        </div>
+                        <span
+                          className={`px-2.5 py-1 rounded-full text-[10px] font-bold shrink-0 ${
+                            status.state === "success"
+                              ? "bg-emerald-100 text-emerald-800"
+                              : status.state === "info"
+                              ? "bg-amber-100 text-amber-800"
+                              : "bg-rose-100 text-rose-800"
+                          }`}
+                        >
+                          {status.state === "success" ? "Disponible" : status.label}
+                        </span>
+                      </div>
+                    );
+                  })}
                 </div>
               )}
             </CardContent>

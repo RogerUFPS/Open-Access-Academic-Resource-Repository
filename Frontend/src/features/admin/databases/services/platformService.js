@@ -1,5 +1,7 @@
 import { apiClient, deleteMultipart, uploadMultipart } from "@/shared/services/apiClient";
-import { fetchAllPages } from "@/shared/services/catalogService";
+import { extractResults, fetchAllPages } from "@/shared/services/catalogService";
+
+const LINK_CHECK_LOGS_ENDPOINT = "/api/platforms/link-check-logs/";
 
 const FORBIDDEN_FIELDS = [
   "status",
@@ -152,15 +154,10 @@ export const platformService = {
   /**
    * Get valid syntax options (GET /api/platforms/valid-sintaxis/)
    */
-  getValidSintaxis: async () => {
-    const res = await apiClient.get("/api/platforms/valid-sintaxis/", { page_size: 100 });
-    return Array.isArray(res) ? res : res.results || [];
-  },
+  // Recorre todas las páginas: el selector no debe truncarse a las primeras 100.
+  getValidSintaxis: async () => fetchAllPages("/api/platforms/valid-sintaxis/"),
 
-  getValidSintaxisList: async () => {
-    const response = await apiClient.get("/api/platforms/valid-sintaxis/", { page_size: 100 });
-    return Array.isArray(response) ? response : response.results || [];
-  },
+  getValidSintaxisList: async () => fetchAllPages("/api/platforms/valid-sintaxis/"),
   getValidSintaxisById: async (id) =>
     apiClient.get(`/api/platforms/valid-sintaxis/${id}/`),
   createValidSintaxis: async (data) => apiClient.post("/api/platforms/valid-sintaxis/", data),
@@ -176,15 +173,26 @@ export const platformService = {
     deleteMultipart(`/api/platforms/${id}/image/`),
 
   /**
-   * Get link check logs history (GET /api/platforms/link-check-logs/)
+   * Estado vigente de la URL general de una plataforma:
+   * GET /api/platforms/link-check-logs/?platform={id}&current=true&journal_platform__isnull=true
+   * Devuelve el LinkCheckLog vigente o null si aún no hay registro.
    */
-  getLinkCheckLogs: async (params = {}) => {
-    try {
-      return await apiClient.get("/api/platforms/link-check-logs/", params);
-    } catch {
-      return { results: [] };
-    }
+  getCurrentPlatformLinkLog: async (id) => {
+    const response = await apiClient.get(LINK_CHECK_LOGS_ENDPOINT, {
+      platform: id,
+      current: "true",
+      journal_platform__isnull: "true",
+      page_size: 1,
+    });
+    return extractResults(response)[0] || null;
   },
+
+  /**
+   * Historial completo (vigente y sustituido) de la URL general de una
+   * plataforma, recorriendo todas las páginas. Excluye los enlaces de revistas.
+   */
+  getPlatformLinkHistory: async (id) =>
+    fetchAllPages(LINK_CHECK_LOGS_ENDPOINT, { platform: id, journal_platform__isnull: "true" }),
 
   /**
    * Helper to load catalog list safely from /api/catalog/{resource}/

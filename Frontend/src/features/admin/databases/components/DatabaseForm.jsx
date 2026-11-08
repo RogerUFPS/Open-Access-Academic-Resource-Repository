@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { useToast } from "@/components/ui/use-toast";
 import { useAccountsApi } from "@/shared/components/AccountsProvider";
+import { canCheckLinks, linkActionError } from "@/features/admin/harvesting/linkMonitoring";
 import { ResourceImageUploader } from "@/shared/components/ResourceImageUploader";
 import {
   CatalogCheckboxGrid,
@@ -135,6 +136,8 @@ export default function DatabaseForm({ initialData = null, isEdit = false, publi
   const [loadingCatalogs, setLoadingCatalogs] = useState(true);
   const [syntaxError, setSyntaxError] = useState("");
   const [syntaxPermissions, setSyntaxPermissions] = useState({ create: false, update: false, delete: false });
+  // Permiso platforms.platforms.check_link: sin él no se invoca check-link al publicar.
+  const [canCheckLink, setCanCheckLink] = useState(false);
   const [pendingImage, setPendingImage] = useState(null);
 
   // Último estado confirmado por el backend (fuente de verdad tras guardar).
@@ -173,13 +176,17 @@ export default function DatabaseForm({ initialData = null, isEdit = false, publi
   useEffect(() => {
     const controller = new AbortController();
     accountsApi.me(controller.signal).then((user) => {
+      setCanCheckLink(canCheckLinks(user));
       const permissions = user?.effective_permissions?.platforms?.["valid-sintaxis"] || {};
       setSyntaxPermissions({
         create: Boolean(user?.is_superadmin || permissions.create),
         update: Boolean(user?.is_superadmin || permissions.update),
         delete: Boolean(user?.is_superadmin || permissions.delete),
       });
-    }).catch(() => setSyntaxPermissions({ create: false, update: false, delete: false }));
+    }).catch(() => {
+      setCanCheckLink(false);
+      setSyntaxPermissions({ create: false, update: false, delete: false });
+    });
     return () => controller.abort();
   }, [accountsApi]);
 
@@ -323,18 +330,29 @@ export default function DatabaseForm({ initialData = null, isEdit = false, publi
       }
     }
 
-    // 3. Verificar URL y publicar.
+    // 3. Verificar URL (solo con permiso platforms.platforms.check_link) y publicar.
+    // Sin permiso no se invoca check-link: el backend valida la URL vigente al publicar.
     if (action === "publish" && savedId) {
-      try {
-        const link = await platformService.checkLink(savedId);
-        const verification = link?.verification_status ?? (link?.is_active ? "available" : "unavailable");
-        if (verification !== "available") {
+      if (canCheckLink) {
+        let link;
+        try {
+          link = await platformService.checkLink(savedId);
+        } catch (err) {
+          showErrors("Los cambios se guardaron, pero no se pudo verificar la URL pública.", {
+            public_url: linkActionError(err),
+          });
+          setSubmitting(null);
+          return;
+        }
+        if (link?.verification_status !== "available") {
           showErrors("Los cambios se guardaron, pero la plataforma no se publicó.", {
             public_url: "La URL pública no está disponible. Corrígela o vuelve a verificarla antes de publicar.",
           });
           setSubmitting(null);
           return;
         }
+      }
+      try {
         await platformService.publishPlatform(savedId);
       } catch (err) {
         console.warn("Error en la publicación:", err);
