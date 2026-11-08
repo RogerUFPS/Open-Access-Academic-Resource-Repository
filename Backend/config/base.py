@@ -19,6 +19,7 @@ INSTALLED_APPS = [
     "apps.platforms",
     "apps.journal",
     "apps.harvesting",
+    "apps.scheduler",
     "auditlog",
     "apps.audit",
 ]

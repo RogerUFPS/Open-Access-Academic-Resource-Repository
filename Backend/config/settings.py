@@ -1,5 +1,6 @@
 import os
 
+from celery.schedules import crontab
 from dotenv import load_dotenv
 
 from .base import *
@@ -54,6 +55,28 @@ CELERY_TASK_IGNORE_RESULT = True
 CELERY_TASK_ACKS_LATE = True
 CELERY_TASK_REJECT_ON_WORKER_LOST = True
 CELERY_WORKER_PREFETCH_MULTIPLIER = 1
+CELERY_ENABLE_UTC = True
+CELERY_TIMEZONE = "UTC"
+CELERY_BEAT_SCHEDULE = {
+    "harvesting-run-due-every-5m": {
+        "task": "apps.scheduler.tasks.dispatch_http_job",
+        "schedule": crontab(minute="*/5"),
+        "kwargs": {"job": "harvesting_due"},
+    },
+    "platforms-check-links-every-4h": {
+        "task": "apps.scheduler.tasks.dispatch_http_job",
+        "schedule": crontab(minute=0, hour="*/4"),
+        "kwargs": {"job": "check_links"},
+    },
+    "platforms-check-failed-links-every-15m": {
+        "task": "apps.scheduler.tasks.dispatch_http_job",
+        "schedule": crontab(minute="*/15"),
+        "kwargs": {"job": "check_failed_links"},
+    },
+}
+SCHEDULER_API_URL = os.getenv("SCHEDULER_API_URL", "http://backend:8000")
+SCHEDULER_API_TOKEN = os.getenv("SCHEDULER_API_TOKEN", "")
+SCHEDULER_SERVICE_USER_ID = os.getenv("SCHEDULER_SERVICE_USER_ID", "")
 LINK_CHECK_BATCH_SIZE = max(1, int(os.getenv("LINK_CHECK_BATCH_SIZE", "50")))
 LINK_FAILURE_FRONTEND_URL = os.getenv("LINK_FAILURE_FRONTEND_URL", "")
 FRONTEND_LOGIN_URL = os.getenv(
@@ -93,7 +116,7 @@ else:
                 "POSTGRES_PORT",
                 os.getenv("DATABASE_PORT", "5432"),
             ),
-            "OPTIONS": {"sslmode": "require"},
+            "OPTIONS": {"sslmode": os.getenv("DATABASE_SSLMODE", "require")},
         }
     }
 

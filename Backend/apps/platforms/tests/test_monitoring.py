@@ -1,9 +1,10 @@
 from concurrent.futures import ThreadPoolExecutor
-from threading import Barrier
+from threading import Barrier, Lock
 from unittest.mock import patch
 from urllib.parse import parse_qs, urlsplit
 
 from django.db import close_old_connections, connection
+from django.db import IntegrityError, transaction
 from django.test import TestCase, TransactionTestCase, override_settings, skipUnlessDBFeature
 from django.utils import timezone
 from kombu.exceptions import OperationalError
@@ -185,6 +186,107 @@ class MonitorAPITests(MonitorFixtures, APITestCase):
             self.client.force_authenticate(denied)
             self.assertEqual(self.client.post(f"/api/platforms/{endpoint}/").status_code, 403)
         enqueue.assert_not_called()
+
+    @patch("apps.platforms.views.dispatch_link_checks.delay")
+    def test_scheduler_token_authenticates_only_with_check_link_permission(self, enqueue):
+        service_user = User.objects.create_user(
+            email="scheduler@example.org",
+            permissions=CHECK_PERMISSION,
+        )
+        enqueue.return_value.id = "scheduler-task"
+        self.client.force_authenticate(None)
+
+        with override_settings(
+            SCHEDULER_API_TOKEN="test-scheduler-secret",
+            SCHEDULER_SERVICE_USER_ID=str(service_user.pk),
+        ):
+            for endpoint, mode in (
+                ("check-links-async", "all"),
+                ("check-failed-links", "failed"),
+            ):
+                response = self.client.post(
+                    f"/api/platforms/{endpoint}/",
+                    HTTP_AUTHORIZATION="Bearer test-scheduler-secret",
+                    HTTP_IDEMPOTENCY_KEY=f"scheduler:{mode}",
+                )
+                self.assertEqual(response.status_code, 202)
+                self.assertEqual(response.data["mode"], mode)
+                self.assertEqual(
+                    models.LinkCheckRun.objects.get(pk=response.data["run_id"]).requested_by,
+                    service_user,
+                )
+
+        self.assertEqual(enqueue.call_count, 2)
+
+    @patch("apps.platforms.views.dispatch_link_checks.delay")
+    def test_scheduler_token_does_not_bypass_missing_permission_or_bad_credentials(self, enqueue):
+        service_user = User.objects.create_user(
+            email="scheduler-denied@example.org",
+            permissions={},
+        )
+        self.client.force_authenticate(None)
+        with override_settings(
+            SCHEDULER_API_TOKEN="test-scheduler-secret",
+            SCHEDULER_SERVICE_USER_ID=str(service_user.pk),
+        ):
+            denied = self.client.post(
+                "/api/platforms/check-links-async/",
+                HTTP_AUTHORIZATION="Bearer test-scheduler-secret",
+            )
+            unauthenticated = self.client.post("/api/platforms/check-failed-links/")
+            invalid_token = self.client.post(
+                "/api/platforms/check-failed-links/",
+                HTTP_AUTHORIZATION="Bearer wrong-secret",
+            )
+        self.assertEqual(denied.status_code, 401)
+        self.assertIn(unauthenticated.status_code, (401, 403))
+        self.assertEqual(invalid_token.status_code, 401)
+        enqueue.assert_not_called()
+
+    @patch("apps.platforms.views.dispatch_link_checks.delay")
+    def test_idempotent_retry_reuses_run_without_dispatching_twice(self, enqueue):
+        enqueue.return_value.id = "same-task"
+        self.client.force_authenticate(self.user)
+        headers = {"HTTP_IDEMPOTENCY_KEY": "same-request-key"}
+        first = self.client.post("/api/platforms/check-links-async/", **headers)
+        second = self.client.post("/api/platforms/check-links-async/", **headers)
+        self.assertEqual(first.status_code, 202)
+        self.assertEqual(second.status_code, 202)
+        self.assertEqual(first.data["run_id"], second.data["run_id"])
+        self.assertEqual(first.data["task_id"], second.data["task_id"])
+        self.assertEqual(
+            models.LinkCheckRun.objects.filter(idempotency_key="same-request-key").count(),
+            1,
+        )
+        enqueue.assert_called_once_with(first.data["run_id"])
+
+    @patch("apps.platforms.views.dispatch_link_checks.delay")
+    def test_active_run_reused_after_concurrent_unique_constraint_winner(self, enqueue):
+        existing = models.LinkCheckRun.objects.create(
+            mode="all",
+            requested_by=self.user,
+        )
+        self.client.force_authenticate(self.user)
+        with (
+            patch(
+                "apps.platforms.views._existing_link_check_run",
+                side_effect=[None, existing],
+            ),
+            patch(
+                "apps.platforms.views.models.LinkCheckRun.objects.create",
+                side_effect=IntegrityError("unique_active_link_check_run_per_mode"),
+            ),
+        ):
+            response = self.client.post("/api/platforms/check-links-async/")
+        self.assertEqual(response.status_code, 202)
+        self.assertEqual(response.data["run_id"], existing.pk)
+        enqueue.assert_not_called()
+
+    def test_active_link_run_partial_unique_constraint_rejects_second_run(self):
+        models.LinkCheckRun.objects.create(mode="all", requested_by=self.user)
+        with self.assertRaises(IntegrityError):
+            with transaction.atomic():
+                models.LinkCheckRun.objects.create(mode="all", requested_by=self.user)
 
     @patch("apps.platforms.views.dispatch_link_checks.delay", side_effect=OperationalError("broker down"))
     def test_broker_failure_is_not_reported_as_accepted(self, _enqueue):
@@ -589,6 +691,55 @@ class MonitorConcurrencyTests(MonitorFixtures, TransactionTestCase):
             return callback()
         finally:
             connection.close()
+
+    @skipUnlessDBFeature("has_select_for_update")
+    def test_concurrent_link_run_triggers_return_the_same_active_run(self):
+        from apps.platforms.views import _existing_link_check_run
+
+        self.user.is_superadmin = False
+        self.user.permissions = CHECK_PERMISSION
+        self.user.save()
+        models.LinkCheckRun.objects.filter(
+            finished_at__isnull=True,
+        ).update(finished_at=timezone.now())
+        barrier = Barrier(2)
+        invocation_lock = Lock()
+        initial_reads = 0
+
+        def synchronized_lookup(mode, idempotency_key):
+            nonlocal initial_reads
+            with invocation_lock:
+                initial_reads += 1
+                should_wait = initial_reads <= 2
+            if should_wait:
+                barrier.wait(timeout=10)
+            return _existing_link_check_run(mode, idempotency_key)
+
+        def post_trigger():
+            def request():
+                client = APIClient()
+                client.force_authenticate(User.objects.get(pk=self.user.pk))
+                return client.post("/api/platforms/check-links-async/")
+            return self.in_thread(request)
+
+        with (
+            patch("apps.platforms.views._existing_link_check_run", side_effect=synchronized_lookup),
+            patch("apps.platforms.views.dispatch_link_checks.delay") as enqueue,
+            ThreadPoolExecutor(max_workers=2) as pool,
+        ):
+            enqueue.return_value.id = "concurrent-task"
+            responses = [future.result(timeout=30) for future in (
+                pool.submit(post_trigger),
+                pool.submit(post_trigger),
+            )]
+
+        self.assertEqual([response.status_code for response in responses], [202, 202])
+        self.assertEqual(
+            {response.data["run_id"] for response in responses},
+            {models.LinkCheckRun.objects.get(mode="all").pk},
+        )
+        self.assertEqual(models.LinkCheckRun.objects.filter(mode="all").count(), 1)
+        enqueue.assert_called_once()
 
     @skipUnlessDBFeature("has_select_for_update")
     @patch("apps.platforms.services._validate_safe_http_url")

@@ -60,6 +60,17 @@ services:
     command: ["celery", "-A", "project", "worker",
               "--loglevel=INFO", "--queues=harvesting", "--concurrency=2"]
 
+  beat:
+    <<: *service
+    image: harvest-backend
+    pull_policy: never
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+    env_file: ./Backend/.env
+    command: ["celery", "-A", "project", "beat", "--loglevel=INFO",
+              "--schedule=/tmp/celerybeat-schedule"]
+
   cron:
     <<: *service
     build: ./Cron
