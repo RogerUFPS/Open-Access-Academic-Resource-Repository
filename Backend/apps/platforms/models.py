@@ -268,9 +268,20 @@ class LinkCheckRun(models.Model):
 
     mode = models.CharField(max_length=10, choices=[("all", "Total"), ("failed", "Reintentos")])
     requested_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT)
+    idempotency_key = models.CharField(max_length=255, null=True, blank=True, unique=True)
+    dispatch_task_id = models.CharField(max_length=255, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     planned = models.BooleanField(default=False)
     finished_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["mode"],
+                condition=models.Q(finished_at__isnull=True),
+                name="unique_active_link_check_run_per_mode",
+            ),
+        ]
 
 
 class LinkCheckBatch(models.Model):

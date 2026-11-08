@@ -1,6 +1,7 @@
 import logging
 
 from django.db.models import F, Prefetch
+from django.db import IntegrityError, transaction
 from kombu.exceptions import OperationalError
 from django.utils import timezone
 
@@ -25,12 +26,47 @@ from apps.core.viewsets import (
     get_acting_user,
 )
 from apps.core.pagination import CustomPageNumberPagination
+from apps.account.authentication import CookieSessionAuthentication
+from apps.account.scheduler_authentication import SchedulerTokenAuthentication
 
 from . import classification, filters, models, serializers, services
 from .tasks import dispatch_link_checks
 from .permissions import LinkVerificationPermission
 
 logger = logging.getLogger(__name__)
+
+def _existing_link_check_run(mode, idempotency_key):
+    if idempotency_key:
+        run = models.LinkCheckRun.objects.filter(
+            idempotency_key=idempotency_key,
+        ).first()
+        if run:
+            return run
+    return models.LinkCheckRun.objects.filter(
+        mode=mode,
+        finished_at__isnull=True,
+    ).order_by("pk").first()
+
+
+def _get_or_create_link_check_run(mode, user, idempotency_key):
+    try:
+        with transaction.atomic():
+            existing = _existing_link_check_run(mode, idempotency_key)
+            if existing:
+                return existing, False
+            run = models.LinkCheckRun.objects.create(
+                mode=mode,
+                requested_by=user,
+                idempotency_key=idempotency_key,
+            )
+        return run, True
+    except IntegrityError:
+        # A concurrent request may win either the idempotency-key or active-mode
+        # unique constraint after our initial read.
+        existing = _existing_link_check_run(mode, idempotency_key)
+        if existing:
+            return existing, False
+        raise
 
 
 def _with_public_link_logs(queryset):
@@ -629,19 +665,41 @@ class PlatformViewSet(ResourceImageMixin, AuditableViewSet):
         return Response(status=status.HTTP_204_NO_CONTENT)
 
     def _enqueue_link_run(self, request, mode):
-        run = models.LinkCheckRun.objects.create(
-            mode=mode, requested_by=get_acting_user(request),
-        )
-        try:
-            task = dispatch_link_checks.delay(run.pk)
-        except OperationalError:
-            logger.exception("No se pudo encolar ronda de enlaces: run=%s", run.pk)
+        idempotency_key = request.headers.get("Idempotency-Key", "").strip() or None
+        if idempotency_key and len(idempotency_key) > 255:
             return Response(
-                {"detail": "No se pudo confirmar el envío al broker.", "run_id": run.pk},
-                status=status.HTTP_503_SERVICE_UNAVAILABLE,
+                {"detail": "Idempotency-Key no puede superar 255 caracteres."},
+                status=status.HTTP_400_BAD_REQUEST,
             )
+
+        run, created = _get_or_create_link_check_run(
+            mode,
+            get_acting_user(request),
+            idempotency_key,
+        )
+        if idempotency_key and run.mode != mode:
+            return Response(
+                {"detail": "Idempotency-Key ya fue usado para otra operación."},
+                status=status.HTTP_409_CONFLICT,
+            )
+
+        if created:
+            try:
+                task = dispatch_link_checks.delay(run.pk)
+            except OperationalError:
+                logger.exception("No se pudo encolar ronda de enlaces: run=%s", run.pk)
+                return Response(
+                    {"detail": "No se pudo confirmar el envío al broker.", "run_id": run.pk},
+                    status=status.HTTP_503_SERVICE_UNAVAILABLE,
+                )
+            run.dispatch_task_id = task.id
+            run.save(update_fields=["dispatch_task_id"])
         return Response(
-            {"run_id": run.pk, "task_id": task.id, "mode": mode},
+            {
+                "run_id": run.pk,
+                "task_id": run.dispatch_task_id or None,
+                "mode": mode,
+            },
             status=status.HTTP_202_ACCEPTED,
         )
 
@@ -659,6 +717,10 @@ class PlatformViewSet(ResourceImageMixin, AuditableViewSet):
     @action(
         detail=False, methods=["post"], url_path="check-links-async",
         permission_classes=[LinkVerificationPermission],
+        authentication_classes=[
+            SchedulerTokenAuthentication,
+            CookieSessionAuthentication,
+        ],
     )
     def check_all_links_async(self, request):
         return self._enqueue_link_run(request, "all")
@@ -677,6 +739,10 @@ class PlatformViewSet(ResourceImageMixin, AuditableViewSet):
     @action(
         detail=False, methods=["post"], url_path="check-failed-links",
         permission_classes=[LinkVerificationPermission],
+        authentication_classes=[
+            SchedulerTokenAuthentication,
+            CookieSessionAuthentication,
+        ],
     )
     def check_failed_links(self, request):
         return self._enqueue_link_run(request, "failed")

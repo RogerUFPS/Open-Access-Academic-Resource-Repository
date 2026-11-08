@@ -451,7 +451,8 @@ class PlatformSerializer(
         return super().to_internal_value(data)
 
     def validate_public_url(self, value):
-        services.validate_safe_http_url(value, field_name="public_url")
+        if value is not None:
+            services.validate_safe_http_url(value, field_name="public_url")
         return value
 
     def validate_base_api_url(self, value):
@@ -481,11 +482,6 @@ class PlatformSerializer(
         academic_programs.
         """
         attrs = super().validate(attrs)
-
-        if self.instance is None and not attrs.get("public_url"):
-            raise serializers.ValidationError({
-                "public_url": "La URL pública es obligatoria al crear una plataforma."
-            })
 
         instance = self.instance
 

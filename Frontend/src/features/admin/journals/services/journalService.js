@@ -1,4 +1,5 @@
 import { apiClient, deleteMultipart, uploadMultipart } from "@/shared/services/apiClient";
+import { fetchAllPages } from "@/shared/services/catalogService";
 
 const FORBIDDEN_FIELDS = [
   "status",
@@ -12,6 +13,8 @@ const FORBIDDEN_FIELDS = [
   "updated_at",
   "deleted_by",
   "deleted_at",
+  // Solo lectura: el backend deriva las áreas de los programas académicos.
+  "knowledge_areas",
 ];
 
 function sanitizePayload(data) {
@@ -34,8 +37,8 @@ export const journalService = {
   /**
    * List logically deleted journals (GET /api/journals/archived/)
    */
-  getArchivedJournals: async () => {
-    return apiClient.get("/api/journals/archived/");
+  getArchivedJournals: async (params = {}) => {
+    return apiClient.get("/api/journals/archived/", params);
   },
 
   /**
@@ -60,7 +63,6 @@ export const journalService = {
    */
   createJournal: async (data) => {
     const clean = sanitizePayload(data);
-    delete clean.knowledge_areas;
     // Asegurar estructura de platforms
     if (clean.platforms && Array.isArray(clean.platforms)) {
       clean.platforms = clean.platforms.map((p) => ({
@@ -74,13 +76,12 @@ export const journalService = {
 
   /**
    * Partial update of a journal (PATCH /api/journals/{id}/)
-   * Knowledge areas se envía como array simple de IDs manuales: [1, 4, 7].
+   * knowledge_areas nunca se envía: se deriva de academic_programs.
    * Platforms se envía como [{ platform, journal_url, has_full_text }].
    * Campos prohibidos son removidos.
    */
   patchJournal: async (id, data) => {
     const clean = sanitizePayload(data);
-    delete clean.knowledge_areas;
 
     if (clean.platforms !== undefined) {
       if (Array.isArray(clean.platforms)) {
@@ -99,7 +100,7 @@ export const journalService = {
    * Publish journal (POST /api/journals/{id}/publish/)
    * Valida en el backend que la ficha esté completa.
    */
-  publishJournal: async (id, licenses = []) => {
+  publishJournal: async (id) => {
     return apiClient.post(`/api/journals/${id}/publish/`, {});
   },
 
@@ -143,10 +144,7 @@ export const journalService = {
    */
   getLicenses: async (params = {}) => {
     try {
-      const res = await apiClient.get("/api/journals/licenses/", params);
-      if (Array.isArray(res)) return res;
-      if (res && Array.isArray(res.results)) return res.results;
-      return [];
+      return await fetchAllPages("/api/journals/licenses/", params);
     } catch (err) {
       console.error("Error fetching licenses:", err);
       throw err;
@@ -182,16 +180,10 @@ export const journalService = {
    */
   getPublishedPlatforms: async () => {
     try {
-      const res = await apiClient.get("/api/platforms/public/", { page_size: 200 });
-      const list = Array.isArray(res) ? res : res?.results || [];
-      return list;
+      return await fetchAllPages("/api/platforms/public/");
     } catch {
       try {
-        const fallbackRes = await apiClient.get("/api/platforms/", {
-          status: "publicado",
-          page_size: 200,
-        });
-        const list = Array.isArray(fallbackRes) ? fallbackRes : fallbackRes?.results || [];
+        const list = await fetchAllPages("/api/platforms/", { status: "publicado" });
         return list.filter((p) => String(p.status || "").toUpperCase() === "PUBLICADO");
       } catch {
         return [];
@@ -200,14 +192,16 @@ export const journalService = {
   },
 
   /**
-   * Obtener áreas de conocimiento con filtro contextual:
-   * GET /api/catalog/knowledge-areas/?available_for_journal={id}
+   * Todas las plataformas vigentes (no eliminadas), en cualquier estado.
+   * Una revista puede asociarse a una plataforma sin publicar; para publicar
+   * la revista basta con que al menos una de sus plataformas esté publicada.
    */
-  getKnowledgeAreasForJournal: async (journalId = null) => {
-    const endpoint = journalId
-      ? `/api/catalog/knowledge-areas/?available_for_journal=${encodeURIComponent(journalId)}`
-      : "/api/catalog/knowledge-areas/";
-    return journalService.getCatalogData(endpoint, []);
+  getAssignablePlatforms: async () => {
+    try {
+      return await fetchAllPages("/api/platforms/", { ordering: "name" });
+    } catch {
+      return journalService.getPublishedPlatforms();
+    }
   },
 
   /**
@@ -215,10 +209,7 @@ export const journalService = {
    */
   getCatalogData: async (endpoint, fallback = []) => {
     try {
-      const res = await apiClient.get(endpoint);
-      if (Array.isArray(res)) return res;
-      if (res && Array.isArray(res.results)) return res.results;
-      return fallback;
+      return await fetchAllPages(endpoint);
     } catch {
       return fallback;
     }
@@ -227,8 +218,8 @@ export const journalService = {
   /**
    * Load catalog options required by the journal form.
    */
-  loadFormCatalogs: async (journalId = null) => {
-    const [languages, countries, materialTypes, academicPrograms, editorials, publishedPlatforms, knowledgeAreas, licenses] =
+  loadFormCatalogs: async () => {
+    const [languages, countries, materialTypes, academicPrograms, editorials, platforms, licenses] =
       await Promise.all([
         journalService.getCatalogData("/api/catalog/languages/", [
           { id: 1, abbreviation: "ES", name: "Español" },
@@ -246,18 +237,13 @@ export const journalService = {
           { id: 2, name: "Libros y Monografías" },
           { id: 3, name: "Tesis y Disertaciones" },
         ]),
-        journalService.getCatalogData("/api/catalog/academic-programs/", [
-          { id: 1, name: "Ingeniería de Sistemas" },
-          { id: 2, name: "Ingeniería Industrial" },
-          { id: 3, name: "Medicina" },
-          { id: 4, name: "Todos los programas" },
-        ]),
+        // Solo para resolver nombres; el selector busca en el backend.
+        journalService.getCatalogData("/api/catalog/academic-programs/", []),
         journalService.getCatalogData("/api/catalog/editorials/").then(async (list) => {
           if (Array.isArray(list) && list.length > 0) return list;
           return journalService.getCatalogData("/api/catalog/editoriales/", []);
         }),
-        journalService.getPublishedPlatforms(),
-        journalService.getKnowledgeAreasForJournal(journalId),
+        journalService.getAssignablePlatforms(),
         journalService.getLicenses(),
       ]);
 
@@ -267,8 +253,8 @@ export const journalService = {
       materialTypes,
       academicPrograms,
       editorials,
-      publishedPlatforms,
-      knowledgeAreas,
+      platforms,
+      publishedPlatforms: platforms.filter((p) => !p.status || String(p.status).toUpperCase() === "PUBLICADO"),
       licenses,
     };
   },

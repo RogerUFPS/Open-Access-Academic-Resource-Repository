@@ -5,6 +5,6 @@ db.sqlite3
 .venv/
 context.md
 pyrefly.toml
-docs/BITACORA_PLATFORMS.md
+docs/*
 *.sqlite3
 cloudflare/

@@ -1,9 +1,10 @@
 "use client";
 
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback, useRef } from "react";
 import Link from "next/link";
 import { journalService } from "../services/journalService";
 import { clampPage, sanitizePageValue } from "@/shared/utils/pagination";
+import { fetchAllPages } from "@/shared/services/catalogService";
 import { capitalizeWords } from "@/lib/utils";
 import DeleteModal from "@/features/admin/databases/components/DeleteModal";
 import PublishJournalModal from "./PublishJournalModal";
@@ -25,6 +26,17 @@ import {
   FileText,
   RotateCcw,
 } from "lucide-react";
+
+const PAGE_SIZE = 10;
+// Estados visuales que el backend no distingue (ambos son active=false):
+// se separan por validated_at en el cliente sobre el conjunto completo.
+const CLIENT_FILTERED_STATUSES = new Set(["deactivated", "pending"]);
+
+const matchesVisualStatus = (journal, statusFilter) => {
+  if (statusFilter === "deactivated") return journal.active === false && journal.validated_at != null;
+  if (statusFilter === "pending") return journal.active === false && journal.validated_at == null;
+  return true;
+};
 
 function renderStatusBadge(journal) {
   if (journal?.active === true) {
@@ -75,6 +87,10 @@ export default function JournalTable() {
   const [publishingJournal, setPublishingJournal] = useState(null);
   const [licenseManagerOpen, setLicenseManagerOpen] = useState(false);
 
+  // Conjunto filtrado en cliente (desactivadas/pendientes) para paginar sin
+  // volver a descargar todas las páginas al cambiar de página.
+  const clientListCache = useRef({ key: null, items: [] });
+
   useEffect(() => {
     const handler = setTimeout(() => {
       setDebouncedSearch(searchInput.trim());
@@ -90,44 +106,51 @@ export default function JournalTable() {
       setError(null);
     }
     try {
-      const params = { page };
-      if (debouncedSearch) params.search = debouncedSearch;
-      if (pubDateFrom) params.publication_date_from = pubDateFrom;
-      if (statusFilter === "active") params.active = true;
-      if (statusFilter === "deactivated" || statusFilter === "pending") {
-        params.active = false;
+      const baseParams = {};
+      if (debouncedSearch) baseParams.search = debouncedSearch;
+      if (pubDateFrom) baseParams.publication_date_from = pubDateFrom;
+
+      // Desactivadas / pendientes: el backend solo filtra active=false, así que
+      // se cargan todas las páginas, se filtra por validated_at y se pagina aquí.
+      if (!showArchived && CLIENT_FILTERED_STATUSES.has(statusFilter)) {
+        const cacheKey = JSON.stringify({ ...baseParams, statusFilter });
+        if (silent || clientListCache.current.key !== cacheKey) {
+          const all = await fetchAllPages("/api/journals/", { ...baseParams, active: false });
+          clientListCache.current = {
+            key: cacheKey,
+            items: all.filter((journal) => matchesVisualStatus(journal, statusFilter)),
+          };
+        }
+        const items = clientListCache.current.items;
+        const nextTotalPages = Math.max(1, Math.ceil(items.length / PAGE_SIZE));
+        const currentPage = clampPage(page, nextTotalPages);
+        setJournals(items.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE));
+        setTotalItems(items.length);
+        setTotalPages(nextTotalPages);
+        setPageInput(String(currentPage));
+        if (currentPage !== page) setPage(currentPage);
+        return;
       }
+      clientListCache.current = { key: null, items: [] };
+
+      const params = { ...baseParams, page };
+      if (!showArchived && statusFilter === "active") params.active = true;
 
       const data = showArchived
-        ? await journalService.getArchivedJournals()
+        ? await journalService.getArchivedJournals({ page })
         : await journalService.getJournals(params);
 
-      const filterByVisualStatus = (items) => items.filter((journal) => {
-        if (statusFilter === "active") return journal.active === true;
-        if (statusFilter === "deactivated") {
-          return journal.active === false && journal.validated_at !== null;
-        }
-        if (statusFilter === "pending") {
-          return journal.active === false && journal.validated_at === null;
-        }
-        return true;
-      });
-
       if (Array.isArray(data)) {
-        const filteredJournals = showArchived ? data : filterByVisualStatus(data);
-        setJournals(filteredJournals);
-        setTotalItems(filteredJournals.length);
+        setJournals(data);
+        setTotalItems(data.length);
         setTotalPages(1);
         setPageInput(String(clampPage(page, 1)));
       } else if (data && Array.isArray(data.results)) {
-        const filteredJournals = showArchived
-          ? data.results
-          : filterByVisualStatus(data.results);
-        setJournals(filteredJournals);
-        setTotalItems(data.total_items || data.count || filteredJournals.length);
+        setJournals(data.results);
+        setTotalItems(data.total_items || data.count || data.results.length);
         const nextTotalPages =
           data.total_pages ||
-          Math.ceil((data.total_items || data.results.length) / (data.page_size || 10)) ||
+          Math.ceil((data.total_items || data.results.length) / (data.page_size || PAGE_SIZE)) ||
           1;
         setTotalPages(nextTotalPages);
         setPageInput(String(clampPage(page, nextTotalPages)));
@@ -210,6 +233,7 @@ export default function JournalTable() {
       showSuccess(`Revista "${selectedJournal.title}" eliminada.`);
       setDeleteModalOpen(false);
       setSelectedJournal(null);
+      clientListCache.current = { key: null, items: [] };
       fetchJournals();
       return true;
     } catch (err) {

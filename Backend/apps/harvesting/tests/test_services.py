@@ -1,6 +1,9 @@
 from datetime import datetime, timedelta
+from concurrent.futures import ThreadPoolExecutor
+from threading import Barrier
 from unittest.mock import MagicMock, patch
-from django.test import TestCase
+from django.db import close_old_connections, connection
+from django.test import TestCase, TransactionTestCase, skipUnlessDBFeature
 from django.utils import timezone
 import httpx
 
@@ -866,3 +869,51 @@ class HarvestingServicesTestCase(TestCase):
         )
         march = _next_occurrence(schedule)
         self.assertEqual(march, timezone.make_aware(datetime(2024, 3, 31, 9, 0)))
+
+
+class HarvestingScheduleConcurrencyTests(TransactionTestCase):
+    def setUp(self):
+        self.user = User.objects.create_user(
+            email="concurrent-harvest@example.org",
+        )
+        self.platform = Platform.objects.create(
+            name="Concurrent Harvest Platform",
+            is_harvestable=True,
+            created_by=self.user,
+        )
+
+    @skipUnlessDBFeature("has_select_for_update")
+    @patch("apps.harvesting.services.dispatch_harvest_to_worker")
+    def test_concurrent_run_due_calls_create_one_schedule_event(self, dispatch):
+        def mark_dispatched(harvest):
+            harvest.worker_dispatched_at = timezone.now()
+            harvest.save(update_fields=["worker_dispatched_at"])
+            return harvest
+
+        dispatch.side_effect = mark_dispatched
+        now = timezone.now()
+        schedule = Schedule.objects.create(
+            frequency=Schedule.Frequency.ONCE,
+            max_quantity=10,
+            start_date=now - timedelta(minutes=1),
+            created_by=self.user,
+        )
+        schedule.platforms.add(self.platform)
+        barrier = Barrier(2)
+
+        def run_in_thread():
+            close_old_connections()
+            try:
+                barrier.wait(timeout=10)
+                return run_scheduled_harvests(now=now)
+            finally:
+                connection.close()
+
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            results = [pool.submit(run_in_thread) for _ in range(2)]
+            harvests = [future.result(timeout=30) for future in results]
+
+        self.assertEqual(sorted(len(result) for result in harvests), [0, 1])
+        self.assertEqual(schedule.events.count(), 1)
+        self.assertEqual(Harvest.objects.filter(schedule=schedule).count(), 1)
+        dispatch.assert_called_once()
