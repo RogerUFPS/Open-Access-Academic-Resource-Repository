@@ -164,3 +164,53 @@ export function linkActionError(error) {
 export function canCheckLinks(user) {
   return Boolean(user?.is_superadmin || user?.effective_permissions?.platforms?.platforms?.check_link);
 }
+
+/*
+ * Selección de filas con paginación en el servidor.
+ *
+ * - `ids`: selección explícita; guarda id → plataforma de cada fila marcada,
+ *   aunque pertenezca a otra página.
+ * - `all`: "todos los resultados filtrados"; guarda solo las exclusiones. Las
+ *   plataformas implicadas se calculan recorriendo las páginas del filtro.
+ */
+export function emptySelection() {
+  return { mode: "ids", items: new Map() };
+}
+
+export function selectAllFiltered() {
+  return { mode: "all", excluded: new Map() };
+}
+
+const rowKey = (row) => String(row.id);
+
+export function isRowSelected(selection, row) {
+  return selection.mode === "all" ? !selection.excluded.has(rowKey(row)) : selection.items.has(rowKey(row));
+}
+
+export function setRowsSelected(selection, rows, checked) {
+  const map = new Map(selection.mode === "all" ? selection.excluded : selection.items);
+  // En modo `all` marcar una fila significa quitarla de las exclusiones.
+  const add = selection.mode === "all" ? !checked : checked;
+  rows.forEach((row) => {
+    if (add) map.set(rowKey(row), String(platformIdOf(row)));
+    else map.delete(rowKey(row));
+  });
+  return selection.mode === "all" ? { mode: "all", excluded: map } : { mode: "ids", items: map };
+}
+
+export function toggleRow(selection, row) {
+  return setRowsSelected(selection, [row], !isRowSelected(selection, row));
+}
+
+export function selectionCount(selection, total) {
+  return selection.mode === "all" ? Math.max(0, total - selection.excluded.size) : selection.items.size;
+}
+
+export function isEverythingSelected(selection, total) {
+  return total > 0 && selectionCount(selection, total) === total;
+}
+
+/** Plataformas de una selección explícita (sin consultar al servidor). */
+export function explicitPlatformIds(selection) {
+  return selection.mode === "ids" ? [...new Set(selection.items.values())] : [];
+}

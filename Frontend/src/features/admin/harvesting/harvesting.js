@@ -3,6 +3,8 @@ import { notifySessionExpired, shouldSkipSessionExpiredAlert } from "@/shared/ut
 export const MAX_HARVEST_LIMIT = 2147483647;
 export const IMMEDIATE_HARVEST_ENABLED = false;
 export const HARVEST_JOURNALS_PAGE_SIZE = 10;
+export const SCHEDULE_HARVESTS_PAGE_SIZE = 10;
+export const LINK_ALERTS_PAGE_SIZE = 20;
 
 const FIELD_NAMES = {
   platforms: "Plataformas",
@@ -120,8 +122,17 @@ async function request(path, { method = "GET", body, signal, timeoutMs = 30000, 
   }
 }
 
+function withQuery(path, query = {}) {
+  const params = new URLSearchParams();
+  Object.entries(query).forEach(([key, value]) => {
+    if (value !== undefined && value !== null && value !== "") params.set(key, String(value));
+  });
+  const search = params.toString();
+  return search ? `${path}?${search}` : path;
+}
+
 async function list(path, query = {}, signal) {
-  const page = await request(`${path}?${new URLSearchParams(query)}`, { signal });
+  const page = await request(withQuery(path, query), { signal });
   if (!Array.isArray(page.results)) throw new Error("La API no devolvió un listado válido.");
   return page;
 }
@@ -159,8 +170,11 @@ export function getHarvestJournals(id, page, signal) {
   return list(`/api/harvesting/harvests/${encodeURIComponent(id)}/journals/`, { page, page_size: HARVEST_JOURNALS_PAGE_SIZE }, signal);
 }
 
-export function getScheduleHarvests(scheduleId, signal) {
-  return listAll("/api/harvesting/harvests/", { schedule: scheduleId, ordering: "-created_at" }, signal);
+/** Una página de ejecuciones de una programación (más recientes primero). */
+export function getScheduleHarvests(scheduleId, page, signal) {
+  return list("/api/harvesting/harvests/", {
+    schedule: scheduleId, ordering: "-created_at", page, page_size: SCHEDULE_HARVESTS_PAGE_SIZE,
+  }, signal);
 }
 
 export async function getUpcomingSchedules(signal) {
@@ -172,16 +186,51 @@ export async function getUpcomingSchedules(signal) {
   return schedules.filter((schedule) => schedule.frequency !== "once" || !executedOnceSchedules.has(schedule.id));
 }
 
-export function getLinkAlerts(query = {}, signal) {
-  return listAll("/api/platforms/link-check-logs/", query, signal);
+/** Una página de verificaciones de enlaces con los filtros del monitor. */
+export function getLinkAlertsPage(query = {}, { page = 1, pageSize = 10 } = {}, signal) {
+  return list("/api/platforms/link-check-logs/", { ...query, page, page_size: pageSize }, signal);
 }
 
 /**
- * Primera página de verificaciones: útil para conocer `total_items` sin
- * descargar todo el listado (menú de notificaciones).
+ * Caídas confirmadas entre las filas de una página. `failure_confirmed` es un
+ * filtro (no un campo de la fila): para cada fila no disponible se consulta
+ * ese filtro acotado a su contexto (plataforma o relación revista–plataforma),
+ * que tiene una sola URL vigente.
  */
-export function getLinkAlertsPage(query = {}, { page = 1, pageSize = 10 } = {}, signal) {
-  return list("/api/platforms/link-check-logs/", { ...query, page, page_size: pageSize }, signal);
+export async function getConfirmedIdsOnPage(rows, signal) {
+  const candidates = rows.filter((row) => row.verification_status === "unavailable");
+  const confirmed = await Promise.all(candidates.map(async (row) => {
+    const platform = typeof row.platform === "object" ? row.platform?.id : row.platform;
+    const relation = typeof row.journal_platform === "object" ? row.journal_platform?.id : row.journal_platform;
+    const context = relation == null
+      ? { platform, journal_platform__isnull: "true" }
+      : { platform, journal_platform: relation };
+    const page = await list("/api/platforms/link-check-logs/", {
+      ...context, current: "true", failure_confirmed: "true", page: 1, page_size: 1,
+    }, signal);
+    return page.results.some((item) => item.id === row.id) ? row.id : null;
+  }));
+  return new Set(confirmed.filter((id) => id !== null));
+}
+
+/**
+ * Plataformas de "todos los resultados filtrados" (menos las exclusiones).
+ * Solo se ejecuta cuando el usuario selecciona todo: recorre las páginas del
+ * filtro en el servidor porque la API no ofrece un resumen de selección.
+ */
+export async function getFilteredPlatformIds(query, excludedIds, signal) {
+  const excluded = new Set(excludedIds.map(String));
+  const platformIds = new Set();
+  let count = 0;
+  for (let pageNumber = 1; ; pageNumber += 1) {
+    const page = await list("/api/platforms/link-check-logs/", { ...query, page: pageNumber, page_size: 100 }, signal);
+    page.results.forEach((row) => {
+      if (excluded.has(String(row.id))) return;
+      count += 1;
+      platformIds.add(String(typeof row.platform === "object" ? row.platform?.id : row.platform));
+    });
+    if (!page.next || page.results.length === 0) return { count, platformIds: [...platformIds] };
+  }
 }
 
 /** Revistas vinculadas a una plataforma (incluye `platforms[].relation_id`). */

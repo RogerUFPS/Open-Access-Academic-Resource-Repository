@@ -9,15 +9,18 @@ import Button from "@/shared/components/Button";
 import FormField from "@/shared/components/FormField";
 import Notice from "@/shared/components/Notice";
 import { useAccountsApi } from "@/shared/components/AccountsProvider";
-import { formatDate, getLinkAlerts } from "@/features/admin/harvesting/harvesting";
+import { formatDate, getConfirmedIdsOnPage, getFilteredPlatformIds, getLinkAlertsPage, LINK_ALERTS_PAGE_SIZE } from "@/features/admin/harvesting/harvesting";
 import {
-  CONFIRMED_FAILURES_QUERY,
   EXTRA_PARAM_KEYS,
   LINK_VIEWS,
   VIEW_PARAM_KEYS,
   buildQueryString,
   canCheckLinks,
+  emptySelection,
+  explicitPlatformIds,
   httpStatusLabel,
+  isEverythingSelected,
+  isRowSelected,
   linkActionError,
   linkStatus,
   matchView,
@@ -25,10 +28,15 @@ import {
   platformIdOf,
   relationIdOf,
   resolveLinkResources,
+  selectAllFiltered,
+  selectionCount,
+  setRowsSelected,
+  toggleRow,
 } from "@/features/admin/harvesting/linkMonitoring";
+import { isMissingPage, readPage } from "@/shared/utils/pagination";
 import { useHarvestingApi } from "./HarvestingProvider";
 
-const PAGE_SIZE = 20;
+const PAGE_SIZE = LINK_ALERTS_PAGE_SIZE;
 const POLL_INTERVAL_MS = 2 * 60 * 1000;
 const ASYNC_REFRESH_DELAY_MS = 30 * 1000;
 
@@ -64,7 +72,7 @@ function AlertRow({ item, index, resource, confirmed, isHistory, selected, onTog
             type="checkbox"
             aria-label={`Seleccionar ${name}`}
             checked={selected}
-            onChange={() => onToggle(String(item.id))}
+            onChange={() => onToggle(item)}
             className="h-4 w-4 accent-[#174C92]"
           />
         </div>
@@ -139,19 +147,29 @@ export default function LinkAlerts() {
   const isHistory = params.current === "false";
 
   const [revision, setRevision] = useState(0);
-  const requestKey = `${filterKey}#${revision}`;
-  const [data, setData] = useState({ key: null, filterKey: null, links: [], confirmedIds: new Set(), error: null });
+  const [page, setPage] = useState(1);
+  const requestKey = `${filterKey}#${page}#${revision}`;
+  const [data, setData] = useState({ key: null, filterKey: null, rows: [], total: 0, totalPages: 1, confirmedIds: new Set(), confirmedCount: 0, error: null });
   const [resources, setResources] = useState(() => new Map());
   const resourceCache = useRef({ platforms: null, journals: new Map() });
 
-  const [selectedRows, setSelectedRows] = useState(() => new Set());
-  const [page, setPage] = useState(1);
+  const [selection, setSelection] = useState(emptySelection);
+  const [summary, setSummary] = useState({ key: null, count: 0, platformIds: [], error: null });
   const [feedback, setFeedback] = useState(null);
   const [editing, setEditing] = useState(null);
   const [url, setUrl] = useState("");
   const [busy, setBusy] = useState(false);
   const [canCheck, setCanCheck] = useState(null); // null mientras se consultan los permisos
   const requestPending = useRef(false);
+
+  // Si el filtro cambia desde fuera (enlaces, historial), se vuelve a la
+  // primera página y se descarta la selección del filtro anterior.
+  const [seenFilterKey, setSeenFilterKey] = useState(filterKey);
+  if (seenFilterKey !== filterKey) {
+    setSeenFilterKey(filterKey);
+    setPage(1);
+    setSelection(emptySelection());
+  }
 
   // Omitir `current` no equivale a `current=false`: se fuerza la vista vigente.
   useEffect(() => {
@@ -169,39 +187,77 @@ export default function LinkAlerts() {
     return () => controller.abort();
   }, [accountsApi]);
 
+  // Una página del servidor; filtros, orden y totales los resuelve el backend.
   useEffect(() => {
     if (!hasCurrent) return undefined;
     const controller = new AbortController();
     const filters = JSON.parse(filterKey);
-    // Para separar caída confirmada de fallo no confirmado se consulta el
-    // filtro `failure_confirmed=true`; la fila no trae ese dato.
-    const needsConfirmedSet =
+    const allConfirmed = filters.failure_confirmed === "true";
+    // `failure_confirmed` es un filtro, no un campo de la fila: para marcar
+    // caídas confirmadas se consulta el mismo filtro acotado a la página.
+    const needsConfirmed =
+      !allConfirmed &&
       filters.current === "true" &&
       filters.failure_confirmed === undefined &&
       !["available", "unverified"].includes(filters.verification_status);
-    const confirmedFilters = { ...pickParams(filters, EXTRA_PARAM_KEYS), ...CONFIRMED_FAILURES_QUERY };
+    const confirmedFilters = { ...filters, failure_confirmed: "true" };
 
-    Promise.all([
-      getLinkAlerts(filters, controller.signal),
-      needsConfirmedSet ? getLinkAlerts(confirmedFilters, controller.signal) : Promise.resolve(null),
-    ])
-      .then(async ([links, confirmed]) => {
+    async function load() {
+      const [pageResponse, confirmedTotal] = await Promise.all([
+        getLinkAlertsPage(filters, { page, pageSize: PAGE_SIZE }, controller.signal),
+        needsConfirmed ? getLinkAlertsPage(confirmedFilters, { pageSize: 1 }, controller.signal) : null,
+      ]);
+      const { results: rows, totalItems, totalPages } = readPage(pageResponse, PAGE_SIZE);
+      let confirmedIds = new Set(allConfirmed ? rows.map((row) => row.id) : []);
+      if (needsConfirmed && rows.length && confirmedTotal?.total_items) {
+        confirmedIds = await getConfirmedIdsOnPage(rows, controller.signal);
+      }
+      return {
+        rows,
+        total: totalItems,
+        totalPages,
+        confirmedIds,
+        confirmedCount: allConfirmed ? totalItems : confirmedTotal?.total_items ?? 0,
+      };
+    }
+
+    load()
+      .then(async (result) => {
         if (controller.signal.aborted) return;
-        const confirmedIds = new Set(
-          filters.failure_confirmed === "true"
-            ? links.map((row) => row.id)
-            : (confirmed || []).map((row) => row.id)
-        );
-        setData({ key: requestKey, filterKey, links, confirmedIds, error: null });
-        setSelectedRows((current) => new Set([...current].filter((id) => links.some((row) => String(row.id) === id))));
-        const resolved = await resolveLinkResources(links, controller.signal, resourceCache.current);
+        setData({ key: requestKey, filterKey, ...result, error: null });
+        // Nombres de recursos solo para las filas de la página visible.
+        const resolved = await resolveLinkResources(result.rows, controller.signal, resourceCache.current);
         if (!controller.signal.aborted) setResources(resolved);
       })
       .catch((error) => {
-        if (!controller.signal.aborted) setData((current) => ({ ...current, key: requestKey, filterKey, error }));
+        if (controller.signal.aborted) return;
+        if (isMissingPage(error, page)) {
+          setPage(1);
+          return;
+        }
+        setData((current) => ({ ...current, key: requestKey, filterKey, error }));
       });
     return () => controller.abort();
-  }, [filterKey, requestKey, hasCurrent]);
+  }, [filterKey, requestKey, hasCurrent, page]);
+
+  // "Todos los filtrados": las plataformas implicadas se calculan recorriendo
+  // las páginas del filtro (la API no ofrece un resumen de selección).
+  const excludedKey = selection.mode === "all" ? [...selection.excluded.keys()].join(",") : "";
+  const summaryKey = `${filterKey}#${revision}#${excludedKey}`;
+  const needsSummary = hasCurrent && selection.mode === "all";
+  useEffect(() => {
+    if (!needsSummary) return undefined;
+    const controller = new AbortController();
+    const excluded = excludedKey ? excludedKey.split(",") : [];
+    getFilteredPlatformIds(JSON.parse(filterKey), excluded, controller.signal)
+      .then((result) => {
+        if (!controller.signal.aborted) setSummary({ key: summaryKey, count: result.count, platformIds: result.platformIds, error: null });
+      })
+      .catch((error) => {
+        if (!controller.signal.aborted) setSummary({ key: summaryKey, count: 0, platformIds: [], error });
+      });
+    return () => controller.abort();
+  }, [summaryKey, needsSummary]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const refresh = useCallback(() => setRevision((value) => value + 1), []);
 
@@ -234,40 +290,37 @@ export default function LinkAlerts() {
   // Al cambiar de filtro no se muestran datos de la vista anterior.
   const firstLoad = data.key === null || data.filterKey !== filterKey;
   const reloading = !firstLoad && data.key !== requestKey;
-  const { links, confirmedIds, error } = data;
+  const { rows, total, confirmedIds, confirmedCount, error } = data;
 
-  const totalPages = Math.max(1, Math.ceil(links.length / PAGE_SIZE));
+  const totalPages = Math.max(1, data.totalPages);
   const currentPage = Math.min(page, totalPages);
-  const rows = links.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE);
-  const allPageSelected = rows.length > 0 && rows.every((row) => selectedRows.has(String(row.id)));
-  const allFilteredSelected = links.length > 0 && links.every((row) => selectedRows.has(String(row.id)));
-  const selectedLinks = links.filter((row) => selectedRows.has(String(row.id)));
-  const selectedPlatformIds = [...new Set(selectedLinks.map((row) => String(platformIdOf(row))))];
-  const confirmedCount = links.filter((row) => confirmedIds.has(row.id)).length;
+  const allPageSelected = rows.length > 0 && rows.every((row) => isRowSelected(selection, row));
+  const allFilteredSelected = isEverythingSelected(selection, total);
+  const summaryCurrent = summary.key === summaryKey;
+  // En "todos los filtrados" el servidor confirma cuántas filas siguen coincidiendo.
+  const selectedCount = selection.mode === "all" && summaryCurrent && !summary.error
+    ? summary.count
+    : selectionCount(selection, total);
+  // Selección explícita: plataformas conocidas al instante; "todos": del servidor.
+  const selectedPlatformIds = selection.mode === "all"
+    ? (summaryCurrent && !summary.error ? summary.platformIds : [])
+    : explicitPlatformIds(selection);
+  const selectionPending = selection.mode === "all" && needsSummary && !summaryCurrent;
 
   const navigate = (nextParams) => {
     setPage(1);
-    setSelectedRows(new Set());
+    setSelection(emptySelection());
     setFeedback(null);
     setEditing(null);
     router.replace(`${pathname}?${buildQueryString(nextParams)}`);
   };
 
-  function toggleSelection(rowId) {
-    setSelectedRows((current) => {
-      const next = new Set(current);
-      if (next.has(rowId)) next.delete(rowId);
-      else next.add(rowId);
-      return next;
-    });
+  function toggleSelection(row) {
+    setSelection((current) => toggleRow(current, row));
   }
 
   function togglePageSelection(checked) {
-    setSelectedRows((current) => {
-      const next = new Set(current);
-      rows.forEach((row) => (checked ? next.add(String(row.id)) : next.delete(String(row.id))));
-      return next;
-    });
+    setSelection((current) => setRowsSelected(current, rows, checked));
   }
 
   async function runAction(action) {
@@ -302,7 +355,7 @@ export default function LinkAlerts() {
       const results = await Promise.allSettled(platformIds.map((id) => checkPlatformLinks(id)));
       const lines = results.map((result, index) => {
         const id = platformIds[index];
-        const label = links.find((row) => String(platformIdOf(row)) === id);
+        const label = rows.find((row) => String(platformIdOf(row)) === id);
         const name = label ? resources.get(label.id)?.platformName || `Plataforma #${id}` : `Plataforma #${id}`;
         if (result.status === "rejected") return `${name}: ${linkActionError(result.reason)}`;
         const { checked, available, failed } = result.value || {};
@@ -310,7 +363,7 @@ export default function LinkAlerts() {
       });
       const anyFailed = results.some((result) => result.status === "rejected");
       setFeedback({ variant: anyFailed ? "error" : "success", text: lines.join(" · ") });
-      setSelectedRows(new Set());
+      setSelection(emptySelection());
       refresh();
     });
 
@@ -389,16 +442,16 @@ export default function LinkAlerts() {
     { key: "action", label: "ACCIÓN", width: "20%" },
   ];
 
-  let summary = null;
+  let overview = null;
   if (!firstLoad && !error) {
     if (view?.key === "caidos") {
-      summary = links.length
-        ? { variant: "error", text: `${links.length} ${links.length === 1 ? "caída confirmada vigente" : "caídas confirmadas vigentes"} (5 o más fallos consecutivos).` }
+      overview = total
+        ? { variant: "error", text: `${total} ${total === 1 ? "caída confirmada vigente" : "caídas confirmadas vigentes"} (5 o más fallos consecutivos).` }
         : { variant: "success", text: "No hay caídas confirmadas vigentes." };
     } else {
-      summary = {
+      overview = {
         variant: confirmedCount ? "error" : "neutral",
-        text: `${links.length} ${links.length === 1 ? "enlace" : "enlaces"}${confirmedCount ? ` · ${confirmedCount} con caída confirmada` : ""}.`,
+        text: `${total} ${total === 1 ? "enlace" : "enlaces"}${confirmedCount ? ` · ${confirmedCount} con caída confirmada` : ""}.`,
       };
     }
   }
@@ -482,11 +535,11 @@ export default function LinkAlerts() {
         ) : error ? (
           <Notice variant="error" live>{loadErrorMessage(error)}</Notice>
         ) : (
-          summary && <Notice variant={summary.variant} live>{summary.text}</Notice>
+          overview && <Notice variant={overview.variant} live>{overview.text}</Notice>
         )}
 
         <div className="min-h-[300px] overflow-hidden rounded-xl border border-[#DCE0E5] bg-white" aria-busy={firstLoad || reloading || busy}>
-          {!firstLoad && !error && (links.length ? (
+          {!firstLoad && !error && (rows.length ? (
             <AdminTable
               caption="Disponibilidad de enlaces por contexto."
               variant="alerts"
@@ -500,7 +553,7 @@ export default function LinkAlerts() {
                   resource={resources.get(item.id)}
                   confirmed={confirmedIds.has(item.id)}
                   isHistory={isHistory}
-                  selected={selectedRows.has(String(item.id))}
+                  selected={isRowSelected(selection, item)}
                   onToggle={toggleSelection}
                   busy={busy}
                   canCheck={Boolean(canCheck)}
@@ -517,23 +570,31 @@ export default function LinkAlerts() {
 
         {!firstLoad && !error && totalPages > 1 && (
           <div className="flex flex-wrap items-center gap-3">
-            <Button variant="quiet" size="small" disabled={currentPage <= 1} onClick={() => setPage(currentPage - 1)}>Anterior</Button>
+            <Button variant="quiet" size="small" disabled={reloading || currentPage <= 1} onClick={() => setPage(currentPage - 1)}>Anterior</Button>
             <span className="text-sm text-[#68707C]">Página {currentPage} de {totalPages}</span>
-            <Button variant="quiet" size="small" disabled={currentPage >= totalPages} onClick={() => setPage(currentPage + 1)}>Siguiente</Button>
+            <Button variant="quiet" size="small" disabled={reloading || currentPage >= totalPages} onClick={() => setPage(currentPage + 1)}>Siguiente</Button>
           </div>
         )}
 
         {/* Selección */}
-        {!firstLoad && !error && links.length > 0 && (
+        {!firstLoad && !error && total > 0 && (
           <div className="flex flex-wrap items-center gap-3 text-xs text-[#68707C]">
-            <span>{selectedRows.size} {selectedRows.size === 1 ? "seleccionado" : "seleccionados"} de {links.length}.</span>
+            <span>{selectedCount} {selectedCount === 1 ? "seleccionado" : "seleccionados"} de {total}.</span>
             <button
               type="button"
               className="font-semibold text-[#174C92] underline"
-              onClick={() => setSelectedRows(allFilteredSelected ? new Set() : new Set(links.map((row) => String(row.id))))}
+              onClick={() => setSelection(allFilteredSelected ? emptySelection() : selectAllFiltered())}
             >
-              {allFilteredSelected ? "Quitar selección" : `Seleccionar los ${links.length} resultados filtrados`}
+              {allFilteredSelected ? "Quitar selección" : `Seleccionar los ${total} resultados filtrados`}
             </button>
+            {selectedCount > 0 && !allFilteredSelected && (
+              <button type="button" className="font-semibold text-[#174C92] underline" onClick={() => setSelection(emptySelection())}>
+                Quitar selección
+              </button>
+            )}
+            {summary.error && summary.key === summaryKey && (
+              <span className="text-[#A90D27]">No se pudo calcular la selección: {summary.error.message}</span>
+            )}
           </div>
         )}
 
@@ -544,10 +605,10 @@ export default function LinkAlerts() {
             <div className="grid gap-4 md:grid-cols-3">
               <div className="flex flex-col gap-2">
                 <Button
-                  disabled={busy || !selectedPlatformIds.length}
+                  disabled={busy || selectionPending || !selectedPlatformIds.length}
                   onClick={() => verifyPlatforms(selectedPlatformIds)}
                 >
-                  {busy ? "Verificando…" : `Verificar plataformas seleccionadas (${selectedPlatformIds.length})`}
+                  {busy ? "Verificando…" : selectionPending ? "Calculando selección…" : `Verificar plataformas seleccionadas (${selectedPlatformIds.length})`}
                 </Button>
                 <p className="text-xs text-[#68707C]">
                   Comprueba ahora la URL general y todos los enlaces de revistas de cada plataforma de las filas seleccionadas. No existe verificación de un conjunto arbitrario de enlaces.

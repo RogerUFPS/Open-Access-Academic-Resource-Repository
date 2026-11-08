@@ -37,8 +37,8 @@ export const journalService = {
   /**
    * List logically deleted journals (GET /api/journals/archived/)
    */
-  getArchivedJournals: async () => {
-    return apiClient.get("/api/journals/archived/");
+  getArchivedJournals: async (params = {}) => {
+    return apiClient.get("/api/journals/archived/", params);
   },
 
   /**
