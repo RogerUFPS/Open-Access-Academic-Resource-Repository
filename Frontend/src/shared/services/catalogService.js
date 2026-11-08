@@ -1,7 +1,6 @@
 import { apiClient } from "@/shared/services/apiClient";
 
 const MAX_PAGE_SIZE = 100;
-const MAX_PAGES = 50;
 
 export function extractResults(response) {
   if (Array.isArray(response)) return response;
@@ -11,20 +10,22 @@ export function extractResults(response) {
 
 /**
  * Los catálogos están paginados (PAGE_SIZE=10 por defecto en el backend).
- * Recorre todas las páginas con el tamaño máximo permitido para que los
- * selectores no queden truncados a los primeros 10 registros.
+ * Recorre todas las páginas con el tamaño máximo permitido, siguiendo `next`
+ * hasta `null`, para que los listados no queden truncados.
  */
 export async function fetchAllPages(endpoint, params = {}) {
   const items = [];
-  for (let page = 1; page <= MAX_PAGES; page += 1) {
+  for (let page = 1; ; page += 1) {
     const response = await apiClient.get(endpoint, {
       ...params,
       page,
       page_size: MAX_PAGE_SIZE,
     });
     if (Array.isArray(response)) return response;
-    items.push(...extractResults(response));
-    if (!response?.next) break;
+    const results = extractResults(response);
+    items.push(...results);
+    // Sin `next` (o una página vacía) indica el final del listado.
+    if (!response?.next || results.length === 0) break;
   }
   return items;
 }
@@ -42,15 +43,20 @@ function rememberProgram(program) {
 
 export const academicProgramService = {
   /**
-   * GET /api/catalog/academic-programs/?search=...&page_size=...
+   * GET /api/catalog/academic-programs/?search=...&page=...&page_size=...
+   * Devuelve una página y si hay más (`next`), para cargar resultados
+   * adicionales sin truncar búsquedas amplias.
    */
-  search: async (search = "", { signal, pageSize = 20 } = {}) => {
+  searchPage: async (search = "", { signal, page = 1, pageSize = 20 } = {}) => {
     const response = await apiClient.get(
       PROGRAMS_ENDPOINT,
-      { search: search.trim(), page_size: pageSize, ordering: "name" },
+      { search: search.trim(), page, page_size: pageSize, ordering: "name" },
       signal ? { signal } : {}
     );
-    return extractResults(response).map(rememberProgram);
+    return {
+      items: extractResults(response).map(rememberProgram),
+      hasMore: !Array.isArray(response) && Boolean(response?.next),
+    };
   },
 
   getCached: (id) => programCache.get(Number(id)) || null,

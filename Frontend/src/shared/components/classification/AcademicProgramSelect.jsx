@@ -37,7 +37,9 @@ export default function AcademicProgramSelect({
 
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
-  const [search, setSearch] = useState({ query: null, items: [], error: null });
+  const [search, setSearch] = useState({ query: null, items: [], page: 1, hasMore: false, error: null });
+  const [loadingMore, setLoadingMore] = useState(false);
+  const loadMoreController = useRef(null);
   const [resolvedNames, setResolvedNames] = useState({});
 
   const lockedIds = useMemo(() => new Set(lockedPrograms.map((program) => Number(program.id))), [lockedPrograms]);
@@ -78,18 +80,53 @@ export default function AcademicProgramSelect({
     const controller = new AbortController();
     const timer = setTimeout(() => {
       academicProgramService
-        .search(query, { signal: controller.signal })
-        .then((items) => setSearch({ query, items, error: null }))
+        .searchPage(query, { signal: controller.signal })
+        .then(({ items, hasMore }) => setSearch({ query, items, page: 1, hasMore, error: null }))
         .catch((err) => {
           if (err?.name === "AbortError") return;
-          setSearch({ query, items: [], error: err?.message || "No se pudieron cargar los programas." });
+          setSearch({ query, items: [], page: 1, hasMore: false, error: err?.message || "No se pudieron cargar los programas." });
         });
     }, SEARCH_DEBOUNCE_MS);
     return () => {
       clearTimeout(timer);
       controller.abort();
+      loadMoreController.current?.abort();
+      setLoadingMore(false);
     };
   }, [open, query]);
+
+  // Siguiente página de la búsqueda actual (sigue `next` del backend).
+  const loadMore = () => {
+    if (loadingMore || !search.hasMore) return;
+    const controller = new AbortController();
+    loadMoreController.current = controller;
+    const { query: currentQuery, page } = search;
+    setLoadingMore(true);
+    academicProgramService
+      .searchPage(currentQuery, { signal: controller.signal, page: page + 1 })
+      .then(({ items, hasMore }) => {
+        setSearch((current) => {
+          if (current.query !== currentQuery) return current;
+          const known = new Set(current.items.map((program) => program.id));
+          return {
+            ...current,
+            items: [...current.items, ...items.filter((program) => !known.has(program.id))],
+            page: page + 1,
+            hasMore,
+          };
+        });
+      })
+      .catch((err) => {
+        if (err?.name === "AbortError") return;
+        setSearch((current) => (current.query === currentQuery ? { ...current, hasMore: false, error: err?.message || "No se pudieron cargar más programas." } : current));
+      })
+      .finally(() => {
+        if (loadMoreController.current === controller) {
+          loadMoreController.current = null;
+          setLoadingMore(false);
+        }
+      });
+  };
 
   // Cerrar al hacer clic fuera.
   useEffect(() => {
@@ -168,7 +205,7 @@ export default function AcademicProgramSelect({
           >
             {searching ? (
               <li className="px-3 py-2 text-xs text-gray-500">Buscando programas...</li>
-            ) : search.error ? (
+            ) : search.error && search.items.length === 0 ? (
               <li className="px-3 py-2 text-xs text-rose-600">{search.error}</li>
             ) : search.items.length === 0 ? (
               <li className="px-3 py-2 text-xs text-gray-500">Sin resultados.</li>
@@ -203,7 +240,27 @@ export default function AcademicProgramSelect({
                     )}
                   </li>
                 );
-              })
+              }).concat(
+                search.hasMore || search.error
+                  ? [
+                      <li key="__more" role="presentation" className="border-t border-gray-100 mt-1 pt-1">
+                        {search.error ? (
+                          <span className="block px-3 py-2 text-xs text-rose-600">{search.error}</span>
+                        ) : (
+                          <button
+                            type="button"
+                            onMouseDown={(event) => event.preventDefault()}
+                            onClick={loadMore}
+                            disabled={loadingMore}
+                            className="w-full rounded-md px-3 py-2 text-left text-xs font-semibold text-blue-700 hover:bg-blue-50 disabled:cursor-wait disabled:text-gray-400 cursor-pointer"
+                          >
+                            {loadingMore ? "Cargando más programas..." : "Cargar más resultados"}
+                          </button>
+                        )}
+                      </li>,
+                    ]
+                  : []
+              )
             )}
           </ul>
         )}
