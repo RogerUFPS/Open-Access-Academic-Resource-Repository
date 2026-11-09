@@ -26,10 +26,12 @@ RETRYABLE_STATUSES = {408, 425, 429}
 def dispatch_http_job(self, job):
     path = JOBS[job]
     endpoint = f"{settings.SCHEDULER_API_URL.rstrip('/')}{path}"
-    headers = {
-        "Authorization": f"Bearer {settings.SCHEDULER_API_TOKEN}",
-        "Idempotency-Key": f"{job}:{self.request.id}",
-    }
+    headers = {"Idempotency-Key": f"{job}:{self.request.id}"}
+    scheduler_token = settings.SCHEDULER_API_TOKEN.strip()
+    if scheduler_token:
+        headers["Authorization"] = f"Bearer {scheduler_token}"
+    elif job != "harvesting_due":
+        raise RuntimeError(f"SCHEDULER_API_TOKEN is required for scheduler job {job}.")
     timeout = httpx.Timeout(connect=3, read=60, write=5, pool=5)
 
     try:

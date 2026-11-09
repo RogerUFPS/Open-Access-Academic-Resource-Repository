@@ -2,13 +2,16 @@ from __future__ import annotations
 
 import logging
 import uuid
+import warnings
 from dataclasses import dataclass
+from io import BytesIO
 from urllib.parse import quote, unquote, urlsplit
 
 import boto3
 from botocore.config import Config
 from botocore.exceptions import BotoCoreError, ClientError
 from django.conf import settings
+from PIL import Image, ImageOps, UnidentifiedImageError
 
 logger = logging.getLogger(__name__)
 
@@ -44,6 +47,8 @@ class StoredImage:
     url: str
     content_type: str
     size: int
+    thumbnail_key: str | None = None
+    thumbnail_url: str | None = None
 
 
 def _setting(name: str, default=None):
@@ -153,6 +158,35 @@ def validate_uploaded_image(file) -> tuple[str, str, str]:
     return image_format, content_type, extension
 
 
+def _create_thumbnail(file) -> bytes:
+    file.seek(0)
+    output = BytesIO()
+    try:
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", Image.DecompressionBombWarning)
+            with Image.open(file) as image:
+                image.seek(0)
+                thumbnail = ImageOps.exif_transpose(image)
+                thumbnail.thumbnail((320, 320), Image.Resampling.LANCZOS)
+                if thumbnail.mode not in {"RGB", "RGBA"}:
+                    thumbnail = thumbnail.convert(
+                        "RGBA" if "transparency" in thumbnail.info else "RGB"
+                    )
+                thumbnail.save(output, format="WEBP", quality=82, method=4)
+    except (
+        Image.DecompressionBombError,
+        Image.DecompressionBombWarning,
+        UnidentifiedImageError,
+        OSError,
+    ) as error:
+        raise ImageStorageError(
+            "No se pudo procesar la imagen para generar su miniatura."
+        ) from error
+    finally:
+        file.seek(0)
+    return output.getvalue()
+
+
 def get_s3_client():
     """Crea un cliente S3 bajo demanda usando la configuración de RustFS."""
     endpoint_url = (_setting("S3_ENDPOINT", "") or "").strip()
@@ -206,14 +240,24 @@ def upload_image(*, file, folder: str) -> StoredImage:
     """Sube una imagen a RustFS y devuelve su URL pública permanente."""
     bucket = _bucket_name()
     _, content_type, extension = validate_uploaded_image(file)
+    thumbnail = _create_thumbnail(file)
 
     normalized_folder = folder.strip("/")
-    key = f"{normalized_folder}/{uuid.uuid4().hex}{extension}" if (
-        normalized_folder
-    ) else f"{uuid.uuid4().hex}{extension}"
+    stem = uuid.uuid4().hex
+    key = (
+        f"{normalized_folder}/{stem}{extension}"
+        if normalized_folder
+        else f"{stem}{extension}"
+    )
+    thumbnail_key = (
+        f"{normalized_folder}/{stem}.thumbnail.webp"
+        if normalized_folder
+        else f"{stem}.thumbnail.webp"
+    )
 
+    client = get_s3_client()
+    original_uploaded = False
     try:
-        client = get_s3_client()
         client.put_object(
             Bucket=bucket,
             Key=key,
@@ -221,9 +265,27 @@ def upload_image(*, file, folder: str) -> StoredImage:
             ContentType=content_type,
             CacheControl="public, max-age=31536000, immutable",
         )
+        original_uploaded = True
+        client.put_object(
+            Bucket=bucket,
+            Key=thumbnail_key,
+            Body=thumbnail,
+            ContentType="image/webp",
+            CacheControl="public, max-age=31536000, immutable",
+        )
     except ImageStorageError:
         raise
     except (BotoCoreError, ClientError) as error:
+        if original_uploaded:
+            for uploaded_key in (key, thumbnail_key):
+                try:
+                    client.delete_object(Bucket=bucket, Key=uploaded_key)
+                except (BotoCoreError, ClientError):
+                    logger.warning(
+                        "No se pudo limpiar una imagen tras fallar la miniatura: key=%s",
+                        uploaded_key,
+                        exc_info=True,
+                    )
         logger.exception("No se pudo subir la imagen a RustFS: key=%s", key)
         raise ImageStorageError(
             "No se pudo almacenar la imagen. Intente nuevamente.",
@@ -235,6 +297,8 @@ def upload_image(*, file, folder: str) -> StoredImage:
         url=build_public_url(key),
         content_type=content_type,
         size=getattr(file, "size", 0) or 0,
+        thumbnail_key=thumbnail_key,
+        thumbnail_url=build_public_url(thumbnail_key),
     )
 
 

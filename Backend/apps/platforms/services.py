@@ -260,6 +260,11 @@ def validate_platform_for_publication(
             "La plataforma debe tener un nombre."
         )
 
+    if not platform.url_image or not platform.url_image.strip():
+        errors["url_image"] = (
+            "La plataforma debe tener una URL de imagen antes de publicarse."
+        )
+
     # La URL pública es independiente de base_api_url. La URL vigente debe
     # tener una comprobación exitosa antes de publicar.
     current_link = latest_platform_link_log(platform)

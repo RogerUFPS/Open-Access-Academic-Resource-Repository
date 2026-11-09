@@ -242,6 +242,32 @@ class HarvestingServicesTestCase(TestCase):
         self.assertEqual(Journal.objects.count(), 2)
 
     @patch("apps.harvesting.services.DoajHarvester._get_client")
+    def test_worker_step_stops_at_quantity_limit_mid_page(self, get_client):
+        client = MagicMock(spec=httpx.Client)
+        client.get.return_value = self._doaj_response(
+            self._doaj_record()
+            + self._doaj_record("2532-1994", "Novecento"),
+            token="next-page-token",
+        )
+        get_client.return_value = client
+        harvest = Harvest.objects.create(
+            platform=self.doaj_platform,
+            max_quantity=1,
+            created_by=self.user,
+        )
+
+        result = process_harvest_worker_step(harvest.pk, checkpoint=0)
+
+        harvest.refresh_from_db()
+        self.assertEqual(result["state"], Harvest.State.COMPLETED)
+        self.assertFalse(result["has_more"])
+        self.assertEqual(harvest.journal_records.count(), 1)
+        self.assertEqual(harvest.api_marker, 1)
+        self.assertTrue(harvest.api_page)
+        self.assertTrue(Journal.objects.filter(issn="1982-0003").exists())
+        self.assertFalse(Journal.objects.filter(issn="2532-1994").exists())
+
+    @patch("apps.harvesting.services.DoajHarvester._get_client")
     def test_worker_retries_provider_timeout_without_advancing_checkpoint(
         self,
         get_client,
@@ -265,7 +291,7 @@ class HarvestingServicesTestCase(TestCase):
         self.assertEqual(harvest.api_page, "")
         client.close.assert_called_once()
 
-    def test_doaj_finishes_page_before_quantity_limit_and_uses_resumption_token(self):
+    def test_doaj_stops_at_quantity_limit_and_resumes_from_mid_page_checkpoint(self):
         first_client = MagicMock(spec=httpx.Client)
         first_client.get.return_value = self._doaj_response(
             self._doaj_record() + self._doaj_record("2532-1994", "Novecento"),
@@ -283,31 +309,57 @@ class HarvestingServicesTestCase(TestCase):
             user=self.user,
         ).harvest_records()
 
-        self.assertEqual(first_result.records_added, 2)
-        self.assertEqual(first_result.api_cursor, "page-two-token")
+        self.assertEqual(first_result.records_added, 1)
+        self.assertEqual(first_result.api_cursor, "")
+        self.assertEqual(first_result.api_marker, 1)
+        self.assertTrue(first_result.api_page)
         self.assertEqual(first_result.state, Harvest.State.COMPLETED)
+        self.assertTrue(Journal.objects.filter(issn="1982-0003").exists())
+        self.assertFalse(Journal.objects.filter(issn="2532-1994").exists())
 
-        second_client = MagicMock(spec=httpx.Client)
-        second_client.get.return_value = self._doaj_response(
-            self._doaj_record("2050-0000", "Third journal"),
-        )
         second_harvest = Harvest.objects.create(
             platform=self.doaj_platform,
             max_quantity=1,
             created_by=self.user,
             **get_latest_harvest_progress(self.doaj_platform),
         )
-
-        DoajHarvester(
+        second_client = MagicMock(spec=httpx.Client)
+        second_result = DoajHarvester(
             second_harvest,
             client=second_client,
             user=self.user,
         ).harvest_records()
 
+        self.assertEqual(second_result.records_added, 1)
+        self.assertEqual(second_result.api_cursor, "page-two-token")
+        self.assertEqual(second_result.api_marker, 0)
+        self.assertEqual(second_result.api_page, "")
+        self.assertTrue(Journal.objects.filter(issn="2532-1994").exists())
+        self.assertEqual(Journal.objects.count(), 2)
+        second_client.get.assert_not_called()
+
+        third_harvest = Harvest.objects.create(
+            platform=self.doaj_platform,
+            max_quantity=1,
+            created_by=self.user,
+            **get_latest_harvest_progress(self.doaj_platform),
+        )
+        third_client = MagicMock(spec=httpx.Client)
+        third_client.get.return_value = self._doaj_response(
+            self._doaj_record("2050-0000", "Third journal"),
+        )
+
+        DoajHarvester(
+            third_harvest,
+            client=third_client,
+            user=self.user,
+        ).harvest_records()
+
         self.assertEqual(
-            second_client.get.call_args.kwargs["params"],
+            third_client.get.call_args.kwargs["params"],
             {"verb": "ListRecords", "resumptionToken": "page-two-token"},
         )
+        self.assertTrue(Journal.objects.filter(issn="2050-0000").exists())
 
     def test_doaj_oai_error_is_reported_as_failed_harvest(self):
         client = MagicMock(spec=httpx.Client)

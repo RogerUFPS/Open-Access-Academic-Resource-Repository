@@ -1,12 +1,20 @@
+from io import BytesIO
 from unittest.mock import MagicMock, patch
 
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import SimpleTestCase, override_settings
+from PIL import Image
 
 from apps.core import storage
 
 
-PNG_BYTES = b"\x89PNG\r\n\x1a\n" + (b"\x00" * 32)
+def create_png_bytes(size=(640, 480)):
+    output = BytesIO()
+    Image.new("RGB", size, color=(140, 20, 30)).save(output, format="PNG")
+    return output.getvalue()
+
+
+PNG_BYTES = create_png_bytes()
 JPEG_BYTES = b"\xff\xd8\xff\xe0" + (b"\x00" * 32)
 
 
@@ -49,11 +57,17 @@ class ImageStorageTests(SimpleTestCase):
         self.assertNotIn("X-Amz-Expires", stored.url)
         self.assertNotIn("Signature", stored.url)
 
-        client.put_object.assert_called_once()
-        call = client.put_object.call_args.kwargs
+        self.assertEqual(client.put_object.call_count, 2)
+        call = client.put_object.call_args_list[0].kwargs
         self.assertEqual(call["Bucket"], "imagenes")
         self.assertEqual(call["Key"], stored.key)
         self.assertEqual(call["ContentType"], "image/png")
+        thumbnail_call = client.put_object.call_args_list[1].kwargs
+        self.assertEqual(thumbnail_call["Key"], stored.thumbnail_key)
+        self.assertEqual(thumbnail_call["ContentType"], "image/webp")
+        thumbnail = Image.open(BytesIO(thumbnail_call["Body"]))
+        self.assertLessEqual(max(thumbnail.size), 320)
+        self.assertEqual(stored.thumbnail_url, storage.build_public_url(stored.thumbnail_key))
 
     def test_detects_real_format_instead_of_filename(self):
         file = SimpleUploadedFile(

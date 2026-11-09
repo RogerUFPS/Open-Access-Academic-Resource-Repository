@@ -1,5 +1,7 @@
 from datetime import date
 
+from django.db import connection
+from django.test.utils import CaptureQueriesContext
 from django.utils import timezone
 from rest_framework.test import APITestCase
 
@@ -144,6 +146,93 @@ class JournalFilterTests(APITestCase):
         self.assertEqual(self._ids(active), [self.public_journal.pk])
         self.assertEqual(inactive.status_code, 200)
         self.assertEqual(self._ids(inactive), [self.inactive_journal.pk])
+
+    def test_admin_status_filter_separates_pending_and_deactivated_with_pagination(self):
+        another_pending = models.Journal.objects.create(
+            issn="3333-3333",
+            title="Gamma Journal",
+            active=False,
+            created_by=self.user,
+        )
+        deactivated = models.Journal.objects.create(
+            issn="4444-4444",
+            title="Delta Journal",
+            active=False,
+            validated_by=self.user,
+            validated_at=timezone.now(),
+            created_by=self.user,
+        )
+
+        first_page = self.client.get(
+            "/api/journals/",
+            {"status": "pending", "page_size": 1, "page": 1},
+        )
+        second_page = self.client.get(
+            "/api/journals/",
+            {"status": "pending", "page_size": 1, "page": 2},
+        )
+        deactivated_page = self.client.get(
+            "/api/journals/",
+            {"status": "deactivated"},
+        )
+
+        self.assertEqual(first_page.status_code, 200)
+        self.assertEqual(first_page.data["total_items"], 2)
+        self.assertEqual(first_page.data["total_pages"], 2)
+        self.assertEqual(second_page.status_code, 200)
+        self.assertEqual(deactivated_page.status_code, 200)
+        self.assertEqual(
+            self._ids(first_page) + self._ids(second_page),
+            [self.inactive_journal.pk, another_pending.pk],
+        )
+        self.assertEqual(self._ids(deactivated_page), [deactivated.pk])
+
+    def test_admin_status_filter_combines_with_existing_active_filter(self):
+        response = self.client.get(
+            "/api/journals/",
+            {"active": "true", "status": "pending"},
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["total_items"], 0)
+
+    def test_public_journal_relations_are_prefetched_per_page(self):
+        models.Journal.objects.create(
+            issn="5555-5555",
+            title="Second Public Journal",
+            active=True,
+            validated_by=self.user,
+            validated_at=timezone.now(),
+            created_by=self.user,
+        )
+
+        with CaptureQueriesContext(connection) as one_item_queries:
+            one_item_response = self.client.get(
+                "/api/journals/public/",
+                {"page_size": 1},
+            )
+        with CaptureQueriesContext(connection) as two_item_queries:
+            two_item_response = self.client.get(
+                "/api/journals/public/",
+                {"page_size": 2},
+            )
+
+        self.assertEqual(one_item_response.status_code, 200)
+        self.assertEqual(two_item_response.status_code, 200)
+        self.assertEqual(len(one_item_queries), len(two_item_queries))
+
+    def test_public_journal_list_has_shared_cache_policy_for_anonymous_requests(self):
+        self.client.force_authenticate(user=None)
+        response = self.client.get("/api/journals/public/")
+        self.assertEqual(response.status_code, 200)
+        cache_control = response.headers["Cache-Control"]
+        self.assertIn("public", cache_control)
+        self.assertIn("max-age=0", cache_control)
+        self.assertIn("s-maxage=300", cache_control)
+
+    def test_public_journal_list_is_not_shared_cached_for_authenticated_requests(self):
+        response = self.client.get("/api/journals/public/")
+        self.assertEqual(response.status_code, 200)
+        self.assertNotIn("s-maxage=300", response.headers.get("Cache-Control", ""))
 
     def test_admin_supports_common_relational_filters(self):
         params = {

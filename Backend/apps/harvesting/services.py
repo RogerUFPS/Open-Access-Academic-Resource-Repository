@@ -7,7 +7,7 @@ from datetime import timedelta
 from typing import Any
 from urllib.parse import urlsplit, urlunsplit
 
-from django.db import transaction
+from django.db import IntegrityError, transaction
 from django.db.models import Q
 from django.utils import timezone
 import httpx
@@ -27,6 +27,55 @@ ISSN_PATTERN = re.compile(r"^\s*(\d{4})-?(\d{3}[\dXx])\s*$")
 
 class RetryableHarvestError(RuntimeError):
     """A provider or network error that should be retried by Celery."""
+
+
+class HarvestLimitExceeded(RuntimeError):
+    pass
+
+
+HARVEST_JOURNAL_QUANTITY_CONSTRAINT = "harvest_journal_quantity_limit"
+
+
+def _is_harvest_quantity_limit_violation(error: IntegrityError) -> bool:
+    cause = error.__cause__
+    diagnostic = getattr(cause, "diag", None)
+    return (
+        getattr(diagnostic, "constraint_name", None)
+        == HARVEST_JOURNAL_QUANTITY_CONSTRAINT
+    )
+
+
+def _harvest_journal_count(harvest: models.Harvest) -> int:
+    return models.HarvestJournal.objects.filter(harvest_id=harvest.pk).count()
+
+
+def _harvest_processed_count(harvest: models.Harvest) -> int:
+    counter_total = (
+        harvest.records_added
+        + harvest.records_updated
+        + harvest.records_failed
+    )
+    if _is_doaj_platform(harvest.platform):
+        persisted_total = _harvest_journal_count(harvest) + harvest.records_failed
+        return max(counter_total, persisted_total)
+    return counter_total
+
+
+def _quantity_limit_reached(harvest: models.Harvest) -> bool:
+    return (
+        harvest.max_quantity is not None
+        and _harvest_processed_count(harvest) >= harvest.max_quantity
+    )
+
+
+def _check_harvest_limit_after_write(harvest: models.Harvest) -> None:
+    if (
+        harvest.max_quantity is not None
+        and _harvest_journal_count(harvest) > harvest.max_quantity
+    ):
+        harvest.state = models.Harvest.State.FAILED
+        harvest.save(update_fields=["state"])
+        raise HarvestLimitExceeded("harvest exceeded max_quantity after write")
 
 
 def get_latest_cursor_for_platform(platform: Platform) -> str:
@@ -261,7 +310,9 @@ class OpenAlexHarvester:
                         page_complete = False
                         break
 
-                    self._process_single_source(item)
+                    if not self._process_single_source(item):
+                        page_complete = False
+                        break
 
                 # Actualizar cursor y métricas de progreso de forma progresiva e inalterable
                 if page_complete and next_cursor:
@@ -345,13 +396,16 @@ class OpenAlexHarvester:
 
         return harvest
 
-    def _process_single_source(self, item: dict[str, Any]) -> None:
+    def _process_single_source(self, item: dict[str, Any]) -> bool:
         """
         Procesa una entrada de OpenAlex, extrae los datos de la revista y
         utiliza apps.journal.services.create_journal para insertar/actualizar
         garantizando deduplicación por ISSN.
         """
         harvest = self.harvest
+        if _quantity_limit_reached(harvest):
+            harvest.state = models.Harvest.State.COMPLETED
+            return False
 
         # Obtener ISSN preferencial (issn_l o primer ISSN de la lista)
         issn_l = item.get("issn_l")
@@ -360,7 +414,7 @@ class OpenAlexHarvester:
 
         if not issn:
             harvest.records_failed += 1
-            return
+            return True
 
         title = item.get("display_name") or ""
         journal_url = item.get("homepage_url")
@@ -417,13 +471,26 @@ class OpenAlexHarvester:
                         else models.HarvestJournal.Result.ADDED
                     ),
                 )
+                _check_harvest_limit_after_write(harvest)
             if is_existing:
                 harvest.records_updated += 1
             else:
                 harvest.records_added += 1
+        except IntegrityError as exc:
+            if _is_harvest_quantity_limit_violation(exc):
+                harvest.state = models.Harvest.State.COMPLETED
+                return False
+            logger.warning("Fallo al crear o actualizar revista %s: %s", issn, exc)
+            harvest.records_failed += 1
+        except HarvestLimitExceeded as exc:
+            harvest.state = models.Harvest.State.FAILED
+            harvest.error_message = str(exc)
+            harvest.save(update_fields=["state", "error_message"])
+            raise
         except Exception as exc:
             logger.warning("Fallo al crear o actualizar revista %s: %s", issn, exc)
             harvest.records_failed += 1
+        return True
 
 
 class DoajHarvester:
@@ -585,13 +652,16 @@ class DoajHarvester:
                     created_by=self.user,
                 )
 
-    def _process_record(self, record) -> None:
+    def _process_record(self, record) -> bool:
         harvest = self.harvest
+        if _quantity_limit_reached(harvest):
+            harvest.state = models.Harvest.State.COMPLETED
+            return False
         header = record.find(f"{{{OAI_NAMESPACE}}}header")
         if header is None or header.get("status") == "deleted":
             harvest.records_failed += 1
             logger.warning("Registro DOAJ eliminado o sin encabezado; se omite.")
-            return
+            return True
 
         identifiers = self._dc_values(record, "identifier")
         issn = self._record_issn(identifiers)
@@ -603,7 +673,7 @@ class DoajHarvester:
                 "Registro DOAJ sin ISSN o título (identifier=%s).",
                 header.findtext(f"{{{OAI_NAMESPACE}}}identifier"),
             )
-            return
+            return True
 
         languages = [
             language.pk
@@ -655,13 +725,26 @@ class DoajHarvester:
                         else models.HarvestJournal.Result.ADDED
                     ),
                 )
+                _check_harvest_limit_after_write(harvest)
             if is_existing:
                 harvest.records_updated += 1
             else:
                 harvest.records_added += 1
+        except IntegrityError as exc:
+            if _is_harvest_quantity_limit_violation(exc):
+                harvest.state = models.Harvest.State.COMPLETED
+                return False
+            logger.warning("Fallo al crear o actualizar revista DOAJ %s: %s", issn, exc)
+            harvest.records_failed += 1
+        except HarvestLimitExceeded as exc:
+            harvest.state = models.Harvest.State.FAILED
+            harvest.error_message = str(exc)
+            harvest.save(update_fields=["state", "error_message"])
+            raise
         except Exception as exc:
             logger.warning("Fallo al crear o actualizar revista DOAJ %s: %s", issn, exc)
             harvest.records_failed += 1
+        return True
 
     def harvest_records(self) -> models.Harvest:
         if not self.harvest.platform.is_harvestable:
@@ -696,6 +779,15 @@ class DoajHarvester:
                 }:
                     break
 
+                total_processed = _harvest_processed_count(harvest)
+                if harvest.max_quantity and total_processed >= harvest.max_quantity:
+                    logger.info(
+                        "Límite de cantidad alcanzado en cosecha DOAJ #%s (%s)",
+                        harvest.pk,
+                        total_processed,
+                    )
+                    break
+
                 elapsed_minutes = (
                     harvest.elapsed_seconds + time.monotonic() - start_time
                 ) / 60
@@ -706,11 +798,7 @@ class DoajHarvester:
                     break
 
                 if not harvest.api_page:
-                    total_processed = (
-                        harvest.records_added
-                        + harvest.records_updated
-                        + harvest.records_failed
-                    )
+                    total_processed = _harvest_processed_count(harvest)
                     if harvest.max_quantity and total_processed >= harvest.max_quantity:
                         break
                     params = (
@@ -750,6 +838,10 @@ class DoajHarvester:
                     }:
                         break
 
+                    total_processed = _harvest_processed_count(harvest)
+                    if harvest.max_quantity and total_processed >= harvest.max_quantity:
+                        break
+
                     elapsed_minutes = (
                         harvest.elapsed_seconds + time.monotonic() - start_time
                     ) / 60
@@ -760,7 +852,8 @@ class DoajHarvester:
                         break
 
                     with transaction.atomic():
-                        self._process_record(records[harvest.api_marker])
+                        if not self._process_record(records[harvest.api_marker]):
+                            break
                         harvest.api_marker += 1
                         harvest.save(
                             update_fields=[
@@ -770,6 +863,9 @@ class DoajHarvester:
                                 "records_failed",
                             ]
                         )
+                    total_processed = _harvest_processed_count(harvest)
+                    if harvest.max_quantity and total_processed >= harvest.max_quantity:
+                        break
 
                 if harvest.api_marker < len(records):
                     break
@@ -884,6 +980,61 @@ def _worker_result(harvest: models.Harvest, *, stale: bool = False) -> dict[str,
     }
 
 
+def _worker_elapsed_milliseconds(
+    harvest: models.Harvest,
+    now=None,
+) -> int:
+    now = now or timezone.now()
+    elapsed_milliseconds = max(
+        harvest.worker_elapsed_milliseconds,
+        harvest.elapsed_seconds * 1000,
+    )
+    if harvest.worker_dispatched_at is not None:
+        elapsed_milliseconds += max(
+            0,
+            int(
+                (now - harvest.worker_dispatched_at).total_seconds()
+                * 1000
+            ),
+        )
+    return elapsed_milliseconds
+
+
+def _complete_worker_harvest_if_limited(
+    harvest: models.Harvest,
+    now=None,
+) -> bool:
+    now = now or timezone.now()
+    total_processed = _harvest_processed_count(harvest)
+    if harvest.max_quantity and total_processed >= harvest.max_quantity:
+        harvest.state = models.Harvest.State.COMPLETED
+    elif (
+        harvest.stop_after_minutes
+        and _worker_elapsed_milliseconds(harvest, now)
+        >= harvest.stop_after_minutes * 60_000
+    ):
+        harvest.state = models.Harvest.State.COMPLETED
+        harvest.worker_elapsed_milliseconds = _worker_elapsed_milliseconds(harvest, now)
+        harvest.elapsed_seconds = harvest.worker_elapsed_milliseconds // 1000
+        harvest.worker_dispatched_at = now
+    else:
+        return False
+
+    harvest.finished_at = now
+    harvest.save(
+        update_fields=[
+            "state",
+            "started_at",
+            "finished_at",
+            "worker_elapsed_milliseconds",
+            "elapsed_seconds",
+            "worker_dispatched_at",
+        ]
+    )
+    _finish_schedule_event(harvest)
+    return True
+
+
 def _finish_schedule_event(harvest: models.Harvest) -> None:
     if not harvest.event_id:
         return
@@ -939,7 +1090,9 @@ def _worker_openalex_step(harvest: models.Harvest, user: User) -> None:
         if not results:
             harvest.state = models.Harvest.State.COMPLETED
             return
-        harvester._process_single_source(results[0])
+        if not harvester._process_single_source(results[0]):
+            harvest.state = models.Harvest.State.COMPLETED
+            return
         harvest.api_cursor = data.get("meta", {}).get("next_cursor") or ""
         if not harvest.api_cursor:
             harvest.state = models.Harvest.State.COMPLETED
@@ -948,6 +1101,11 @@ def _worker_openalex_step(harvest: models.Harvest, user: User) -> None:
 
 
 def _worker_doaj_step(harvest: models.Harvest, user: User) -> None:
+    total_processed = _harvest_processed_count(harvest)
+    if harvest.max_quantity and total_processed >= harvest.max_quantity:
+        harvest.state = models.Harvest.State.COMPLETED
+        return
+
     harvester = DoajHarvester(harvest, user=user)
     endpoint = harvester._get_endpoint()
     client = harvester._get_client()
@@ -987,22 +1145,35 @@ def _worker_doaj_step(harvest: models.Harvest, user: User) -> None:
                 "de la respuesta DOAJ almacenada."
             )
         if harvest.api_marker < len(records):
-            harvester._process_record(records[harvest.api_marker])
-            harvest.api_marker += 1
+            total_processed = _harvest_processed_count(harvest)
+            quantity_reached = (
+                harvest.max_quantity and total_processed >= harvest.max_quantity
+            )
+            time_reached = (
+                harvest.stop_after_minutes
+                and _worker_elapsed_milliseconds(harvest)
+                >= harvest.stop_after_minutes * 60_000
+            )
+            if quantity_reached or time_reached:
+                harvest.state = models.Harvest.State.COMPLETED
+            else:
+                if harvester._process_record(records[harvest.api_marker]):
+                    harvest.api_marker += 1
+                else:
+                    harvest.state = models.Harvest.State.COMPLETED
 
-        if harvest.api_marker >= len(records):
+        page_complete = harvest.api_marker >= len(records)
+        if page_complete:
             harvest.api_cursor = next_token
             harvest.api_marker = 0
             harvest.api_page = ""
-            total_processed = (
-                harvest.records_added
-                + harvest.records_updated
-                + harvest.records_failed
-            )
-            if not next_token or (
-                harvest.max_quantity and total_processed >= harvest.max_quantity
-            ):
-                harvest.state = models.Harvest.State.COMPLETED
+
+        total_processed = _harvest_processed_count(harvest)
+        if (
+            (page_complete and not next_token)
+            or (harvest.max_quantity and total_processed >= harvest.max_quantity)
+        ):
+            harvest.state = models.Harvest.State.COMPLETED
     finally:
         client.close()
 
@@ -1047,35 +1218,10 @@ def process_harvest_worker_step(
             harvest.state = models.Harvest.State.RUNNING
             harvest.started_at = harvest.started_at or timezone.now()
 
-        elapsed_milliseconds = max(
-            harvest.worker_elapsed_milliseconds,
-            harvest.elapsed_seconds * 1000,
-        )
-        if (
-            harvest.stop_after_minutes
-            and elapsed_milliseconds >= harvest.stop_after_minutes * 60_000
-        ):
-            harvest.state = models.Harvest.State.COMPLETED
-            harvest.finished_at = timezone.now()
-            harvest.save(update_fields=["state", "started_at", "finished_at"])
-            _finish_schedule_event(harvest)
+        now = timezone.now()
+        if _complete_worker_harvest_if_limited(harvest, now):
             return _worker_result(harvest)
-
-        total_processed = (
-            harvest.records_added
-            + harvest.records_updated
-            + harvest.records_failed
-        )
-        if (
-            harvest.max_quantity
-            and total_processed >= harvest.max_quantity
-            and not (_is_doaj_platform(harvest.platform) and harvest.api_page)
-        ):
-            harvest.state = models.Harvest.State.COMPLETED
-            harvest.finished_at = timezone.now()
-            harvest.save(update_fields=["state", "started_at", "finished_at"])
-            _finish_schedule_event(harvest)
-            return _worker_result(harvest)
+        elapsed_milliseconds = _worker_elapsed_milliseconds(harvest, now)
 
         started = time.monotonic()
         try:
@@ -1092,6 +1238,9 @@ def process_harvest_worker_step(
                     "No existe un motor de recolección configurado para la plataforma "
                     f"'{harvest.platform.name}'."
                 )
+            total_processed = _harvest_processed_count(harvest)
+            if harvest.max_quantity and total_processed >= harvest.max_quantity:
+                harvest.state = models.Harvest.State.COMPLETED
         except (httpx.TransportError, RetryableHarvestError):
             logger.warning(
                 "Error transitorio procesando Harvest #%s; se delega el reintento a Queue.",
@@ -1273,9 +1422,24 @@ def run_scheduled_harvests(now=None) -> list[models.Harvest]:
 def dispatch_harvest_to_worker(harvest: models.Harvest) -> models.Harvest:
     from .tasks import process_harvest_step
 
-    process_harvest_step.apply_async(
-        args=(harvest.pk, harvest.worker_checkpoint),
-    )
-    harvest.worker_dispatched_at = timezone.now()
-    harvest.save(update_fields=["worker_dispatched_at"])
-    return harvest
+    with transaction.atomic():
+        harvest = (
+            models.Harvest.objects.select_for_update(of=("self",))
+            .select_related("platform", "created_by", "event")
+            .get(pk=harvest.pk)
+        )
+        if harvest.state not in {
+            models.Harvest.State.PENDING,
+            models.Harvest.State.RUNNING,
+        }:
+            return harvest
+        now = timezone.now()
+        if _complete_worker_harvest_if_limited(harvest, now):
+            return harvest
+        process_harvest_step.apply_async(
+            args=(harvest.pk, harvest.worker_checkpoint),
+            queue="harvesting",
+        )
+        harvest.worker_dispatched_at = now
+        harvest.save(update_fields=["worker_dispatched_at"])
+        return harvest
