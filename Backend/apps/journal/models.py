@@ -50,6 +50,13 @@ class Journal(AuditableModel):
         help_text="URL de la imagen o logotipo de la revista.",
     )
 
+    url_image_thumbnail = models.URLField(
+        max_length=500,
+        null=True,
+        blank=True,
+        help_text="URL de la miniatura optimizada de la imagen.",
+    )
+
     has_apc = models.BooleanField(
         default=False,
         help_text="Indica si la revista cobra cargos por procesamiento de artículos (APC).",

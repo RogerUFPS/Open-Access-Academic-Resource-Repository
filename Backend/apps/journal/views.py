@@ -18,6 +18,7 @@ from apps.core.serializers import ImageUploadSerializer
 from apps.core.viewsets import (
     AuditableViewSet,
     DeleteSerializer,
+    PublicReadCacheMixin,
     ResourceImageMixin,
     get_acting_user,
 )
@@ -86,6 +87,35 @@ def _with_platform_urls(queryset, *, published_only=False):
             to_attr="_url_platform_links",
         )
     )
+
+
+def _with_public_relations(queryset):
+    relation_specs = (
+        ("language_links", models.SharedJournalLanguage, "language"),
+        ("country_links", models.SharedJournalCountry, "country"),
+        ("knowledge_area_links", models.SharedJournalKnowledgeArea, "knowledge_area"),
+        ("material_type_links", models.SharedJournalMaterialType, "material_type"),
+        ("academic_program_links", models.SharedJournalAcademicProgram, "academic_program"),
+        ("license_links", models.SharedJournalLicense, "license"),
+    )
+    prefetches = []
+    for relation_name, through_model, relation_field in relation_specs:
+        queryset_for_relation = through_model.objects.select_related(relation_field)
+        if relation_name != "license_links":
+            queryset_for_relation = queryset_for_relation.filter(
+                **{f"{relation_field}__deleted_at__isnull": True}
+            )
+        queryset_for_relation = queryset_for_relation.order_by(
+            f"{relation_field}__name"
+        )
+        prefetches.append(
+            Prefetch(
+                relation_name,
+                queryset=queryset_for_relation,
+                to_attr=f"_public_{relation_name}",
+            )
+        )
+    return queryset.prefetch_related(*prefetches)
 
 
 @extend_schema_view(
@@ -467,13 +497,14 @@ class JournalViewSet(ResourceImageMixin, AuditableViewSet):
     ),
 )
 class JournalPublicViewSet(
+    PublicReadCacheMixin,
     viewsets.ReadOnlyModelViewSet
 ):
     """
     Exploración pública de revistas activas y validadas.
     """
 
-    queryset = _with_platform_urls((
+    queryset = _with_public_relations(_with_platform_urls((
         models.Journal.objects
         .filter(
             active=True,
@@ -483,7 +514,7 @@ class JournalPublicViewSet(
             "editorial"
         )
         .distinct()
-    ), published_only=True)
+    ), published_only=True))
 
     serializer_class = (
         serializers.JournalPublicSerializer

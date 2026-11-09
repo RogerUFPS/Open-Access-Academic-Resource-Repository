@@ -1,6 +1,7 @@
 from django.db import IntegrityError
 from django.db.models.deletion import ProtectedError
 from django.utils import timezone
+from django.utils.cache import patch_cache_control
 from rest_framework import serializers, status, viewsets
 from rest_framework.decorators import action
 from rest_framework.response import Response
@@ -16,6 +17,30 @@ from .storage import (
 )
 
 SYSTEM_USER_CODE = 0
+
+
+class PublicReadCacheMixin:
+    cache_shared_public_responses = True
+
+    def finalize_response(self, request, response, *args, **kwargs):
+        response = super().finalize_response(request, response, *args, **kwargs)
+        user = getattr(request, "user", None)
+        has_authorization = bool(request.META.get("HTTP_AUTHORIZATION"))
+        if (
+            self.cache_shared_public_responses
+            and request.method in {"GET", "HEAD"}
+            and response.status_code == 200
+            and not request.COOKIES
+            and not has_authorization
+            and not (user and user.is_authenticated)
+        ):
+            patch_cache_control(
+                response,
+                public=True,
+                max_age=0,
+                s_maxage=300,
+            )
+        return response
 
 
 def get_acting_user(request):
@@ -42,6 +67,7 @@ class ResourceImageMixin:
         body.is_valid(raise_exception=True)
 
         previous_url = instance.url_image
+        previous_thumbnail_url = instance.url_image_thumbnail
 
         try:
             stored = upload_image(
@@ -56,21 +82,26 @@ class ResourceImageMixin:
 
         try:
             instance.url_image = stored.url
+            instance.url_image_thumbnail = stored.thumbnail_url
             instance.updated_by = get_acting_user(request)
             instance.updated_at = timezone.now()
             instance.save(
                 update_fields=[
                     "url_image",
+                    "url_image_thumbnail",
                     "updated_by",
                     "updated_at",
                 ]
             )
         except Exception:
             delete_image(stored.key)
+            delete_image(stored.thumbnail_key)
             raise
 
         if previous_url and previous_url != stored.url:
             delete_image_by_url(previous_url)
+        if previous_thumbnail_url and previous_thumbnail_url != stored.thumbnail_url:
+            delete_image_by_url(previous_thumbnail_url)
 
         return Response(
             self.get_serializer(instance).data,
@@ -80,19 +111,25 @@ class ResourceImageMixin:
     def _delete_resource_image(self, request):
         instance = self.get_object()
         previous_url = instance.url_image
+        previous_thumbnail_url = instance.url_image_thumbnail
 
         instance.url_image = None
+        instance.url_image_thumbnail = None
         instance.updated_by = get_acting_user(request)
         instance.updated_at = timezone.now()
         instance.save(
             update_fields=[
                 "url_image",
+                "url_image_thumbnail",
                 "updated_by",
                 "updated_at",
             ]
         )
 
-        delete_image_by_url(previous_url)
+        if previous_url:
+            delete_image_by_url(previous_url)
+        if previous_thumbnail_url:
+            delete_image_by_url(previous_thumbnail_url)
 
         return Response(
             self.get_serializer(instance).data,
