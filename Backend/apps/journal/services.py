@@ -637,10 +637,10 @@ def create_journal(
             update_fields.append("publication_date")
 
         if url_image is not None:
-            journal.url_image = url_image
-            update_fields.append(
-                "url_image"
-            )
+            if journal.url_image != url_image:
+                journal.url_image = url_image
+                journal.url_image_thumbnail = None
+                update_fields.extend(["url_image", "url_image_thumbnail"])
 
         if has_apc is not None:
             journal.has_apc = has_apc

@@ -169,10 +169,23 @@ class JournalFilter(JournalBaseFilter):
     """Filtros del listado administrativo de revistas."""
 
     active = django_filters.BooleanFilter()
+    status = django_filters.ChoiceFilter(
+        choices=(
+            ("pending", "Pending validation"),
+            ("deactivated", "Deactivated"),
+        ),
+        method="filter_status",
+    )
 
     class Meta:
         model = models.Journal
         fields = []
+
+    def filter_status(self, queryset, name, value):
+        queryset = queryset.filter(active=False)
+        if value == "pending":
+            return queryset.filter(validated_at__isnull=True)
+        return queryset.filter(validated_at__isnull=False)
 
 
 class JournalPublicFilter(JournalBaseFilter):

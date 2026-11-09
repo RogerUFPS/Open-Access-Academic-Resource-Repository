@@ -270,6 +270,26 @@ class JournalAPITests(APITestCase):
         )
         self.assertEqual(journal.updated_by_id, self.system.pk)
 
+    def test_changing_journal_image_url_clears_outdated_thumbnail(self):
+        journal = self._create_journal(
+            issn="5555-5557",
+            title="Journal with replaceable image",
+        )
+        journal.url_image = "https://example.org/old.png"
+        journal.url_image_thumbnail = "https://example.org/old.thumbnail.webp"
+        journal.save(update_fields=["url_image", "url_image_thumbnail"])
+
+        response = self.client.patch(
+            f"/api/journals/{journal.pk}/",
+            {"url_image": "https://example.org/new.png"},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIsNone(response.data["url_image_thumbnail"])
+        journal.refresh_from_db()
+        self.assertIsNone(journal.url_image_thumbnail)
+
     @patch("apps.core.viewsets.delete_image_by_url")
     def test_delete_image_action_clears_url(self, delete_image_by_url):
         journal = self._create_journal(

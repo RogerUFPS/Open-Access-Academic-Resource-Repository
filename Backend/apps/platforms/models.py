@@ -75,6 +75,12 @@ class Platform(AuditableModel):
     )
     encrypted_api_key = models.TextField(null=True, blank=True)
     url_image = models.URLField(max_length=500, null=True, blank=True)
+    url_image_thumbnail = models.URLField(
+        max_length=500,
+        null=True,
+        blank=True,
+        help_text="URL de la miniatura optimizada de la imagen.",
+    )
     
     start_period = models.DateField(
         null=True,

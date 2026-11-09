@@ -412,6 +412,7 @@ class JournalSerializer(
             "editorial",
             "licenses",
             "url_image",
+            "url_image_thumbnail",
             "has_apc",
             "active",
             "publication_date",
@@ -432,6 +433,7 @@ class JournalSerializer(
             "validated_by",
             "validated_at",
             "fetched_at",
+            "url_image_thumbnail",
         ]
 
     def validate_issn(self, value):
@@ -634,6 +636,11 @@ class JournalSerializer(
         instance,
         validated_data,
     ):
+        if (
+            "url_image" in validated_data
+            and validated_data["url_image"] != instance.url_image
+        ):
+            instance.url_image_thumbnail = None
         previous_platform_ids = set(
             models.SharedJournalPlatform.objects.filter(journal=instance)
             .values_list("platform_id", flat=True)
@@ -800,6 +807,7 @@ class JournalPublicSerializer(
             "editorial_name",
             "licenses",
             "url_image",
+            "url_image_thumbnail",
             "has_apc",
             "active",
             "publication_date",
@@ -813,84 +821,119 @@ class JournalPublicSerializer(
 
     @extend_schema_field(JournalLicenseSerializer(many=True))
     def get_licenses(self, obj):
+        links = getattr(obj, "_public_license_links", None)
+        if links is None:
+            links = obj.license_links.select_related("license").order_by(
+                "license__name"
+            )
         return [
             {"id": link.license_id, "name": link.license.name}
-            for link in obj.license_links.select_related("license")
-            .order_by("license__name")
+            for link in links
         ]
 
     @extend_schema_field(
         JournalPublicLanguageSchemaSerializer(many=True)
     )
     def get_languages(self, obj):
-        return list(
-            Language.objects.filter(
-                journal_links__journal=obj,
-                journal_links__deleted_at__isnull=True,
-            ).values(
-                "id",
-                "name",
-                "abbreviation",
+        links = getattr(obj, "_public_language_links", None)
+        if links is None:
+            return list(
+                Language.objects.filter(
+                    journal_links__journal=obj,
+                    journal_links__deleted_at__isnull=True,
+                ).values("id", "name", "abbreviation")
             )
-        )
+        return [
+            {
+                "id": link.language_id,
+                "name": link.language.name,
+                "abbreviation": link.language.abbreviation,
+            }
+            for link in links
+        ]
 
     @extend_schema_field(
         JournalPublicCountrySchemaSerializer(many=True)
     )
     def get_countries(self, obj):
-        return list(
-            Country.objects.filter(
-                journal_links__journal=obj,
-                journal_links__deleted_at__isnull=True,
-            ).values(
-                "id",
-                "name",
-                "abbreviation",
-                "emoji_flag",
+        links = getattr(obj, "_public_country_links", None)
+        if links is None:
+            return list(
+                Country.objects.filter(
+                    journal_links__journal=obj,
+                    journal_links__deleted_at__isnull=True,
+                ).values("id", "name", "abbreviation", "emoji_flag")
             )
-        )
+        return [
+            {
+                "id": link.country_id,
+                "name": link.country.name,
+                "abbreviation": link.country.abbreviation,
+                "emoji_flag": link.country.emoji_flag,
+            }
+            for link in links
+        ]
 
     @extend_schema_field(
         JournalPublicKnowledgeAreaSchemaSerializer(many=True)
     )
     def get_knowledge_areas(self, obj):
-        return list(
-            KnowledgeArea.objects.filter(
-                journal_links__journal=obj,
-                journal_links__deleted_at__isnull=True,
-            ).values(
-                "id",
-                "name",
+        links = getattr(obj, "_public_knowledge_area_links", None)
+        if links is None:
+            return list(
+                KnowledgeArea.objects.filter(
+                    journal_links__journal=obj,
+                    journal_links__deleted_at__isnull=True,
+                ).values("id", "name")
             )
-        )
+        return [
+            {
+                "id": link.knowledge_area_id,
+                "name": link.knowledge_area.name,
+            }
+            for link in links
+            if link.is_manual or link.is_derived
+        ]
 
     @extend_schema_field(
         JournalPublicMaterialTypeSchemaSerializer(many=True)
     )
     def get_material_types(self, obj):
-        return list(
-            MaterialType.objects.filter(
-                journal_links__journal=obj,
-                journal_links__deleted_at__isnull=True,
-            ).values(
-                "id",
-                "name",
+        links = getattr(obj, "_public_material_type_links", None)
+        if links is None:
+            return list(
+                MaterialType.objects.filter(
+                    journal_links__journal=obj,
+                    journal_links__deleted_at__isnull=True,
+                ).values("id", "name")
             )
-        )
+        return [
+            {
+                "id": link.material_type_id,
+                "name": link.material_type.name,
+            }
+            for link in links
+        ]
 
     @extend_schema_field(
         JournalPublicAcademicProgramSchemaSerializer(many=True)
     )
     def get_academic_programs(self, obj):
-        return list(
-            AcademicProgram.objects.filter(
-                journal_links__journal=obj,
-                journal_links__deleted_at__isnull=True,
-            ).values(
-                "id",
-                "name",
+        links = getattr(obj, "_public_academic_program_links", None)
+        if links is None:
+            return list(
+                AcademicProgram.objects.filter(
+                    journal_links__journal=obj,
+                    journal_links__deleted_at__isnull=True,
+                ).values("id", "name")
             )
-        )
+        return [
+            {
+                "id": link.academic_program_id,
+                "name": link.academic_program.name,
+            }
+            for link in links
+        ]
 
     @extend_schema_field(
         JournalPublicPlatformSchemaSerializer(many=True)

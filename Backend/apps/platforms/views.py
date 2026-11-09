@@ -22,6 +22,7 @@ from rest_framework.response import Response
 from apps.core.serializers import ImageUploadSerializer
 from apps.core.viewsets import (
     AuditableViewSet,
+    PublicReadCacheMixin,
     ResourceImageMixin,
     get_acting_user,
 )
@@ -81,6 +82,33 @@ def _with_public_link_logs(queryset):
             to_attr="_public_link_logs",
         )
     )
+
+
+def _with_public_relations(queryset):
+    relation_specs = (
+        ("support_links", models.SharedPlatformSupport, "institution"),
+        ("language_links", models.SharedPlatformLanguage, "language"),
+        ("country_links", models.SharedPlatformCountry, "country"),
+        ("knowledge_area_links", models.SharedPlatformKnowledgeArea, "knowledge_area"),
+        ("material_type_links", models.SharedPlatformMaterialType, "material_type"),
+        ("academic_program_links", models.SharedPlatformAcademicProgram, "academic_program"),
+    )
+    prefetches = []
+    for relation_name, through_model, relation_field in relation_specs:
+        related_lookup = f"{relation_field}__deleted_at__isnull"
+        prefetches.append(
+            Prefetch(
+                relation_name,
+                queryset=(
+                    through_model.objects
+                    .filter(**{related_lookup: True})
+                    .select_related(relation_field)
+                    .order_by(f"{relation_field}__name")
+                ),
+                to_attr=f"_public_{relation_name}",
+            )
+        )
+    return queryset.select_related("valid_sintaxis").prefetch_related(*prefetches)
 
 
 # ==============================================================================
@@ -836,17 +864,18 @@ class PlatformViewSet(ResourceImageMixin, AuditableViewSet):
     ),
 )
 class PlatformPublicViewSet(
-    viewsets.ReadOnlyModelViewSet
+    PublicReadCacheMixin,
+    viewsets.ReadOnlyModelViewSet,
 ):
     """
     Exploración pública de plataformas publicadas y no eliminadas.
     """
 
-    queryset = _with_public_link_logs(
+    queryset = _with_public_relations(_with_public_link_logs(
         models.Platform.objects.filter(
             status=models.Platform.Status.PUBLICADO,
         ).distinct()
-    )
+    ))
 
     serializer_class = serializers.PlatformPublicSerializer
 
