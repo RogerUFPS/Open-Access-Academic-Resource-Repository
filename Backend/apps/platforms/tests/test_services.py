@@ -179,20 +179,15 @@ class PlatformServicesTests(TestCase):
 
         self.assertEqual(published.status, models.Platform.Status.PUBLICADO)
 
-    def test_platform_can_be_published_without_image(self):
+    def test_platform_cannot_be_published_without_image(self):
         platform = self._setup_complete_platform()
         platform.url_image = None
         platform.save(update_fields=["url_image"])
 
-        published = services.publish_platform(
-            platform=platform,
-            user=self.system,
-        )
+        with self.assertRaises(ValidationError) as context:
+            services.publish_platform(platform=platform, user=self.system)
 
-        self.assertEqual(
-            published.status,
-            models.Platform.Status.PUBLICADO,
-        )
+        self.assertIn("url_image", context.exception.detail)
 
     def test_harvestable_platform_cannot_be_published_without_api_url(self):
         platform = self._setup_complete_platform()

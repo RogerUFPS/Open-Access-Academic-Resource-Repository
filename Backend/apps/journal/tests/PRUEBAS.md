@@ -94,6 +94,7 @@ servicios, clasificación y API.
 | `test_none_relation_does_not_modify_existing_relations` | Una relación recibida como `None` no modifica las relaciones existentes. |
 | `test_create_journal_rejects_nonexistent_relation_id` | Rechaza identificadores de relaciones que no existen. |
 | `test_create_journal_rejects_invalid_editorial` | Rechaza una editorial inexistente. |
+| `test_journal_publication_requires_image_url` | Rechaza publicar una revista sin `url_image`. |
 | `test_create_journal_rejects_invalid_period` | Rechaza períodos generales de la revista cuando la fecha final es anterior a la inicial. |
 | `test_create_journal_syncs_source_platform` | Crea correctamente la relación de procedencia con una plataforma no eliminada y sus atributos propios. |
 | `test_source_platform_updates_existing_relation` | Actualiza los atributos de una relación `Journal - Platform` existente. |

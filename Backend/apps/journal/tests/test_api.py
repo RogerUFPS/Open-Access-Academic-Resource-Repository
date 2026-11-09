@@ -149,7 +149,8 @@ class JournalAPITests(APITestCase):
 
     def _complete_for_publication(self, journal):
         journal.publication_date = "2020-01-01"
-        journal.save(update_fields=["publication_date"])
+        journal.url_image = "https://example.org/journal.png"
+        journal.save(update_fields=["publication_date", "url_image"])
         specs = (
             (models.SharedJournalLanguage, "language", self.language),
             (models.SharedJournalCountry, "country", self.country),
@@ -163,11 +164,18 @@ class JournalAPITests(APITestCase):
             defaults = {"created_by": self.system}
             if through is models.SharedJournalKnowledgeArea:
                 defaults["is_derived"] = True
-            through.objects.get_or_create(
+            relation, _ = through.objects.get_or_create(
                 journal=journal,
                 **{field: value},
                 defaults=defaults,
             )
+            if through is models.SharedJournalPlatform:
+                platform_models.LinkCheckLog.objects.create(
+                    platform=self.platform,
+                    journal_platform=relation,
+                    url=f"https://example.org/journal/{journal.pk}",
+                    created_by=self.system,
+                )
 
     # ==========================================================================
     # CRUD ADMINISTRATIVO

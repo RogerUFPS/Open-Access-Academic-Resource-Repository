@@ -65,6 +65,10 @@ def validate_journal_for_publication(journal: models.Journal) -> None:
     for field in ("issn", "title"):
         if not getattr(journal, field, None):
             errors[field] = f"El campo {field} es obligatorio para publicar."
+    if not journal.url_image or not journal.url_image.strip():
+        errors["url_image"] = (
+            "La revista debe tener una URL de imagen antes de publicarse."
+        )
     if not journal.editorial_id or journal.editorial.is_deleted:
         errors["editorial"] = "La revista debe tener una editorial vigente."
     if not journal.publication_date:

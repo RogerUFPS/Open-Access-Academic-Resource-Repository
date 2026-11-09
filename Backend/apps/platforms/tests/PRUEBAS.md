@@ -139,6 +139,7 @@ Una plataforma que no tenga API de cosecha puede publicarse siempre que cumpla l
 | Prueba | Resultado Esperado |
 | --- | --- |
 | `test_publish_platform_succeeds_when_complete` | Una plataforma completa, incluida su URL pública en `LinkCheckLog`, pasa a `PUBLICADO` y registra `validated_by` y `validated_at`. |
+| `test_platform_cannot_be_published_without_image` | Rechaza publicar una plataforma sin `url_image`. |
 | `test_non_harvestable_platform_can_be_published_without_api_url` | Una Platform no cosechable puede publicarse sin `base_api_url`. |
 | `test_harvestable_platform_cannot_be_published_without_api_url` | Una Platform cosechable no puede publicarse sin URL técnica. |
 | `test_publish_platform_fails_when_incomplete` | Lanza `ValidationError` detallando los campos o relaciones obligatorias que faltan. La ausencia de `base_api_url` por sí sola no genera error cuando no existe API Key. |
@@ -435,4 +436,3 @@ Todos los resultados del helper de consultas de la clase nueva verifican que
 `failure_confirmed` no aparezca como campo de respuesta. No se modifica el contrato
 para introducirlo. **Esta ampliación no se ejecutó**: la validación queda a cargo
 del desarrollador, junto con PostgreSQL para las dos pruebas de concurrencia.
-
