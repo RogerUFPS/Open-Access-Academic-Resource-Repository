@@ -1,4 +1,5 @@
 from django.conf import settings
+from django.contrib.auth.hashers import make_password
 from django.db import migrations
 
 
@@ -253,7 +254,7 @@ def seed_ufps_catalog(apps, schema_editor):
             full_name="Sistema",
             email="sistema@local.dev",
         )
-        user.set_unusable_password()
+        user.password = make_password(None)
         user.save()
 
     areas = {}
