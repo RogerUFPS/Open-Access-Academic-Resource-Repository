@@ -15,9 +15,7 @@ from apps.platforms.classification import recalculate_platforms
 class PlatformClassificationTests(TestCase):
     @classmethod
     def setUpTestData(cls):
-        cls.user = User.objects.create_user(
-            code=0, full_name="Sistema", email="platform-classification@test.local"
-        )
+        cls.user = User.objects.get(code=0)
         cls.area = KnowledgeArea.objects.create(name="area platform", created_by=cls.user)
         cls.program = AcademicProgram.objects.create(name="programa platform", created_by=cls.user)
         SharedAcademicProgramKnowledgeArea.objects.create(

@@ -16,12 +16,9 @@ from apps.platforms import models
 class PlatformFilterTests(APITestCase):
     @classmethod
     def setUpTestData(cls):
-        cls.user = User.objects.create_user(
-            code=0,
-            full_name="Sistema filtros Platform",
-            email="platform-filters@test.local",
-            is_superadmin=True,
-        )
+        cls.user = User.objects.get(code=0)
+        cls.user.is_superadmin = True
+        cls.user.save(update_fields=["is_superadmin"])
         cls.institution = Institution.objects.create(
             name="Institución filtros",
             created_by=cls.user,
