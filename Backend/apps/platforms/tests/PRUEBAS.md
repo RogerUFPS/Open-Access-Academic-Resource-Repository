@@ -490,3 +490,23 @@ SQLite omite estas pruebas porque no implementa `select_for_update`.
 **Estado:** esta ampliación no fue ejecutada por el agente. Los resultados
 anteriores proporcionados por el desarrollador no validan los casos nuevos.
 Comandos de validación: `Backend/docs/MONITOREO_ENLACES.md`, sección 9.
+
+## Corrección de notificación del quinto fallo — 10 de noviembre de 2026
+
+Se añaden cinco pruebas en `test_monitoring.py`:
+
+- Cinco fallos manuales publican una sola solicitud. Si la consulta de
+  destinatarios falla con `InvalidCursorName`, la tarea solicita un reintento;
+  al recuperarse envía y marca el mismo quinto resultado, sin sexto check.
+  Una ejecución adicional no repite el correo.
+- Los destinatarios se recorren en varias páginas pequeñas, incluyendo permisos
+  directos y presets, sin usar `QuerySet.iterator()`; se excluyen cuentas sin
+  acceso e inactivas.
+- Los errores operacionales/de conexión solicitan reintento con backoff.
+- Un `ProgrammingError` distinto del cursor inexistente no se reintenta.
+- Agotar los cinco retries conserva el resultado y la marca pendiente, sin envío.
+
+La suite anterior fue validada por el desarrollador con 145 pruebas descubiertas,
+141 aprobadas y cuatro de concurrencia omitidas en SQLite. Estos cinco casos
+nuevos y la corrección correspondiente todavía no se han ejecutado. El agente
+no ejecutó Docker, comandos Django, tests ni Git.
