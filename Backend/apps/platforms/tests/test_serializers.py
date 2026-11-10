@@ -19,52 +19,48 @@ from apps.platforms import models, serializers
 class PlatformSerializersTests(TestCase):
     @classmethod
     def setUpTestData(cls):
-        cls.system = User.objects.create_user(
-            code=0,
-            full_name="Sistema",
-            email="sistema@test.local",
-        )
+        cls.system = User.objects.get(code=0)
 
         cls.institution = Institution.objects.create(
-            name="UFPS",
+            name="UFPS pruebas Platform",
             created_by=cls.system,
         )
 
         cls.language = Language.objects.create(
-            name="Español",
-            abbreviation="es",
+            name="Español pruebas Platform",
+            abbreviation="test-es",
             created_by=cls.system,
         )
 
         cls.country = Country.objects.create(
-            name="Colombia",
-            abbreviation="co",
+            name="Colombia pruebas Platform",
+            abbreviation="test-co",
             emoji_flag="🇨🇴",
             created_by=cls.system,
         )
 
         cls.knowledge_area = KnowledgeArea.objects.create(
-            name="Ingeniería",
+            name="Ingeniería pruebas Platform",
             created_by=cls.system,
         )
 
         cls.knowledge_area_secondary = KnowledgeArea.objects.create(
-            name="Ciencias de la Computación",
+            name="Ciencias de la Computación pruebas Platform",
             created_by=cls.system,
         )
 
         cls.material_type = MaterialType.objects.create(
-            name="Artículos",
+            name="Artículos pruebas Platform",
             created_by=cls.system,
         )
 
         cls.academic_program = AcademicProgram.objects.create(
-            name="Ingeniería de Sistemas",
+            name="Ingeniería de Sistemas pruebas Platform",
             created_by=cls.system,
         )
 
         cls.academic_program_secondary = AcademicProgram.objects.create(
-            name="Ingeniería Civil",
+            name="Ingeniería Civil pruebas Platform",
             created_by=cls.system,
         )
 

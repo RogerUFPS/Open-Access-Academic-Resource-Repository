@@ -265,6 +265,7 @@ class MonitorAPITests(MonitorFixtures, APITestCase):
         existing = models.LinkCheckRun.objects.create(
             mode="all",
             requested_by=self.user,
+            dispatch_task_id="already-dispatched-task",
         )
         self.client.force_authenticate(self.user)
         with (
@@ -280,6 +281,7 @@ class MonitorAPITests(MonitorFixtures, APITestCase):
             response = self.client.post("/api/platforms/check-links-async/")
         self.assertEqual(response.status_code, 202)
         self.assertEqual(response.data["run_id"], existing.pk)
+        self.assertEqual(response.data["task_id"], "already-dispatched-task")
         enqueue.assert_not_called()
 
     def test_active_link_run_partial_unique_constraint_rejects_second_run(self):
@@ -293,6 +295,66 @@ class MonitorAPITests(MonitorFixtures, APITestCase):
         self.client.force_authenticate(self.user)
         response = self.client.post("/api/platforms/check-links-async/")
         self.assertEqual(response.status_code, 503)
+
+    @patch("apps.platforms.views.dispatch_link_checks.delay")
+    def test_failed_dispatch_is_retried_on_the_same_active_run(self, enqueue):
+        self.client.force_authenticate(self.user)
+        for mode, endpoint in (("all", "check-links-async"), ("failed", "check-failed-links")):
+            with self.subTest(mode=mode):
+                enqueue.reset_mock()
+                enqueue.side_effect = OperationalError("broker down")
+                headers = {"HTTP_IDEMPOTENCY_KEY": f"recover:{mode}"}
+                first = self.client.post(f"/api/platforms/{endpoint}/", **headers)
+                self.assertEqual(first.status_code, 503)
+                run = models.LinkCheckRun.objects.get(pk=first.data["run_id"])
+                self.assertFalse(run.dispatch_task_id)
+                self.assertIsNone(run.finished_at)
+
+                enqueue.side_effect = None
+                enqueue.return_value.id = f"recovered-{mode}"
+                second = self.client.post(f"/api/platforms/{endpoint}/", **headers)
+                third = self.client.post(f"/api/platforms/{endpoint}/", **headers)
+                self.assertEqual(second.status_code, 202)
+                self.assertEqual(third.status_code, 202)
+                self.assertEqual(second.data["run_id"], run.pk)
+                self.assertEqual(third.data["task_id"], f"recovered-{mode}")
+                run.refresh_from_db()
+                self.assertEqual(run.dispatch_task_id, f"recovered-{mode}")
+                self.assertEqual(models.LinkCheckRun.objects.filter(mode=mode).count(), 1)
+                self.assertEqual(enqueue.call_count, 2)  # Fallo y republicación; no en el tercer request.
+
+    @patch("apps.platforms.views.dispatch_link_checks.delay")
+    def test_undispatched_active_run_is_reused_without_an_idempotency_header(self, enqueue):
+        run = models.LinkCheckRun.objects.create(mode="all", requested_by=self.user)
+        enqueue.return_value.id = "recovered-without-key"
+        self.client.force_authenticate(self.user)
+        response = self.client.post("/api/platforms/check-links-async/")
+        self.assertEqual(response.status_code, 202)
+        self.assertEqual(response.data["run_id"], run.pk)
+        self.assertEqual(response.data["task_id"], "recovered-without-key")
+        enqueue.assert_called_once_with(run.pk)
+
+    @patch("apps.platforms.views.dispatch_link_checks.delay")
+    def test_success_is_not_reported_without_a_dispatch_task_id(self, enqueue):
+        enqueue.return_value.id = None
+        self.client.force_authenticate(self.user)
+        response = self.client.post("/api/platforms/check-links-async/")
+        self.assertEqual(response.status_code, 503)
+        run = models.LinkCheckRun.objects.get(pk=response.data["run_id"])
+        self.assertFalse(run.dispatch_task_id)
+
+    @patch("apps.platforms.views.dispatch_link_checks.delay")
+    def test_idempotency_key_cannot_be_reused_for_another_mode(self, enqueue):
+        models.LinkCheckRun.objects.create(
+            mode="all", requested_by=self.user, idempotency_key="one-operation",
+            dispatch_task_id="already-dispatched",
+        )
+        self.client.force_authenticate(self.user)
+        response = self.client.post(
+            "/api/platforms/check-failed-links/", HTTP_IDEMPOTENCY_KEY="one-operation",
+        )
+        self.assertEqual(response.status_code, 409)
+        enqueue.assert_not_called()
 
     @patch("apps.platforms.views.services.check_all_current_links")
     @patch("apps.platforms.views.services.check_platform_links")
@@ -517,6 +579,224 @@ class MonitorQueryContractTests(MonitorFixtures, APITestCase):
         self.assertIsNone(pending.failure_notified_at)
 
 
+class ManualNotificationTests(MonitorFixtures, APITestCase):
+    """La operación manual solicita correo asíncrono sobre el estado compartido."""
+
+    def setUp(self):
+        super().setUp()
+        self.client.force_authenticate(self.user)
+        self.log()
+        self.publisher = self.start_patch("apps.platforms.tasks.notify_link_failures.delay")
+        self.sender = self.start_patch(
+            "apps.platforms.notifications.email.send_email", return_value={"id": "test-mail"},
+        )
+        self.http = self.start_patch("apps.platforms.services._perform_link_check", return_value=(503, False))
+        self.start_patch("apps.platforms.services._validate_safe_http_url")
+
+    def start_patch(self, target, **kwargs):
+        patcher = patch(target, **kwargs)
+        self.addCleanup(patcher.stop)
+        return patcher.start()
+
+    def latest(self):
+        return services.latest_platform_link_log(self.platform)
+
+    def confirmed_ids(self):
+        response = self.client.get("/api/platforms/link-check-logs/", {
+            "current": "true", "failure_confirmed": "true", "page_size": 100,
+        })
+        self.assertEqual(response.status_code, 200)
+        for row in response.data["results"]:
+            self.assertNotIn("failure_confirmed", row)
+        return {row["id"] for row in response.data["results"]}
+
+    def drain_notification(self):
+        # Simular la ejecución posterior del worker sin publicar en RabbitMQ.
+        return tasks.notify_link_failures.run()
+
+    def step(self, source, *, available=False, drain=True, finish_round=True):
+        self.http.return_value = (200, True) if available else (503, False)
+        with self.captureOnCommitCallbacks(execute=True):
+            if source == "manual":
+                response = self.client.post(f"/api/platforms/{self.platform.pk}/check-link/", {}, format="json")
+                self.assertEqual(response.status_code, 200)
+            else:
+                current = self.latest()
+                mode = "failed" if services.pending_link_retries().filter(pk=current.pk).exists() else "all"
+                run = models.LinkCheckRun.objects.create(mode=mode, requested_by=self.user, planned=True)
+                self.last_batch = models.LinkCheckBatch.objects.create(run=run, link_ids=[current.pk])
+                if not finish_round:
+                    models.LinkCheckBatch.objects.create(run=run, link_ids=[])
+                tasks.check_link_batch.run(self.last_batch.pk)
+        result = self.latest()
+        self.assertEqual(result.check_batch_id, None if source == "manual" else self.last_batch.pk)
+        if drain:
+            self.drain_notification()
+            result.refresh_from_db()
+        return result
+
+    def assert_failed_sequence(self, sources):
+        for count, source in enumerate(sources, start=1):
+            with self.subTest(source=source, count=count):
+                result = self.step(source)
+                self.assertEqual(result.fail_count, count)
+                self.assertFalse(result.is_active)
+                self.assertEqual(bool(self.confirmed_ids()), count >= 5)
+                self.assertEqual(self.sender.call_count, int(count >= 5))
+        return result
+
+    def test_fifth_manual_failure_requests_async_notification_and_later_failures_do_not_repeat_it(self):
+        for count in range(1, 6):
+            result = self.step("manual", drain=False)
+            self.assertEqual(result.fail_count, count)
+            self.assertEqual(self.publisher.call_count, int(count == 5))
+        self.sender.assert_not_called()  # La respuesta HTTP no ejecutó Resend.
+        self.assertEqual(self.confirmed_ids(), {result.pk})
+        self.assertIsNone(result.failure_notified_at)
+        self.drain_notification()
+        self.sender.assert_called_once()
+        self.assertIsNotNone(self.latest().failure_notified_at)
+        for count in (6, 7, 8):
+            result = self.step("manual")
+            self.assertEqual(result.fail_count, count)
+        self.publisher.assert_called_once_with()
+        self.sender.assert_called_once()
+
+    def test_four_automatic_failures_then_manual_confirm_the_same_incident(self):
+        result = self.assert_failed_sequence(["automatic"] * 4 + ["manual"])
+        self.assertEqual(result.fail_count, 5)
+        self.assertEqual(self.last_batch.run.mode, "failed")
+        self.assertIsNone(result.check_batch_id)
+        self.assertFalse(services.pending_link_retries().filter(pk=result.pk).exists())
+
+    def test_four_manual_failures_then_automatic_preserve_count_and_actual_batch(self):
+        result = self.assert_failed_sequence(["manual"] * 4 + ["automatic"])
+        self.assertEqual(result.fail_count, 5)
+        self.assertEqual(result.check_batch_id, self.last_batch.pk)
+
+    def test_arbitrary_manual_and_automatic_failure_sequence_uses_one_counter(self):
+        self.assert_failed_sequence(["manual", "automatic", "manual", "automatic", "manual"])
+
+    def test_manual_success_interrupts_a_mixed_sequence(self):
+        sequence = [
+            ("automatic", False, 1), ("manual", False, 2), ("automatic", False, 3),
+            ("manual", True, 0), ("automatic", False, 1), ("manual", False, 2),
+        ]
+        for source, available, count in sequence:
+            result = self.step(source, available=available)
+            self.assertEqual(result.fail_count, count)
+            self.assertEqual(result.is_active, available)
+            self.assertIsNone(result.failure_notified_at)
+        self.assertEqual(self.confirmed_ids(), set())
+        self.sender.assert_not_called()
+
+    def test_manual_fifth_failure_does_not_inherit_an_unfinished_automatic_round(self):
+        for _ in range(3):
+            self.step("automatic")
+        fourth = self.step("automatic", drain=False, finish_round=False)
+        self.assertEqual(fourth.fail_count, 4)
+        self.assertEqual(fourth.check_batch_id, self.last_batch.pk)
+        self.assertIsNone(self.last_batch.run.finished_at)
+        self.publisher.reset_mock()
+        fifth = self.step("manual")
+        self.assertEqual(fifth.fail_count, 5)
+        self.assertIsNone(fifth.check_batch_id)
+        self.assertIsNotNone(fifth.failure_notified_at)
+        self.publisher.assert_called_once_with()
+        self.sender.assert_called_once()
+
+    def test_recovery_after_notification_allows_one_email_for_a_new_mixed_incident(self):
+        self.assert_failed_sequence(["manual"] * 5)
+        for source, count in (("automatic", 6), ("manual", 7)):
+            result = self.step(source)
+            self.assertEqual(result.fail_count, count)
+            self.assertIsNotNone(result.failure_notified_at)
+        self.sender.assert_called_once()
+        recovered = self.step("automatic", available=True)
+        self.assertTrue(recovered.is_active)
+        self.assertEqual(recovered.fail_count, 0)
+        self.assertIsNone(recovered.failure_notified_at)
+        self.sender.assert_called_once()  # Sin correo de recuperación.
+        for count, source in enumerate(["automatic", "manual", "automatic", "manual", "manual"], 1):
+            result = self.step(source)
+            self.assertEqual(result.fail_count, count)
+            self.assertEqual(self.sender.call_count, 2 if count == 5 else 1)
+
+    def test_mail_failure_keeps_state_visible_and_sixth_failure_can_request_delivery_again(self):
+        for _ in range(5):
+            self.step("manual", drain=False)
+        fifth = self.latest()
+        self.sender.side_effect = EmailDeliveryError("provider unavailable")
+        with self.assertRaises(EmailDeliveryError):
+            notifications.notify_confirmed_failures()
+        self.assertEqual(self.confirmed_ids(), {fifth.pk})
+        self.assertIsNone(self.latest().failure_notified_at)
+        self.sender.side_effect = None
+        sixth = self.step("manual")
+        self.assertEqual(sixth.fail_count, 6)
+        self.assertIsNotNone(sixth.failure_notified_at)
+        self.assertEqual(self.publisher.call_count, 2)
+        self.assertEqual(self.sender.call_count, 2)  # Una entrega fallida y una aceptada.
+
+    def test_notification_broker_failure_does_not_undo_the_check_or_break_its_response(self):
+        self.publisher.side_effect = OperationalError("broker unavailable")
+        for _ in range(5):
+            result = self.step("manual", drain=False)
+        self.assertEqual(result.fail_count, 5)
+        self.assertIsNone(result.failure_notified_at)
+        self.assertEqual(self.confirmed_ids(), {result.pk})
+        self.sender.assert_not_called()
+        self.publisher.side_effect = None
+        sixth = self.step("manual")
+        self.assertEqual(sixth.fail_count, 6)
+        self.assertIsNotNone(sixth.failure_notified_at)
+        self.assertEqual(self.publisher.call_count, 2)
+        self.sender.assert_called_once()
+
+    def test_manual_notification_is_deferred_until_commit(self):
+        self.log(count=4, checked=True)
+        with self.captureOnCommitCallbacks(execute=True):
+            response = self.client.post(f"/api/platforms/{self.platform.pk}/check-link/", {}, format="json")
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(self.latest().fail_count, 5)
+            self.publisher.assert_not_called()
+            self.sender.assert_not_called()
+        self.publisher.assert_called_once_with()
+        self.sender.assert_not_called()
+
+    def test_platform_bulk_requests_one_summary_after_all_contexts_are_persisted(self):
+        self.log(count=4, checked=True)
+        journal = Journal.objects.create(issn="9090-9090", title="Resumen", created_by=self.user)
+        relation = SharedJournalPlatform.objects.create(
+            journal=journal, platform=self.platform, created_by=self.user,
+        )
+        self.log(count=4, checked=True, journal_platform=relation)
+        observed = []
+        self.publisher.side_effect = lambda: observed.append(services.confirmed_link_failures().count())
+        with self.captureOnCommitCallbacks(execute=True):
+            response = self.client.post(f"/api/platforms/{self.platform.pk}/check-links/", {}, format="json")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["checked"], 2)
+        self.assertEqual(observed, [2])
+        self.publisher.assert_called_once_with()
+        self.sender.assert_not_called()
+        self.assertEqual(self.drain_notification(), 2)
+        self.sender.assert_called_once()
+        self.assertEqual(models.LinkCheckLog.objects.filter(failure_notified_at__isnull=False).count(), 2)
+
+    def test_global_synchronous_operation_requests_one_summary_after_all_platforms(self):
+        self.log(count=4, checked=True)
+        self.log(self.another_platform("global"), count=4, checked=True)
+        with self.captureOnCommitCallbacks(execute=True):
+            response = self.client.post("/api/platforms/check-links/", {}, format="json")
+        self.assertEqual(response.status_code, 204)
+        self.assertEqual(len(self.confirmed_ids()), 2)
+        self.publisher.assert_called_once_with()
+        self.sender.assert_not_called()
+        self.assertEqual(self.drain_notification(), 2)
+        self.sender.assert_called_once()
+
+
 class MonitorTaskTests(MonitorFixtures, TestCase):
     @override_settings(LINK_CHECK_BATCH_SIZE=2)
     @patch("apps.platforms.tasks.check_link_batch.delay")
@@ -739,7 +1019,38 @@ class MonitorConcurrencyTests(MonitorFixtures, TransactionTestCase):
             {models.LinkCheckRun.objects.get(mode="all").pk},
         )
         self.assertEqual(models.LinkCheckRun.objects.filter(mode="all").count(), 1)
+        self.assertEqual({response.data["task_id"] for response in responses}, {"concurrent-task"})
         enqueue.assert_called_once()
+
+    @skipUnlessDBFeature("has_select_for_update")
+    def test_concurrent_triggers_republish_the_same_undispatched_run_once(self):
+        from apps.platforms.views import _dispatch_link_check_run
+
+        run = models.LinkCheckRun.objects.create(mode="all", requested_by=self.user)
+        barrier = Barrier(2)
+
+        def synchronized_dispatch(run_id):
+            barrier.wait(timeout=10)
+            return _dispatch_link_check_run(run_id)
+
+        def request():
+            client = APIClient()
+            client.force_authenticate(User.objects.get(pk=self.user.pk))
+            return client.post("/api/platforms/check-links-async/")
+
+        with (
+            patch("apps.platforms.views._dispatch_link_check_run", side_effect=synchronized_dispatch),
+            patch("apps.platforms.views.dispatch_link_checks.delay") as enqueue,
+            ThreadPoolExecutor(max_workers=2) as pool,
+        ):
+            enqueue.return_value.id = "concurrently-recovered-task"
+            futures = [pool.submit(self.in_thread, request) for _ in range(2)]
+            responses = [future.result(timeout=30) for future in futures]
+        self.assertEqual([response.status_code for response in responses], [202, 202])
+        self.assertEqual({response.data["run_id"] for response in responses}, {run.pk})
+        self.assertEqual({response.data["task_id"] for response in responses}, {"concurrently-recovered-task"})
+        self.assertEqual(models.LinkCheckRun.objects.filter(mode="all").count(), 1)
+        enqueue.assert_called_once_with(run.pk)
 
     @skipUnlessDBFeature("has_select_for_update")
     @patch("apps.platforms.services._validate_safe_http_url")
