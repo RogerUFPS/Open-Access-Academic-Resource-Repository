@@ -390,8 +390,9 @@ broker no disponible, lotes/redelivery y finalización, destinatarios efectivos,
 resumen de máximo diez, total exacto, marcas, errores y ausencia de correo.
 `account.tests.test_email` incluye difusión BCC sin exposición de destinatarios.
 
-Las dos pruebas con `TransactionTestCase` usan conexiones e hilos separados:
-contador sin incrementos perdidos y dos notificadores con un único envío.
+Las pruebas con `TransactionTestCase` usan conexiones e hilos separados:
+contador sin incrementos perdidos, dos notificadores con un único envío e
+idempotencia/concurrencia de despacho de rondas.
 Requieren PostgreSQL y se omiten en SQLite. Verifican también que el request HTTP
 del checker no se ejecute dentro de una transacción. Se mockean HTTP y Resend.
 
@@ -399,7 +400,7 @@ El desarrollador reportó posteriormente `check` sin problemas, migración `0007
 aplicada y una suite previa de 116 pruebas: 114 correctas y dos de concurrencia
 omitidas en SQLite. Eso no valida automáticamente ampliaciones posteriores.
 Comandos desde la raíz general y pendientes externos en
-`Backend/docs/ENDPOINTS_PLATFORMS.md`, sección «Monitoreo automático de enlaces».
+`Backend/docs/MONITOREO_ENLACES.md`.
 
 ## Contrato del monitor y Frontend — 5 de noviembre de 2026
 
@@ -435,4 +436,57 @@ Soft Delete, entrega de correo o respuestas tardías de URLs sustituidas.
 Todos los resultados del helper de consultas de la clase nueva verifican que
 `failure_confirmed` no aparezca como campo de respuesta. No se modifica el contrato
 para introducirlo. **Esta ampliación no se ejecutó**: la validación queda a cargo
-del desarrollador, junto con PostgreSQL para las dos pruebas de concurrencia.
+del desarrollador, junto con PostgreSQL para las pruebas de concurrencia.
+
+## Notificación manual y rondas recuperables — 9 de noviembre de 2026
+
+La ampliación se mantiene en `test_monitoring.py`. Se reutilizan fixtures,
+HTTP mockeado, el notificador y los tests existentes de filtros, URL tardía,
+agrupación, ausencia de destinatarios y CTA; no se implementa otro checker.
+
+### `ManualNotificationTests`
+
+- Cinco fallos manuales solicitan una tarea después del commit. Resend no se
+  ejecuta durante la respuesta HTTP; fallos 6–8 notificados no repiten correo.
+- Cuatro automáticos más uno manual comparten contador, confirman y abandonan
+  el reintento rápido. El nuevo evento manual no tiene lote.
+- Cuatro manuales más uno automático conservan el contador y el lote actual.
+- Mezcla manual/automático/manual/automático/manual produce 1,2,3,4,5.
+- Éxito manual dentro de una mezcla produce 1,2,3,0,1,2 sin correo.
+- Quinto fallo manual después de cuatro automáticos no hereda una ronda todavía
+  incompleta; el incidente manual queda listo para notificar.
+- Un incidente notificado no repite correo en comprobaciones manuales ni
+  automáticas posteriores; una recuperación automática limpia contador/marca y
+  una nueva secuencia mixta vuelve a permitir un correo.
+- Error de correo conserva el fallo y su visibilidad por API; el sexto fallo
+  sin marca puede solicitar entrega otra vez.
+- Error al publicar la notificación no convierte el check manual en error ni
+  pierde estado; el sexto fallo reintenta solicitar el resumen.
+- Callback diferido hasta el commit de la operación.
+- `/{id}/check-links/` persiste Platform y Journal–Platform antes de solicitar
+  una sola tarea agrupada; `/check-links/` global hace lo mismo entre Platforms.
+
+Las pruebas ejecutan el cuerpo del notificador solo al simular la ejecución
+posterior del worker. Se mockean las publicaciones Celery y el servicio de correo.
+
+### `MonitorAPITests`
+
+- Una publicación fallida de cada modo devuelve 503 y deja la ronda sin ID.
+  El siguiente request reutiliza esa ronda, publica y responde 202 con ID;
+  un tercer request idempotente no vuelve a publicar.
+- Una ronda activa sin clave también se recupera sin crear otra.
+- Ausencia de ID confirmado por el publisher no se presenta como 202 válido.
+- La misma clave no puede reutilizarse para otro modo (409).
+- El test de carrera de creación conserva una ronda que ya tiene despacho y
+  verifica que se reutilice sin nueva publicación.
+
+### `MonitorConcurrencyTests` — PostgreSQL
+
+Se refuerza el test existente para exigir el mismo task ID no vacío en ambos
+triggers. Se agrega el caso de dos triggers que intentan recuperar a la vez una
+ronda activa sin despacho: una fila, una publicación y el mismo ID de tarea.
+SQLite omite estas pruebas porque no implementa `select_for_update`.
+
+**Estado:** esta ampliación no fue ejecutada por el agente. Los resultados
+anteriores proporcionados por el desarrollador no validan los casos nuevos.
+Comandos de validación: `Backend/docs/MONITOREO_ENLACES.md`, sección 9.
