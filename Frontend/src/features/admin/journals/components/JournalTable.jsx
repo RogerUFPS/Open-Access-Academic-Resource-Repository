@@ -26,6 +26,7 @@ import {
   RotateCcw,
 } from "lucide-react";
 
+const PAGE_SIZE = 10;
 function renderStatusBadge(journal) {
   if (journal?.active === true) {
     return (
@@ -90,47 +91,37 @@ export default function JournalTable() {
       setError(null);
     }
     try {
-      const params = { page };
-      if (debouncedSearch) params.search = debouncedSearch;
-      if (pubDateFrom) params.publication_date_from = pubDateFrom;
-      if (statusFilter === "active") params.active = true;
-      if (statusFilter === "deactivated" || statusFilter === "pending") {
-        params.active = false;
+      const baseParams = {};
+      if (debouncedSearch) baseParams.search = debouncedSearch;
+      if (pubDateFrom) baseParams.publication_date_from = pubDateFrom;
+
+      const params = { ...baseParams, page, page_size: PAGE_SIZE };
+      if (!showArchived && statusFilter === "active") params.active = true;
+      if (!showArchived && ["deactivated", "pending"].includes(statusFilter)) {
+        params.status = statusFilter;
       }
 
       const data = showArchived
-        ? await journalService.getArchivedJournals()
+        ? await journalService.getArchivedJournals({ page })
         : await journalService.getJournals(params);
 
-      const filterByVisualStatus = (items) => items.filter((journal) => {
-        if (statusFilter === "active") return journal.active === true;
-        if (statusFilter === "deactivated") {
-          return journal.active === false && journal.validated_at !== null;
-        }
-        if (statusFilter === "pending") {
-          return journal.active === false && journal.validated_at === null;
-        }
-        return true;
-      });
-
       if (Array.isArray(data)) {
-        const filteredJournals = showArchived ? data : filterByVisualStatus(data);
-        setJournals(filteredJournals);
-        setTotalItems(filteredJournals.length);
+        setJournals(data);
+        setTotalItems(data.length);
         setTotalPages(1);
         setPageInput(String(clampPage(page, 1)));
       } else if (data && Array.isArray(data.results)) {
-        const filteredJournals = showArchived
-          ? data.results
-          : filterByVisualStatus(data.results);
-        setJournals(filteredJournals);
-        setTotalItems(data.total_items || data.count || filteredJournals.length);
-        const nextTotalPages =
-          data.total_pages ||
-          Math.ceil((data.total_items || data.results.length) / (data.page_size || 10)) ||
-          1;
+        const nextTotalItems = data.total_items ?? data.count ?? data.results.length;
+        const nextTotalPages = Math.max(
+          1,
+          data.total_pages ?? Math.ceil(nextTotalItems / (data.page_size ?? PAGE_SIZE))
+        );
+        const currentPage = clampPage(page, nextTotalPages);
+        setJournals(data.results);
+        setTotalItems(nextTotalItems);
         setTotalPages(nextTotalPages);
-        setPageInput(String(clampPage(page, nextTotalPages)));
+        setPageInput(String(currentPage));
+        if (currentPage !== page) setPage(currentPage);
       } else {
         setJournals([]);
         setTotalItems(0);
@@ -534,7 +525,7 @@ export default function JournalTable() {
                         ) : (
                           <button
                             onClick={() => handleOpenPublish(journal)}
-                            title="Publicar revista (asignar licencias)"
+                            title="Publicar revista"
                             className="p-1.5 rounded-lg border border-emerald-200 text-emerald-600 hover:bg-emerald-600 hover:text-white hover:border-emerald-600 transition-all cursor-pointer"
                           >
                             <Play className="w-4 h-4" />

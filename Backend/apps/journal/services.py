@@ -1,7 +1,6 @@
 from datetime import date
 
 from django.db import IntegrityError, transaction
-from django.db.models import Q
 from django.utils import timezone
 from rest_framework.exceptions import ValidationError
 
@@ -66,15 +65,20 @@ def validate_journal_for_publication(journal: models.Journal) -> None:
     for field in ("issn", "title"):
         if not getattr(journal, field, None):
             errors[field] = f"El campo {field} es obligatorio para publicar."
+    if not journal.url_image or not journal.url_image.strip():
+        errors["url_image"] = (
+            "La revista debe tener una URL de imagen antes de publicarse."
+        )
     if not journal.editorial_id or journal.editorial.is_deleted:
         errors["editorial"] = "La revista debe tener una editorial vigente."
     if not journal.publication_date:
         errors["publication_date"] = "La fecha de publicación es obligatoria."
 
+    # ``knowledge_areas`` no se exige por separado: es una consecuencia
+    # automática de los programas académicos seleccionados.
     relation_specs = (
         ("languages", models.SharedJournalLanguage, "language"),
         ("countries", models.SharedJournalCountry, "country"),
-        ("knowledge_areas", models.SharedJournalKnowledgeArea, "knowledge_area"),
         ("material_types", models.SharedJournalMaterialType, "material_type"),
         ("academic_programs", models.SharedJournalAcademicProgram, "academic_program"),
     )
@@ -83,10 +87,6 @@ def validate_journal_for_publication(journal: models.Journal) -> None:
             journal=journal,
             **{f"{relation_field}__deleted_at__isnull": True},
         )
-        if through_model is models.SharedJournalKnowledgeArea:
-            relation_query = relation_query.filter(
-                Q(is_manual=True) | Q(is_derived=True)
-            )
         if not relation_query.exists():
             errors[field] = "La revista debe tener al menos un valor vigente."
 
@@ -99,6 +99,14 @@ def validate_journal_for_publication(journal: models.Journal) -> None:
     elif not platform_links.filter(platform__status=Platform.Status.PUBLICADO).exists():
         errors["platforms"] = (
             "La revista tiene plataformas asociadas, pero ninguna se encuentra publicada."
+        )
+    elif any(
+        platform_services.latest_journal_link_log(link) is None
+        for link in platform_links
+    ):
+        errors["platforms"] = (
+            "Cada plataforma asociada debe tener una URL pública registrada "
+            "antes de publicar la revista."
         )
 
     if not models.SharedJournalLicense.objects.filter(
@@ -473,7 +481,7 @@ def create_journal(
     title: str,
     user,
     platform_id: int,
-    journal_url: str,
+    journal_url: str | None = None,
     editorial_id: int | None = None,
     publication_date: date | None = None,
     url_image: str | None = None,
@@ -494,7 +502,7 @@ def create_journal(
     - Si el ISSN ya existe, actualiza esa revista.
     - Si la revista con ese ISSN estaba eliminada, la restaura.
     - Sincroniza únicamente las clasificaciones suministradas.
-    - Exige y registra la plataforma y URL contextual de procedencia.
+    - Registra la URL contextual de procedencia cuando se proporciona.
     - Actualiza fetched_at.
 
     None en una colección significa "no modificar".
@@ -511,9 +519,14 @@ def create_journal(
     normalized_issn = _normalize_issn(
         issn
     )
-    if not journal_url or not journal_url.strip():
-        raise ValidationError({"journal_url": "La URL contextual de la revista es obligatoria."})
-    platform_services.validate_safe_http_url(journal_url, field_name="journal_url")
+    if journal_url is not None:
+        if not journal_url.strip():
+            journal_url = None
+        else:
+            platform_services.validate_safe_http_url(
+                journal_url,
+                field_name="journal_url",
+            )
 
     normalized_title = (
         title.strip()
@@ -624,10 +637,10 @@ def create_journal(
             update_fields.append("publication_date")
 
         if url_image is not None:
-            journal.url_image = url_image
-            update_fields.append(
-                "url_image"
-            )
+            if journal.url_image != url_image:
+                journal.url_image = url_image
+                journal.url_image_thumbnail = None
+                update_fields.extend(["url_image", "url_image_thumbnail"])
 
         if has_apc is not None:
             journal.has_apc = has_apc
@@ -707,12 +720,13 @@ def create_journal(
         has_full_text=has_full_text,
         user=user,
     )
-    platform_services.register_link_url(
-        platform=journal_platform.platform,
-        journal_platform=journal_platform,
-        url=journal_url,
-        user=user,
-    )
+    if journal_url is not None:
+        platform_services.register_link_url(
+            platform=journal_platform.platform,
+            journal_platform=journal_platform,
+            url=journal_url,
+            user=user,
+        )
 
     recalculate_journals(
         [journal.pk],

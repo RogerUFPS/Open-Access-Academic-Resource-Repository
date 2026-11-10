@@ -9,6 +9,12 @@ function NewJournalPageInner() {
   const searchParams = useSearchParams();
   const journalId = searchParams.get("id");
   const isEdit = Boolean(journalId);
+  let publishErrors = null;
+  try {
+    publishErrors = JSON.parse(searchParams.get("publishErrors") || "null");
+  } catch {
+    publishErrors = null;
+  }
 
   const [journalData, setJournalData] = useState(null);
   const [loading, setLoading] = useState(isEdit);
@@ -35,7 +41,7 @@ function NewJournalPageInner() {
     if (loading) {
       return (
         <div className="p-16 text-center text-gray-500">
-          <div className="w-8 h-8 border-2 border-[#7f1218] border-t-transparent rounded-full animate-spin mx-auto mb-3"></div>
+          <div className="w-8 h-8 border-2 border-[#C8102E] border-t-transparent rounded-full animate-spin mx-auto mb-3"></div>
           <p className="text-xs font-medium">Cargando datos de la revista para edición...</p>
         </div>
       );
@@ -49,7 +55,7 @@ function NewJournalPageInner() {
       );
     }
 
-    return <JournalForm initialData={journalData} isEdit={true} />;
+    return <JournalForm initialData={journalData} isEdit={true} publishErrors={publishErrors} />;
   }
 
   return <JournalForm isEdit={false} />;
@@ -60,7 +66,7 @@ export default function NewJournalPage() {
     <Suspense
       fallback={
         <div className="p-16 text-center text-gray-500">
-          <div className="w-8 h-8 border-2 border-[#7f1218] border-t-transparent rounded-full animate-spin mx-auto mb-3"></div>
+          <div className="w-8 h-8 border-2 border-[#C8102E] border-t-transparent rounded-full animate-spin mx-auto mb-3"></div>
           <p className="text-xs font-medium">Cargando formulario de revista...</p>
         </div>
       }

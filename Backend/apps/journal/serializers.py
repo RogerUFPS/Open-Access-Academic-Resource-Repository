@@ -48,6 +48,12 @@ JOURNAL_RELATION_CONFIG = (
         relation_field="academic_program",
     ),
     RelationConfig(
+        data_field="licenses",
+        through_model=models.SharedJournalLicense,
+        relation_field="license",
+        ordering=("license__name",),
+    ),
+    RelationConfig(
         data_field="platforms",
         through_model=models.SharedJournalPlatform,
         relation_field="platform",
@@ -147,11 +153,7 @@ class JournalLicenseSerializer(serializers.Serializer):
 
 
 class JournalPublishSerializer(serializers.Serializer):
-    licenses = serializers.PrimaryKeyRelatedField(
-        many=True,
-        queryset=models.License.objects.all(),
-        required=False,
-    )
+    pass
 
 
 def _normalize_issn(value: str) -> str:
@@ -235,10 +237,11 @@ class JournalPlatformRelationSerializer(
     )
 
     def validate_journal_url(self, value):
-        platform_services.validate_safe_http_url(
-            value,
-            field_name="journal_url",
-        )
+        if value is not None:
+            platform_services.validate_safe_http_url(
+                value,
+                field_name="journal_url",
+            )
         return value
 
     def to_internal_value(self, data):
@@ -331,6 +334,9 @@ class JournalSerializer(
     Todas las relaciones mediante tablas intermedias se sincronizan
     mediante SoftDeleteRelationSyncMixin.
 
+    ``knowledge_areas`` es de solo lectura: se deriva automáticamente de
+    los programas académicos seleccionados y no puede enviarse por API.
+
     La relación con plataformas utiliza el mismo mecanismo genérico,
     incluyendo sus atributos adicionales:
     start_period, finish_period y has_full_text.
@@ -361,10 +367,11 @@ class JournalSerializer(
     )
 
     knowledge_areas = JournalKnowledgeAreasField(
-        required=False,
+        read_only=True,
         help_text=(
-            "Lista de IDs para la selección manual. La respuesta incluye "
-            "procedencia y editabilidad de todas las áreas efectivas."
+            "Áreas del conocimiento derivadas automáticamente de los "
+            "programas académicos. La respuesta incluye procedencia y "
+            "editabilidad de todas las áreas efectivas."
         ),
     )
 
@@ -388,7 +395,12 @@ class JournalSerializer(
         write_only=True,
     )
 
-    licenses = serializers.SerializerMethodField()
+    licenses = serializers.PrimaryKeyRelatedField(
+        many=True,
+        queryset=models.License.objects.filter(deleted_at__isnull=True),
+        required=False,
+        write_only=True,
+    )
 
     class Meta:
         model = models.Journal
@@ -400,6 +412,7 @@ class JournalSerializer(
             "editorial",
             "licenses",
             "url_image",
+            "url_image_thumbnail",
             "has_apc",
             "active",
             "publication_date",
@@ -420,6 +433,7 @@ class JournalSerializer(
             "validated_by",
             "validated_at",
             "fetched_at",
+            "url_image_thumbnail",
         ]
 
     def validate_issn(self, value):
@@ -479,27 +493,17 @@ class JournalSerializer(
                     platform,
                     field_name="platform",
                 )
-            if platform.pk not in active_platform_ids and not item.get("journal_url"):
-                raise serializers.ValidationError(
-                    "Cada relación nueva requiere journal_url."
-                )
-
         return value
 
     def _prepare_relation_data(self, validated_data):
         """
-        Extrae las relaciones recibidas y deriva knowledge_areas cuando
-        academic_programs fue enviado.
+        Extrae las relaciones recibidas.
 
-        Si academic_programs no viene en un PATCH, ninguna de las dos
-        relaciones se modifica.
+        ``knowledge_areas`` es de solo lectura y se recalcula a partir de
+        ``academic_programs``. Si ``academic_programs`` no viene en un PATCH,
+        los programas y sus áreas derivadas no se modifican.
         """
-        relation_data = self._extract_relation_data(validated_data)
-        if "knowledge_areas" in validated_data:
-            relation_data["knowledge_areas"] = validated_data.pop(
-                "knowledge_areas"
-            )
-        return relation_data
+        return self._extract_relation_data(validated_data)
 
     def to_representation(self, instance):
         representation = super().to_representation(instance)
@@ -512,16 +516,12 @@ class JournalSerializer(
             _represent_journal_platform(link, include_relation_key=True)
             for link in _journal_platform_links(instance)
         ]
-        return representation
-
-    @extend_schema_field(
-        serializers.ListField(child=serializers.IntegerField())
-    )
-    def get_licenses(self, instance):
-        return list(
-            instance.license_links.order_by("license__name")
+        representation["licenses"] = list(
+            instance.license_links.filter(deleted_at__isnull=True)
+            .order_by("license__name")
             .values_list("license_id", flat=True)
         )
+        return representation
 
     def _clear_validation(self, journal):
         """
@@ -607,13 +607,6 @@ class JournalSerializer(
                 parent=journal,
                 relation_data=relation_data,
             )
-            if "knowledge_areas" in relation_data:
-                from .classification import sync_manual_knowledge_areas
-                sync_manual_knowledge_areas(
-                    journal,
-                    relation_data["knowledge_areas"],
-                    user=journal.created_by,
-                )
             self._sync_platform_urls(
                 journal,
                 relation_data.get("platforms"),
@@ -643,6 +636,11 @@ class JournalSerializer(
         instance,
         validated_data,
     ):
+        if (
+            "url_image" in validated_data
+            and validated_data["url_image"] != instance.url_image
+        ):
+            instance.url_image_thumbnail = None
         previous_platform_ids = set(
             models.SharedJournalPlatform.objects.filter(journal=instance)
             .values_list("platform_id", flat=True)
@@ -661,13 +659,6 @@ class JournalSerializer(
                 parent=journal,
                 relation_data=relation_data,
             )
-            if "knowledge_areas" in relation_data:
-                from .classification import sync_manual_knowledge_areas
-                sync_manual_knowledge_areas(
-                    journal,
-                    relation_data["knowledge_areas"],
-                    user=journal.updated_by or journal.created_by,
-                )
             self._sync_platform_urls(
                 journal,
                 relation_data.get("platforms"),
@@ -816,6 +807,7 @@ class JournalPublicSerializer(
             "editorial_name",
             "licenses",
             "url_image",
+            "url_image_thumbnail",
             "has_apc",
             "active",
             "publication_date",
@@ -829,84 +821,119 @@ class JournalPublicSerializer(
 
     @extend_schema_field(JournalLicenseSerializer(many=True))
     def get_licenses(self, obj):
+        links = getattr(obj, "_public_license_links", None)
+        if links is None:
+            links = obj.license_links.select_related("license").order_by(
+                "license__name"
+            )
         return [
             {"id": link.license_id, "name": link.license.name}
-            for link in obj.license_links.select_related("license")
-            .order_by("license__name")
+            for link in links
         ]
 
     @extend_schema_field(
         JournalPublicLanguageSchemaSerializer(many=True)
     )
     def get_languages(self, obj):
-        return list(
-            Language.objects.filter(
-                journal_links__journal=obj,
-                journal_links__deleted_at__isnull=True,
-            ).values(
-                "id",
-                "name",
-                "abbreviation",
+        links = getattr(obj, "_public_language_links", None)
+        if links is None:
+            return list(
+                Language.objects.filter(
+                    journal_links__journal=obj,
+                    journal_links__deleted_at__isnull=True,
+                ).values("id", "name", "abbreviation")
             )
-        )
+        return [
+            {
+                "id": link.language_id,
+                "name": link.language.name,
+                "abbreviation": link.language.abbreviation,
+            }
+            for link in links
+        ]
 
     @extend_schema_field(
         JournalPublicCountrySchemaSerializer(many=True)
     )
     def get_countries(self, obj):
-        return list(
-            Country.objects.filter(
-                journal_links__journal=obj,
-                journal_links__deleted_at__isnull=True,
-            ).values(
-                "id",
-                "name",
-                "abbreviation",
-                "emoji_flag",
+        links = getattr(obj, "_public_country_links", None)
+        if links is None:
+            return list(
+                Country.objects.filter(
+                    journal_links__journal=obj,
+                    journal_links__deleted_at__isnull=True,
+                ).values("id", "name", "abbreviation", "emoji_flag")
             )
-        )
+        return [
+            {
+                "id": link.country_id,
+                "name": link.country.name,
+                "abbreviation": link.country.abbreviation,
+                "emoji_flag": link.country.emoji_flag,
+            }
+            for link in links
+        ]
 
     @extend_schema_field(
         JournalPublicKnowledgeAreaSchemaSerializer(many=True)
     )
     def get_knowledge_areas(self, obj):
-        return list(
-            KnowledgeArea.objects.filter(
-                journal_links__journal=obj,
-                journal_links__deleted_at__isnull=True,
-            ).values(
-                "id",
-                "name",
+        links = getattr(obj, "_public_knowledge_area_links", None)
+        if links is None:
+            return list(
+                KnowledgeArea.objects.filter(
+                    journal_links__journal=obj,
+                    journal_links__deleted_at__isnull=True,
+                ).values("id", "name")
             )
-        )
+        return [
+            {
+                "id": link.knowledge_area_id,
+                "name": link.knowledge_area.name,
+            }
+            for link in links
+            if link.is_manual or link.is_derived
+        ]
 
     @extend_schema_field(
         JournalPublicMaterialTypeSchemaSerializer(many=True)
     )
     def get_material_types(self, obj):
-        return list(
-            MaterialType.objects.filter(
-                journal_links__journal=obj,
-                journal_links__deleted_at__isnull=True,
-            ).values(
-                "id",
-                "name",
+        links = getattr(obj, "_public_material_type_links", None)
+        if links is None:
+            return list(
+                MaterialType.objects.filter(
+                    journal_links__journal=obj,
+                    journal_links__deleted_at__isnull=True,
+                ).values("id", "name")
             )
-        )
+        return [
+            {
+                "id": link.material_type_id,
+                "name": link.material_type.name,
+            }
+            for link in links
+        ]
 
     @extend_schema_field(
         JournalPublicAcademicProgramSchemaSerializer(many=True)
     )
     def get_academic_programs(self, obj):
-        return list(
-            AcademicProgram.objects.filter(
-                journal_links__journal=obj,
-                journal_links__deleted_at__isnull=True,
-            ).values(
-                "id",
-                "name",
+        links = getattr(obj, "_public_academic_program_links", None)
+        if links is None:
+            return list(
+                AcademicProgram.objects.filter(
+                    journal_links__journal=obj,
+                    journal_links__deleted_at__isnull=True,
+                ).values("id", "name")
             )
-        )
+        return [
+            {
+                "id": link.academic_program_id,
+                "name": link.academic_program.name,
+            }
+            for link in links
+        ]
 
     @extend_schema_field(
         JournalPublicPlatformSchemaSerializer(many=True)

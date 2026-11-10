@@ -8,6 +8,7 @@ from django.db.models import Q
 from django.utils import timezone
 from rest_framework.exceptions import ValidationError
 
+from apps.catalog.models import SharedAcademicProgramKnowledgeArea
 from apps.journal import models as journal_models
 
 from . import models
@@ -40,10 +41,30 @@ SECTION_SPECS = (
     ),
 )
 
+# Secciones que el cliente puede seleccionar manualmente en Platform.
+# knowledge_areas no aparece aquí: siempre se deriva de los programas
+# académicos efectivos (manuales y/o derivados).
 MANUAL_SECTION_SPECS = (
     ("institutions", models.SharedPlatformSupport, "institution"),
-    *((name, model, field) for name, model, field, _ in SECTION_SPECS),
+    ("languages", models.SharedPlatformLanguage, "language"),
+    ("countries", models.SharedPlatformCountry, "country"),
+    ("material_types", models.SharedPlatformMaterialType, "material_type"),
+    ("academic_programs", models.SharedPlatformAcademicProgram, "academic_program"),
 )
+
+
+def _knowledge_area_ids_for_programs(program_ids: Iterable[int]) -> set[int]:
+    """Áreas vigentes asociadas a los programas académicos indicados."""
+    ids = set(program_ids)
+    if not ids:
+        return set()
+    return set(
+        SharedAcademicProgramKnowledgeArea.objects.filter(
+            academic_program_id__in=ids,
+            academic_program__deleted_at__isnull=True,
+            knowledge_area__deleted_at__isnull=True,
+        ).values_list("knowledge_area_id", flat=True)
+    )
 
 
 def _set_origin(link, *, user, is_manual=None, is_derived=None):
@@ -116,7 +137,12 @@ def sync_manual_platform_sections(platform, relation_data, *, user):
 
 @transaction.atomic
 def recalculate_platforms(platform_ids: Iterable[int], *, user) -> set[int]:
-    """Recalcula las cinco secciones compartidas desde todas las Journals elegibles."""
+    """Recalcula las secciones derivadas de Platform.
+
+    Las secciones simples se derivan de las Journals elegibles. Las áreas del
+    conocimiento se derivan, además, de los programas académicos efectivos
+    (manuales y derivados) de la propia Platform.
+    """
     ids = set(platform_ids)
     if not ids:
         return set()
@@ -154,6 +180,9 @@ def recalculate_platforms(platform_ids: Iterable[int], *, user) -> set[int]:
     changed_platform_ids = set()
     for platform in models.Platform.all_objects.select_for_update().filter(pk__in=ids):
         for data_field, through_model, relation_field, _ in SECTION_SPECS:
+            if data_field == "knowledge_areas":
+                # Se calcula después de sincronizar los programas académicos.
+                continue
             if _sync_origin(
                 platform=platform,
                 desired_ids=desired_by_section[data_field].get(platform.pk, set()),
@@ -163,6 +192,29 @@ def recalculate_platforms(platform_ids: Iterable[int], *, user) -> set[int]:
                 user=user,
             ):
                 changed_platform_ids.add(platform.pk)
+
+        effective_program_ids = set(
+            models.SharedPlatformAcademicProgram.objects.filter(
+                platform=platform,
+                academic_program__deleted_at__isnull=True,
+            ).filter(
+                Q(is_manual=True) | Q(is_derived=True)
+            ).values_list("academic_program_id", flat=True)
+        )
+        desired_area_ids = set(
+            desired_by_section["knowledge_areas"].get(platform.pk, set())
+        )
+        desired_area_ids |= _knowledge_area_ids_for_programs(effective_program_ids)
+
+        if _sync_origin(
+            platform=platform,
+            desired_ids=desired_area_ids,
+            through_model=models.SharedPlatformKnowledgeArea,
+            relation_field="knowledge_area",
+            origin="is_derived",
+            user=user,
+        ):
+            changed_platform_ids.add(platform.pk)
 
         if platform.status == models.Platform.Status.PUBLICADO:
             from .services import validate_platform_for_publication

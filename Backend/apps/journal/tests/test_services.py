@@ -164,6 +164,39 @@ class JournalServicesTests(TestCase):
             1,
         )
 
+    def test_journal_publication_requires_platform_journal_url(self):
+        journal = models.Journal.objects.create(
+            issn="3030-4040",
+            title="Journal sin URL contextual",
+            created_by=self.system,
+        )
+        models.SharedJournalPlatform.objects.create(
+            journal=journal,
+            platform=self.platform,
+            created_by=self.system,
+        )
+
+        with self.assertRaises(ValidationError) as context:
+            journal_services.validate_journal_for_publication(journal)
+
+        self.assertIn("platforms", context.exception.detail)
+        self.assertIn(
+            "URL pública registrada",
+            str(context.exception.detail["platforms"]),
+        )
+
+    def test_journal_publication_requires_image_url(self):
+        journal = models.Journal.objects.create(
+            issn="3030-4041",
+            title="Journal sin imagen",
+            created_by=self.system,
+        )
+
+        with self.assertRaises(ValidationError) as context:
+            journal_services.validate_journal_for_publication(journal)
+
+        self.assertIn("url_image", context.exception.detail)
+
     # ==========================================================================
     # ISSN
     # ==========================================================================

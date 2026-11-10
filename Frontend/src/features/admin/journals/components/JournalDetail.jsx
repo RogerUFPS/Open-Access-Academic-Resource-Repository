@@ -9,6 +9,7 @@ import { capitalizeWords } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import PublishJournalModal from "./PublishJournalModal";
+import OriginBadge, { originOf } from "@/shared/components/classification/OriginBadge";
 import {
   ArrowLeft,
   Edit3,
@@ -23,6 +24,7 @@ import {
   Ban,
   Database,
   FileText,
+  Lock,
 } from "lucide-react";
 
 function renderStatusBadge(journal) {
@@ -59,8 +61,7 @@ export default function JournalDetail({ journalId }) {
     countries: [],
     materialTypes: [],
     editorials: [],
-    knowledgeAreas: [],
-    publishedPlatforms: [],
+    platforms: [],
     licenses: [],
   });
   const [loading, setLoading] = useState(true);
@@ -78,10 +79,9 @@ export default function JournalDetail({ journalId }) {
     setEditorialName("");
     setEditorialError(null);
     try {
-      const [data, catData, kaData, licData] = await Promise.all([
+      const [data, catData, licData] = await Promise.all([
         journalService.getJournalById(journalId),
         journalService.loadFormCatalogs(),
-        journalService.getCatalogData("/api/catalog/knowledge-areas/"),
         journalService.getLicenses().catch(() => []),
       ]);
 
@@ -130,7 +130,6 @@ export default function JournalDetail({ journalId }) {
       setUserNames(Object.fromEntries(resolvedUsers));
       setCatalogs({
         ...catData,
-        knowledgeAreas: kaData,
         licenses: Array.isArray(licData) ? licData : [],
       });
     } catch (err) {
@@ -225,7 +224,7 @@ export default function JournalDetail({ journalId }) {
     }
     if (entry.platform_name) return capitalizeWords(entry.platform_name);
     if (entry.name) return capitalizeWords(entry.name);
-    return formatItemName(entry.platform, catalogs.publishedPlatforms);
+    return formatItemName(entry.platform, catalogs.platforms);
   };
 
   const resolvePlatformId = (entry) => {
@@ -239,7 +238,7 @@ export default function JournalDetail({ journalId }) {
       return entry.platform.public_url;
     }
     const platId = resolvePlatformId(entry);
-    const found = catalogs.publishedPlatforms.find((p) => String(p.id) === String(platId));
+    const found = catalogs.platforms.find((p) => String(p.id) === String(platId));
     return found?.public_url || null;
   };
 
@@ -466,25 +465,26 @@ export default function JournalDetail({ journalId }) {
                   </div>
                 </div>
 
-                {journal.url_image && (
-                  <div className="sm:col-span-2">
-                    <span className="text-xs uppercase tracking-wide text-gray-500 font-semibold block">
-                      URL de imagen
-                    </span>
-                    <div className="mt-1.5 p-3 bg-blue-50 border border-blue-200/80 rounded-lg flex items-center gap-2">
-                      <Link2 className="w-4 h-4 text-blue-500 shrink-0" />
-                      <a
-                        href={journal.url_image}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="font-semibold text-blue-700 hover:underline text-[14px] sm:text-[15px] break-all flex items-center gap-1.5"
-                      >
-                        {journal.url_image}
-                        <ExternalLink className="w-3.5 h-3.5 shrink-0" />
-                      </a>
-                    </div>
+                <div className="sm:col-span-2">
+                  <span className="text-xs uppercase tracking-wide text-gray-500 font-semibold block">Imagen</span>
+                  <div className="mt-1.5 flex items-center gap-3 rounded-lg bg-slate-50 p-3">
+                    {journal.url_image ? (
+                      <img
+                        src={journal.url_image}
+                        alt={`Imagen de ${journal.title}`}
+                        onError={(event) => {
+                          event.currentTarget.style.display = "none";
+                          event.currentTarget.nextElementSibling?.classList.remove("hidden");
+                        }}
+                        className="h-24 w-24 rounded-lg object-cover"
+                      />
+                    ) : null}
+                    <span className={journal.url_image ? "hidden text-xs text-slate-400" : "text-xs text-slate-400"}>Sin imagen</span>
+                    <Button asChild variant="outline" className="text-xs">
+                      <Link href={`/admin/revistas/nueva?id=${journal.id}`}>Reemplazar / eliminar</Link>
+                    </Button>
                   </div>
-                )}
+                </div>
               </div>
             </CardContent>
           </Card>
@@ -622,40 +622,28 @@ export default function JournalDetail({ journalId }) {
             <CardContent className="pt-6 space-y-4">
               <div>
                 <span className="text-xs uppercase tracking-wide text-gray-500 font-semibold block">
-                  Áreas de Conocimiento
+                  Áreas de Conocimiento (automáticas)
                 </span>
                 <div className="mt-1.5 p-2.5 bg-slate-50 border border-slate-100 rounded-lg">
                   {journal.knowledge_areas && journal.knowledge_areas.length > 0 ? (
-                    <div className="flex flex-wrap gap-2">
+                    <ul className="flex flex-wrap gap-2">
                       {journal.knowledge_areas.map((ka, i) => {
-                        const name = typeof ka === "object" && ka.name ? ka.name : formatItemName(ka, catalogs.knowledgeAreas);
-                        const isManual = typeof ka === "object" ? Boolean(ka.is_manual) : true;
-                        const isDerived = typeof ka === "object" ? Boolean(ka.is_derived) : false;
-                        const isBoth = isManual && isDerived;
-
+                        const name = typeof ka === "object" && ka ? ka.name : `ID #${ka}`;
+                        const { isManual, isDerived } = originOf(ka);
                         return (
-                          <div
-                            key={ka.id || i}
-                            className="bg-white border border-gray-200 font-semibold px-2.5 py-1 rounded-lg text-xs flex items-center gap-1.5 shadow-2xs"
-                          >
-                            <span className="text-gray-900">{name}</span>
-                            {isBoth ? (
-                              <span className="bg-purple-100 text-purple-800 text-[10px] font-bold px-1.5 py-0.5 rounded">
-                                Manual · Derivada
-                              </span>
-                            ) : isManual ? (
-                              <span className="bg-emerald-100 text-emerald-800 text-[10px] font-bold px-1.5 py-0.5 rounded">
-                                Manual
-                              </span>
-                            ) : (
-                              <span className="bg-blue-100 text-blue-800 text-[10px] font-bold px-1.5 py-0.5 rounded">
-                                Derivada
-                              </span>
-                            )}
-                          </div>
+                          <li key={(typeof ka === "object" && ka?.id) || i}>
+                            <span
+                              aria-disabled="true"
+                              className="bg-white border border-gray-200 font-semibold px-2.5 py-1 rounded-lg text-xs flex items-center gap-1.5 shadow-2xs"
+                            >
+                              {isDerived && <Lock className="w-3 h-3 text-gray-500" aria-hidden="true" />}
+                              <span className="text-gray-900">{capitalizeWords(name)}</span>
+                              <OriginBadge isManual={isManual} isDerived={isDerived} />
+                            </span>
+                          </li>
                         );
                       })}
-                    </div>
+                    </ul>
                   ) : (
                     <span className="text-slate-400 italic text-xs">Sin áreas asociadas</span>
                   )}

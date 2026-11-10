@@ -4,10 +4,16 @@ import React, { useState, useEffect, useMemo } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { platformService } from "../services/platformService";
+import { extractApiErrorText, normalizeApiFieldErrors } from "@/shared/services/apiClient";
 import { getUserDisplayName, userService } from "@/shared/services/userService";
 import { capitalizeWords } from "@/lib/utils";
 import { useToast } from "@/components/ui/use-toast";
+import { useAccountsApi } from "@/shared/components/AccountsProvider";
+import { canCheckLinks, linkActionError, linkStatus } from "@/features/admin/harvesting/linkMonitoring";
 import DeleteModal from "./DeleteModal";
+import { PublishChecklist } from "@/shared/components/forms/FormParts";
+import OriginBadge, { originOf } from "@/shared/components/classification/OriginBadge";
+import { buildPlatformChecklist, isChecklistComplete } from "@/shared/utils/publishChecklists";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { 
@@ -26,20 +32,24 @@ import {
   RefreshCw,
   Link2,
   XCircle,
-  HelpCircle
+  HelpCircle,
+  GraduationCap,
+  Lock,
 } from "lucide-react";
 
 export default function DatabaseDetail({ platformId }) {
   const router = useRouter();
   const [platform, setPlatform] = useState(null);
   const [linkLogs, setLinkLogs] = useState([]);
+  const [currentLinkLogId, setCurrentLinkLogId] = useState(null);
+  const [linkLogsError, setLinkLogsError] = useState(null);
+  const [canCheck, setCanCheck] = useState(null); // null mientras se consultan los permisos
+  const accountsApi = useAccountsApi();
   const [catalogs, setCatalogs] = useState({
-    academicPrograms: [],
     institutions: [],
     languages: [],
     countries: [],
     materialTypes: [],
-    knowledgeAreas: [],
   });
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -55,15 +65,52 @@ export default function DatabaseDetail({ platformId }) {
   const [deleteModalOpen, setDeleteModalOpen] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
 
+  // Permiso efectivo para las acciones POST de verificación de enlaces.
+  useEffect(() => {
+    const controller = new AbortController();
+    accountsApi
+      .me(controller.signal)
+      .then((user) => setCanCheck(canCheckLinks(user)))
+      .catch(() => setCanCheck(false));
+    return () => controller.abort();
+  }, [accountsApi]);
+
+  /**
+   * Estado vigente y historial de la URL general de la plataforma.
+   * - Vigente: current=true&journal_platform__isnull=true (excluye revistas).
+   * - Historial: todas las páginas, solo el enlace general.
+   * `verification_status` es la fuente de verdad del estado mostrado.
+   */
+  const loadLinkState = async () => {
+    const [currentResult, historyResult] = await Promise.allSettled([
+      platformService.getCurrentPlatformLinkLog(platformId),
+      platformService.getPlatformLinkHistory(platformId),
+    ]);
+    if (currentResult.status === "fulfilled") {
+      const current = currentResult.value;
+      setCurrentLinkLogId(current?.id ?? null);
+      setVerificationStatus(current?.verification_status || "unverified");
+    } else {
+      setCurrentLinkLogId(null);
+      setVerificationStatus("unverified");
+    }
+    if (historyResult.status === "fulfilled") {
+      setLinkLogs(historyResult.value);
+      setLinkLogsError(null);
+    } else {
+      setLinkLogs([]);
+      setLinkLogsError(historyResult.reason?.message || "No se pudo cargar el historial de verificaciones.");
+    }
+  };
+
   // Fetch Detail Data & Catalogs
   const loadDetail = async () => {
     setLoading(true);
     setError(null);
     try {
-      const [data, catData, kaData] = await Promise.all([
+      const [data, catData] = await Promise.all([
         platformService.getPlatformById(platformId),
         platformService.loadFormCatalogs(),
-        platformService.getCatalogData("/api/catalog/knowledge-areas/"),
       ]);
 
       const auditUserIds = [...new Set(
@@ -83,32 +130,9 @@ export default function DatabaseDetail({ platformId }) {
 
       setPlatform(data);
       setUserNames(Object.fromEntries(resolvedUsers));
-      setCatalogs({ ...catData, knowledgeAreas: kaData });
+      setCatalogs(catData);
 
-      // Determine initial verification status from platform or latest log
-      let initialStatus = data.verification_status || "unverified";
-
-      // Load link check logs history
-      try {
-        const logsData = await platformService.getLinkCheckLogs({ platform: platformId });
-        const logsList = Array.isArray(logsData) ? logsData : logsData.results || [];
-        setLinkLogs(logsList);
-
-        if (!data.verification_status && logsList.length > 0) {
-          const latest = logsList[0];
-          if (latest.verification_status) {
-            initialStatus = latest.verification_status;
-          } else if (latest.is_active || latest.http_status_code === 200 || latest.status === "available") {
-            initialStatus = "available";
-          } else if (latest.is_active === false || latest.status === "unavailable") {
-            initialStatus = "unavailable";
-          }
-        }
-      } catch {
-        setLinkLogs([]);
-      }
-
-      setVerificationStatus(initialStatus);
+      await loadLinkState();
     } catch (err) {
       console.error("Error loading platform detail:", err);
       setError(err.message || "No se pudo cargar la información de la plataforma.");
@@ -135,23 +159,12 @@ export default function DatabaseDetail({ platformId }) {
 
   // Re-check handler calling POST /api/platforms/{id}/check-link/
   const handleCheckLink = async () => {
+    if (!canCheck) return;
     setIsRechecking(true);
     try {
+      // Responde con el LinkCheckLog vigente del enlace general.
       const res = await platformService.checkLink(platformId, null);
-      
-      // Update verification status from response
-      let newStatus = "unverified";
-      if (res) {
-        if (res.verification_status) {
-          newStatus = res.verification_status;
-        } else if (res.is_active === true || res.available === true || res.http_status_code === 200 || res.status === "available") {
-          newStatus = "available";
-        } else if (res.is_active === false || res.available === false || res.status === "unavailable") {
-          newStatus = "unavailable";
-        } else {
-          newStatus = "available";
-        }
-      }
+      const newStatus = res?.verification_status || "unverified";
       setVerificationStatus(newStatus);
       showToast(
         newStatus === "available"
@@ -161,22 +174,44 @@ export default function DatabaseDetail({ platformId }) {
           : "Verificación de enlace ejecutada."
       );
 
-      // Refresh link logs history
-      const logsData = await platformService.getLinkCheckLogs({ platform: platformId });
-      setLinkLogs(Array.isArray(logsData) ? logsData : logsData.results || []);
+      // Refrescar estado vigente e historial.
+      await loadLinkState();
     } catch (err) {
-      alert(`Error al verificar URL: ${err.message}`);
+      toast({
+        title: "No se pudo verificar la URL",
+        description: linkActionError(err),
+        variant: "destructive",
+      });
     } finally {
       setIsRechecking(false);
     }
   };
 
+  // Requisitos de publicación (sección 3.4). La URL debe estar verificada.
+  const publishChecklist = platform
+    ? buildPlatformChecklist({
+        publicUrl: platform.public_url,
+        urlStatus: verificationStatus,
+        validSintaxis: typeof platform.valid_sintaxis === "object" ? platform.valid_sintaxis?.id : platform.valid_sintaxis,
+        institutions: platform.institutions,
+        countries: platform.countries,
+        languages: platform.languages,
+        materialTypes: platform.material_types,
+        isHarvestable: platform.is_harvestable,
+        baseApiUrl: platform.base_api_url,
+        hasApiKey: false, // write-only: el backend no la devuelve
+      }).map((item) => ({ ...item, failed: item.key === "public_url" && verificationStatus === "unavailable" }))
+    : [];
+
   // Action Handlers
   const handlePublish = async () => {
-    if (verificationStatus !== "available") {
+    if (!isChecklistComplete(publishChecklist)) {
       toast({
         title: "No se pudo publicar la plataforma",
-        description: "La URL pública debe verificarse y estar disponible antes de publicar.",
+        description: publishChecklist
+          .filter((item) => !item.done)
+          .map((item) => `• ${item.label}`)
+          .join("\n"),
         variant: "destructive",
       });
       return;
@@ -189,16 +224,39 @@ export default function DatabaseDetail({ platformId }) {
       const payload = err.data && typeof err.data === "object" ? err.data : {};
       const fieldErrors = Object.entries(payload)
         .filter(([key]) => !["detail", "message", "error"].includes(key))
-        .map(([key, value]) => `${key}: ${Array.isArray(value) ? value.join(", ") : String(value)}`);
+        .map(([key, value]) => ({
+          field: ({
+            name: "Nombre",
+            url: "URL pública",
+            url_image: "URL de imagen",
+            public_url: "URL pública",
+            base_api_url: "URL base de API",
+            is_harvestable: "Cosechable vía API",
+            start_period: "Fecha de registro",
+            finish_period: "Fecha de obsolescencia",
+            valid_sintaxis: "Sintaxis de búsqueda",
+            institutions: "Instituciones responsables",
+            countries: "Países",
+            material_types: "Tipos de material",
+            languages: "Idiomas",
+            academic_programs: "Programas académicos",
+            status: "Estado",
+          })[key] || key,
+          message: extractApiErrorText(value) || "Revisa este campo.",
+        }));
       const message = fieldErrors.length
-        ? fieldErrors.join("\n")
+        ? fieldErrors.map((item) => `${item.field}: ${item.message}`).join("\n")
         : payload.detail || payload.message || payload.error || err.message || "No se pudo publicar la plataforma.";
-      const fieldErrorData = Object.fromEntries(Object.entries(payload).filter(([key]) => !["detail", "message", "error"].includes(key)));
+      const fieldErrorData = normalizeApiFieldErrors(payload);
       toast({
         title: "No se pudo publicar la plataforma",
         description: fieldErrors.length ? (
           <div>
-            <ul className="list-disc space-y-1 pl-4">{fieldErrors.map((item, index) => <li key={`${item}-${index}`}>{item}</li>)}</ul>
+            <ul className="list-disc space-y-1 pl-4">
+              {fieldErrors.map((item, index) => (
+                <li key={`${item.field}-${index}`}><span className="font-semibold">{item.field}:</span> {item.message}</li>
+              ))}
+            </ul>
             <Link href={`/admin/bases-de-datos/${platform.id}?edit=true&publishErrors=${encodeURIComponent(JSON.stringify(fieldErrorData))}`} className="mt-2 inline-block font-semibold text-[#7f1218] underline">Revisar datos de la plataforma</Link>
           </div>
         ) : message,
@@ -347,7 +405,7 @@ export default function DatabaseDetail({ platformId }) {
   }
 
   const currentStatus = (platform.status || "BORRADOR").toUpperCase();
-  const canPublish = currentStatus === "BORRADOR" && verificationStatus === "available";
+  const canPublish = currentStatus === "BORRADOR" && isChecklistComplete(publishChecklist);
 
   return (
     <div className="space-y-6 max-w-5xl mx-auto">
@@ -407,7 +465,7 @@ export default function DatabaseDetail({ platformId }) {
               </Button>
               {!canPublish && (
                 <span className="hidden group-hover:block absolute right-0 top-full mt-1 w-64 p-2 bg-[#7f1218] text-white text-[11px] rounded-lg shadow-lg z-20">
-                  Para publicar, la URL pública debe estar verificada y disponible.
+                  Para publicar, completa los requisitos de publicación (panel lateral).
                 </span>
               )}
             </div>
@@ -481,7 +539,7 @@ export default function DatabaseDetail({ platformId }) {
                         <span className="text-slate-400 italic text-sm">Sin URL pública registrada</span>
                       )}
                     </div>
-                    {platform.public_url && (
+                    {platform.public_url && canCheck && (
                       <Button
                         size="sm"
                         disabled={isRechecking}
@@ -531,9 +589,29 @@ export default function DatabaseDetail({ platformId }) {
                       {platform.valid_sintaxis
                         ? typeof platform.valid_sintaxis === "object"
                           ? capitalizeWords(platform.valid_sintaxis.name)
-                          : capitalizeWords(catalogs.sintaxis?.find(s => s.id === Number(platform.valid_sintaxis))?.name || "Sintaxis estándar")
-                        : "Sintaxis estándar"}
+                          : capitalizeWords(catalogs.sintaxis?.find(s => s.id === Number(platform.valid_sintaxis))?.name || "Sin sintaxis")
+                        : "Sin sintaxis"}
                     </span>
+                  </div>
+                </div>
+                <div>
+                  <span className="text-xs uppercase tracking-wide text-gray-500 font-semibold block">Imagen</span>
+                  <div className="mt-1.5 flex items-center gap-3 rounded-lg bg-slate-50 p-2.5">
+                    {platform.url_image ? (
+                      <img
+                        src={platform.url_image}
+                        alt={`Imagen de ${platform.name}`}
+                        onError={(event) => {
+                          event.currentTarget.style.display = "none";
+                          event.currentTarget.nextElementSibling?.classList.remove("hidden");
+                        }}
+                        className="h-24 w-24 rounded-lg object-cover"
+                      />
+                    ) : null}
+                    <span className={platform.url_image ? "hidden text-xs text-slate-400" : "text-xs text-slate-400"}>Sin imagen</span>
+                    <Button asChild variant="outline" className="text-xs">
+                      <Link href={`/admin/bases-de-datos/${platform.id}?edit=true`}>Reemplazar / eliminar</Link>
+                    </Button>
                   </div>
                 </div>
               </div>
@@ -589,50 +667,66 @@ export default function DatabaseDetail({ platformId }) {
                   Historial de Verificaciones de Enlace
                 </CardTitle>
                 <CardDescription className="text-xs text-gray-500">
-                  Registros gestionados por LinkCheckLog
+                  URL general de la plataforma (vigente e historial)
                 </CardDescription>
+                {canCheck === false && (
+                  <p className="mt-1 text-[11px] text-gray-500">
+                    Verificar el enlace requiere el permiso platforms.platforms.check_link.
+                  </p>
+                )}
               </div>
 
-              <Button
-                size="sm"
-                disabled={isRechecking}
-                onClick={handleCheckLink}
-                className="rounded-xl text-xs bg-[#7f1218] hover:bg-[#6a0f14] text-white font-medium gap-1.5 cursor-pointer shadow-2xs"
-              >
-                <RefreshCw className={`w-3.5 h-3.5 ${isRechecking ? "animate-spin" : ""}`} />
-                <span>{isRechecking ? "Verificando..." : "Comprobar enlace"}</span>
-              </Button>
+              {canCheck && (
+                <Button
+                  size="sm"
+                  disabled={isRechecking}
+                  onClick={handleCheckLink}
+                  className="rounded-xl text-xs bg-[#7f1218] hover:bg-[#6a0f14] text-white font-medium gap-1.5 cursor-pointer shadow-2xs"
+                >
+                  <RefreshCw className={`w-3.5 h-3.5 ${isRechecking ? "animate-spin" : ""}`} />
+                  <span>{isRechecking ? "Verificando..." : "Comprobar enlace"}</span>
+                </Button>
+              )}
             </CardHeader>
 
             <CardContent className="pt-4">
-              {linkLogs.length === 0 ? (
+              {linkLogsError ? (
+                <div className="py-6 text-center text-rose-600 text-xs">{linkLogsError}</div>
+              ) : linkLogs.length === 0 ? (
                 <div className="py-6 text-center text-gray-400 text-xs">
                   No hay registros de verificación de enlace aún.
                 </div>
               ) : (
                 <div className="space-y-2 max-h-56 overflow-y-auto">
-                  {linkLogs.map((log, idx) => (
-                    <div
-                      key={log.id || idx}
-                      className="p-3 rounded-xl border border-gray-100 bg-gray-50/50 flex items-center justify-between text-xs"
-                    >
-                      <div className="truncate pr-2">
-                        <span className="text-gray-800 block truncate font-semibold">{log.url || log.link}</span>
-                        <span className="text-[10px] text-gray-400">{formatDate(log.created_at || log.checked_at)}</span>
-                      </div>
-                      <span
-                        className={`px-2.5 py-1 rounded-full text-[10px] font-bold ${
-                          log.is_active || log.http_status_code === 200 || log.verification_status === "available"
-                            ? "bg-emerald-100 text-emerald-800"
-                            : "bg-rose-100 text-rose-800"
-                        }`}
+                  {linkLogs.map((log, idx) => {
+                    const status = linkStatus(log, false);
+                    const isCurrent = log.id != null && log.id === currentLinkLogId;
+                    return (
+                      <div
+                        key={log.id || idx}
+                        className="p-3 rounded-xl border border-gray-100 bg-gray-50/50 flex items-center justify-between text-xs"
                       >
-                        {log.is_active || log.http_status_code === 200 || log.verification_status === "available"
-                          ? "Disponible"
-                          : "No disponible"}
-                      </span>
-                    </div>
-                  ))}
+                        <div className="truncate pr-2">
+                          <span className="text-gray-800 block truncate font-semibold">{log.url}</span>
+                          <span className="text-[10px] text-gray-400">
+                            {log.last_check ? formatDate(log.last_check) : "Nunca comprobada"}
+                            {isCurrent ? " · Vigente" : log.id != null && currentLinkLogId != null ? " · Sustituida" : ""}
+                          </span>
+                        </div>
+                        <span
+                          className={`px-2.5 py-1 rounded-full text-[10px] font-bold shrink-0 ${
+                            status.state === "success"
+                              ? "bg-emerald-100 text-emerald-800"
+                              : status.state === "info"
+                              ? "bg-amber-100 text-amber-800"
+                              : "bg-rose-100 text-rose-800"
+                          }`}
+                        >
+                          {status.state === "success" ? "Disponible" : status.label}
+                        </span>
+                      </div>
+                    );
+                  })}
                 </div>
               )}
             </CardContent>
@@ -641,6 +735,81 @@ export default function DatabaseDetail({ platformId }) {
 
         {/* Sidebar Cards (1 Col) */}
         <div className="space-y-6">
+          {currentStatus === "BORRADOR" && (
+            <PublishChecklist
+              items={publishChecklist}
+              description="Programas académicos y áreas no son obligatorios para publicar."
+            />
+          )}
+
+          {/* Clasificación académica (opcional) */}
+          <Card className="rounded-2xl border-gray-200/80 shadow-xs bg-white">
+            <CardHeader className="border-b border-gray-100 pb-4">
+              <CardTitle className="text-base font-bold text-gray-900 flex items-center gap-2">
+                <GraduationCap className="w-4 h-4 text-blue-600" />
+                Clasificación académica
+              </CardTitle>
+              <CardDescription className="text-xs text-gray-500">
+                Opcional. Las áreas se derivan de los programas.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="pt-6 space-y-4">
+              <div>
+                <span className="text-xs uppercase tracking-wide text-gray-500 font-semibold block">Programas académicos</span>
+                <div className="mt-1.5 p-2.5 bg-slate-50 border border-slate-100 rounded-lg">
+                  {Array.isArray(platform.academic_programs) && platform.academic_programs.length > 0 ? (
+                    <ul className="flex flex-wrap gap-1.5">
+                      {platform.academic_programs.map((program, i) => {
+                        const { isManual, isDerived } = originOf(program);
+                        return (
+                          <li key={(typeof program === "object" && program?.id) || i}>
+                            <span
+                              aria-disabled={isDerived ? "true" : undefined}
+                              className="bg-white border border-gray-200 text-slate-800 font-semibold px-2.5 py-1 rounded-md text-xs inline-flex items-center gap-1.5"
+                            >
+                              {isDerived && <Lock className="w-3 h-3 text-gray-500" aria-hidden="true" />}
+                              {formatItemName(program)}
+                              <OriginBadge isManual={isManual} isDerived={isDerived} />
+                            </span>
+                          </li>
+                        );
+                      })}
+                    </ul>
+                  ) : (
+                    <span className="text-slate-400 italic text-xs">Clasificación académica opcional.</span>
+                  )}
+                </div>
+              </div>
+
+              <div>
+                <span className="text-xs uppercase tracking-wide text-gray-500 font-semibold block">Áreas del conocimiento (automáticas)</span>
+                <div className="mt-1.5 p-2.5 bg-slate-50 border border-slate-100 rounded-lg">
+                  {Array.isArray(platform.knowledge_areas) && platform.knowledge_areas.length > 0 ? (
+                    <ul className="flex flex-wrap gap-1.5">
+                      {platform.knowledge_areas.map((area, i) => {
+                        const { isManual, isDerived } = originOf(area);
+                        return (
+                          <li key={(typeof area === "object" && area?.id) || i}>
+                            <span
+                              aria-disabled="true"
+                              className="bg-white border border-gray-200 text-slate-800 font-semibold px-2.5 py-1 rounded-md text-xs inline-flex items-center gap-1.5"
+                            >
+                              <Lock className="w-3 h-3 text-gray-500" aria-hidden="true" />
+                              {formatItemName(area)}
+                              <OriginBadge isManual={isManual} isDerived={isDerived} />
+                            </span>
+                          </li>
+                        );
+                      })}
+                    </ul>
+                  ) : (
+                    <span className="text-slate-400 italic text-xs">Sin áreas derivadas. Puedes publicar sin clasificación.</span>
+                  )}
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+
           {/* Clasificación y Relaciones Card */}
           <Card className="rounded-2xl border-gray-200/80 shadow-xs bg-white">
             <CardHeader className="border-b border-gray-100 pb-4">

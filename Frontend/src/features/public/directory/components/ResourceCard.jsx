@@ -1,4 +1,5 @@
 import Link from "next/link";
+import ResourceThumb from "@/features/public/components/ResourceThumb";
 
 export default function ResourceCard({ resource, type }) {
   const isDatabase = type === "database";
@@ -7,9 +8,15 @@ export default function ResourceCard({ resource, type }) {
   return (
     <article className="flex h-full flex-col border border-[#e7dfd9] bg-white p-5 transition hover:border-[#c9a45c] hover:shadow-[0_8px_24px_rgba(54,35,28,0.07)] sm:p-6">
       <div className="mb-5 flex items-start justify-between gap-4">
-        <span className={`grid h-10 w-10 shrink-0 place-items-center rounded-md text-sm font-bold ${isDatabase ? "bg-[#f8eeee] text-[#7f1218]" : "bg-[#f4eee8] text-[#7f1218]"}`} aria-hidden="true">
-          {isDatabase ? "BD" : "R"}
-        </span>
+        <ResourceThumb
+          className="h-10 w-10"
+          fallback={isDatabase ? "BD" : "R"}
+          imageClassName="h-10 w-10 rounded-md border border-[#e7dfd9] bg-white p-1"
+          loading="lazy"
+          name={resource.name}
+          thumbnailSrc={resource.url_image_thumbnail}
+          src={resource.url_image}
+        />
         <span className="text-right text-[11px] font-semibold uppercase tracking-wider text-[#5c5252]">{isDatabase ? "Base de datos" : "Revista"}</span>
       </div>
       <h2 className="text-2xl font-bold leading-tight text-[#1f1a1a]">{resource.name}</h2>

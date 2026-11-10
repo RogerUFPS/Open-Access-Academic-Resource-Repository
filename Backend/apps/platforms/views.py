@@ -1,6 +1,7 @@
 import logging
 
 from django.db.models import F, Prefetch
+from django.db import IntegrityError, transaction
 from kombu.exceptions import OperationalError
 from django.utils import timezone
 
@@ -15,19 +16,58 @@ from drf_spectacular.utils import (
 from rest_framework import serializers as drf_serializers
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
+from rest_framework.parsers import FormParser, MultiPartParser
 from rest_framework.response import Response
 
+from apps.core.serializers import ImageUploadSerializer
 from apps.core.viewsets import (
     AuditableViewSet,
+    PublicReadCacheMixin,
+    ResourceImageMixin,
     get_acting_user,
 )
 from apps.core.pagination import CustomPageNumberPagination
+from apps.account.authentication import CookieSessionAuthentication
+from apps.account.scheduler_authentication import SchedulerTokenAuthentication
 
 from . import classification, filters, models, serializers, services
 from .tasks import dispatch_link_checks
 from .permissions import LinkVerificationPermission
 
 logger = logging.getLogger(__name__)
+
+def _existing_link_check_run(mode, idempotency_key):
+    if idempotency_key:
+        run = models.LinkCheckRun.objects.filter(
+            idempotency_key=idempotency_key,
+        ).first()
+        if run:
+            return run
+    return models.LinkCheckRun.objects.filter(
+        mode=mode,
+        finished_at__isnull=True,
+    ).order_by("pk").first()
+
+
+def _get_or_create_link_check_run(mode, user, idempotency_key):
+    try:
+        with transaction.atomic():
+            existing = _existing_link_check_run(mode, idempotency_key)
+            if existing:
+                return existing, False
+            run = models.LinkCheckRun.objects.create(
+                mode=mode,
+                requested_by=user,
+                idempotency_key=idempotency_key,
+            )
+        return run, True
+    except IntegrityError:
+        # A concurrent request may win either the idempotency-key or active-mode
+        # unique constraint after our initial read.
+        existing = _existing_link_check_run(mode, idempotency_key)
+        if existing:
+            return existing, False
+        raise
 
 
 def _with_public_link_logs(queryset):
@@ -42,6 +82,33 @@ def _with_public_link_logs(queryset):
             to_attr="_public_link_logs",
         )
     )
+
+
+def _with_public_relations(queryset):
+    relation_specs = (
+        ("support_links", models.SharedPlatformSupport, "institution"),
+        ("language_links", models.SharedPlatformLanguage, "language"),
+        ("country_links", models.SharedPlatformCountry, "country"),
+        ("knowledge_area_links", models.SharedPlatformKnowledgeArea, "knowledge_area"),
+        ("material_type_links", models.SharedPlatformMaterialType, "material_type"),
+        ("academic_program_links", models.SharedPlatformAcademicProgram, "academic_program"),
+    )
+    prefetches = []
+    for relation_name, through_model, relation_field in relation_specs:
+        related_lookup = f"{relation_field}__deleted_at__isnull"
+        prefetches.append(
+            Prefetch(
+                relation_name,
+                queryset=(
+                    through_model.objects
+                    .filter(**{related_lookup: True})
+                    .select_related(relation_field)
+                    .order_by(f"{relation_field}__name")
+                ),
+                to_attr=f"_public_{relation_name}",
+            )
+        )
+    return queryset.select_related("valid_sintaxis").prefetch_related(*prefetches)
 
 
 # ==============================================================================
@@ -375,13 +442,14 @@ class LinkCheckLogViewSet(viewsets.ReadOnlyModelViewSet):
         tags=["Plataformas - Administración"],
     ),
 )
-class PlatformViewSet(AuditableViewSet):
+class PlatformViewSet(ResourceImageMixin, AuditableViewSet):
     """
     CRUD y ciclo de vida administrativo de plataformas.
     """
 
     queryset = _with_public_link_logs(models.Platform.objects.all())
     serializer_class = serializers.PlatformSerializer
+    image_folder = "platforms"
 
     search_fields = [
         "name",
@@ -506,6 +574,35 @@ class PlatformViewSet(AuditableViewSet):
         )
 
     @extend_schema(
+        summary="Administrar imagen de plataforma",
+        description=(
+            "``POST`` sube una imagen JPEG, PNG, GIF o WebP a RustFS y la "
+            "asigna a ``url_image``; la imagen es opcional y la respuesta "
+            "incluye una URL pública permanente, sin expiración. "
+            "``DELETE`` quita la imagen. Si fue subida por este backend, "
+            "también se elimina de RustFS; las URLs externas solo se "
+            "desasocian."
+        ),
+        request=ImageUploadSerializer,
+        responses={
+            200: serializers.PlatformSerializer,
+            400: None,
+            503: None,
+        },
+        tags=["Plataformas - Administración"],
+    )
+    @action(
+        detail=True,
+        methods=["post", "delete"],
+        url_path="image",
+        parser_classes=[MultiPartParser, FormParser],
+    )
+    def image(self, request, pk=None):
+        if request.method == "DELETE":
+            return self._delete_resource_image(request)
+        return self._upload_resource_image(request)
+
+    @extend_schema(
         summary="Verificar enlace de plataforma",
         description=(
             "Verifica la URL pública de la plataforma y registra el "
@@ -596,19 +693,41 @@ class PlatformViewSet(AuditableViewSet):
         return Response(status=status.HTTP_204_NO_CONTENT)
 
     def _enqueue_link_run(self, request, mode):
-        run = models.LinkCheckRun.objects.create(
-            mode=mode, requested_by=get_acting_user(request),
-        )
-        try:
-            task = dispatch_link_checks.delay(run.pk)
-        except OperationalError:
-            logger.exception("No se pudo encolar ronda de enlaces: run=%s", run.pk)
+        idempotency_key = request.headers.get("Idempotency-Key", "").strip() or None
+        if idempotency_key and len(idempotency_key) > 255:
             return Response(
-                {"detail": "No se pudo confirmar el envío al broker.", "run_id": run.pk},
-                status=status.HTTP_503_SERVICE_UNAVAILABLE,
+                {"detail": "Idempotency-Key no puede superar 255 caracteres."},
+                status=status.HTTP_400_BAD_REQUEST,
             )
+
+        run, created = _get_or_create_link_check_run(
+            mode,
+            get_acting_user(request),
+            idempotency_key,
+        )
+        if idempotency_key and run.mode != mode:
+            return Response(
+                {"detail": "Idempotency-Key ya fue usado para otra operación."},
+                status=status.HTTP_409_CONFLICT,
+            )
+
+        if created:
+            try:
+                task = dispatch_link_checks.delay(run.pk)
+            except OperationalError:
+                logger.exception("No se pudo encolar ronda de enlaces: run=%s", run.pk)
+                return Response(
+                    {"detail": "No se pudo confirmar el envío al broker.", "run_id": run.pk},
+                    status=status.HTTP_503_SERVICE_UNAVAILABLE,
+                )
+            run.dispatch_task_id = task.id
+            run.save(update_fields=["dispatch_task_id"])
         return Response(
-            {"run_id": run.pk, "task_id": task.id, "mode": mode},
+            {
+                "run_id": run.pk,
+                "task_id": run.dispatch_task_id or None,
+                "mode": mode,
+            },
             status=status.HTTP_202_ACCEPTED,
         )
 
@@ -626,6 +745,10 @@ class PlatformViewSet(AuditableViewSet):
     @action(
         detail=False, methods=["post"], url_path="check-links-async",
         permission_classes=[LinkVerificationPermission],
+        authentication_classes=[
+            SchedulerTokenAuthentication,
+            CookieSessionAuthentication,
+        ],
     )
     def check_all_links_async(self, request):
         return self._enqueue_link_run(request, "all")
@@ -644,6 +767,10 @@ class PlatformViewSet(AuditableViewSet):
     @action(
         detail=False, methods=["post"], url_path="check-failed-links",
         permission_classes=[LinkVerificationPermission],
+        authentication_classes=[
+            SchedulerTokenAuthentication,
+            CookieSessionAuthentication,
+        ],
     )
     def check_failed_links(self, request):
         return self._enqueue_link_run(request, "failed")
@@ -737,17 +864,18 @@ class PlatformViewSet(AuditableViewSet):
     ),
 )
 class PlatformPublicViewSet(
-    viewsets.ReadOnlyModelViewSet
+    PublicReadCacheMixin,
+    viewsets.ReadOnlyModelViewSet,
 ):
     """
     Exploración pública de plataformas publicadas y no eliminadas.
     """
 
-    queryset = _with_public_link_logs(
+    queryset = _with_public_relations(_with_public_link_logs(
         models.Platform.objects.filter(
             status=models.Platform.Status.PUBLICADO,
         ).distinct()
-    )
+    ))
 
     serializer_class = serializers.PlatformPublicSerializer
 

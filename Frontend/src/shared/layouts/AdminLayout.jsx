@@ -1,8 +1,8 @@
 "use client";
 
-import React, { Suspense, useEffect, useState } from "react";
+import React, { Suspense, useCallback, useEffect, useState } from "react";
 import Link from "next/link";
-import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { useAccountsApi } from "@/shared/components/AccountsProvider";
 import { 
   LayoutGrid, 
@@ -11,7 +11,6 @@ import {
   Bell, 
   Clock, 
   Users, 
-  Trash2, 
   Cpu, 
   Tag, 
   MessageSquare, 
@@ -19,7 +18,11 @@ import {
   Menu, 
   X 
 } from "lucide-react";
-import { getLinkAlerts } from "@/features/admin/harvesting/harvesting";
+import { getLinkAlertsPage } from "@/features/admin/harvesting/harvesting";
+import { CONFIRMED_FAILURES_QUERY } from "@/features/admin/harvesting/linkMonitoring";
+import LinkAlertsMenu from "@/features/admin/harvesting/components/LinkAlertsMenu";
+
+const ALERT_POLL_MS = 2 * 60 * 1000;
 
 export default function AdminLayout({ children, userName = "Usuario" }) {
   return (
@@ -32,32 +35,44 @@ export default function AdminLayout({ children, userName = "Usuario" }) {
 function AdminLayoutContent({ children, userName }) {
   const accountsApi = useAccountsApi();
   const pathname = usePathname();
-  const searchParams = useSearchParams();
-  const presetsView = ["presets", "crear-preset", "editar-preset"].includes(searchParams.get("vista"));
   const router = useRouter();
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [signingOut, setSigningOut] = useState(false);
   const [sessionError, setSessionError] = useState("");
   const [alertCount, setAlertCount] = useState(0);
+  const [alertsOpen, setAlertsOpen] = useState(false);
+  const closeAlerts = useCallback(() => setAlertsOpen(false), []);
 
+  // Contador de caídas confirmadas vigentes (total_items de la primera página).
+  // Sondeo moderado, pausado mientras la pestaña está oculta.
   useEffect(() => {
     const controller = new AbortController();
-    let timer;
+    let timer = null;
     const loadAlerts = async () => {
       try {
-        const alerts = await getLinkAlerts({ current: "true", failure_confirmed: "true" }, controller.signal);
-        if (!controller.signal.aborted) setAlertCount(alerts.length);
+        const page = await getLinkAlertsPage(CONFIRMED_FAILURES_QUERY, { pageSize: 1 }, controller.signal);
+        if (!controller.signal.aborted) setAlertCount(page.total_items ?? page.results.length);
       } catch {
         // The notification bell is passive; a temporary API failure should not interrupt navigation.
-      } finally {
-        if (!controller.signal.aborted) timer = setTimeout(loadAlerts, 60000);
       }
     };
+    const schedule = () => {
+      clearInterval(timer);
+      timer = document.visibilityState === "visible" ? setInterval(loadAlerts, ALERT_POLL_MS) : null;
+    };
+    const onVisibility = () => {
+      if (document.visibilityState === "visible") loadAlerts();
+      schedule();
+    };
     loadAlerts();
-    return () => { controller.abort(); clearTimeout(timer); };
+    schedule();
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => {
+      controller.abort();
+      clearInterval(timer);
+      document.removeEventListener("visibilitychange", onVisibility);
+    };
   }, []);
-
-  const alertsHref = "/admin/alertas?current=true&failure_confirmed=true";
   
   // Cálculo dinámico de iniciales (De tu versión)
   const userInitials = userName.split(/\s+/).filter(Boolean).slice(0, 2).map((part) => part.charAt(0)).join("").toLocaleUpperCase("es");
@@ -77,14 +92,13 @@ function AdminLayoutContent({ children, userName }) {
     }
   }
 
-  // Mapeo de rutas fusionado (Tus rutas + Sintaxis válidas y Papelera)
+  // Mapeo de rutas administrativas
   const menuGroups = [
     {
       title: "DIRECTORIO",
       items: [
         { name: "Indicadores", href: "/admin/indicadores", icon: LayoutGrid },
         { name: "Recursos", href: "/admin/bases-de-datos", icon: Book },
-        { name: "Sintaxis válidas", href: "/admin/sintaxis-validas", icon: Book },
         { name: "Cosecha", href: "/admin/cosecha", icon: RefreshCw },
       ]
     },
@@ -92,9 +106,8 @@ function AdminLayoutContent({ children, userName }) {
       title: "GOBIERNO",
       items: [
         { name: "Bitácora", href: "/admin/bitacora", icon: Clock },
+        // Los presets de permisos se gestionan desde Administrativos.
         { name: "Administrativos", href: "/admin/usuarios", icon: Users },
-        { name: "Presets", href: "/admin/usuarios?vista=presets", icon: Users },
-        { name: "Papelera", href: "/admin/papelera", icon: Trash2 },
       ]
     },
     {
@@ -121,10 +134,10 @@ function AdminLayoutContent({ children, userName }) {
           </div>
         </div>
         <div className="flex items-center gap-1">
-          <Link href={alertsHref} aria-label={`Alertas de enlaces${alertCount ? `: ${alertCount} confirmadas` : ""}`} className="relative rounded-lg p-2 text-white hover:bg-white/10">
+          <button type="button" onClick={() => setAlertsOpen(true)} aria-haspopup="dialog" aria-label={`Alertas de enlaces${alertCount ? `: ${alertCount} confirmadas` : ""}`} className="relative rounded-lg p-2 text-white hover:bg-white/10">
             <Bell className="h-5 w-5" />
             {alertCount > 0 && <span className="absolute -right-0.5 -top-0.5 min-w-4 rounded-full bg-[#F59E0B] px-1 text-center text-[10px] leading-4 font-bold text-[#321B00]">{alertCount > 99 ? "99+" : alertCount}</span>}
-          </Link>
+          </button>
           <button
             onClick={() => setSidebarOpen(!sidebarOpen)}
             className="p-2 rounded-lg text-white hover:bg-white/10 focus:outline-none transition-colors"
@@ -163,9 +176,7 @@ function AdminLayoutContent({ children, userName }) {
                 {group.items.map((item) => {
                   const Icon = item.icon;
                   // Manejo de estado activo
-                  const isActive = item.name === "Presets" ? pathname === "/admin/usuarios" && presetsView
-                    : item.name === "Administrativos" ? pathname.startsWith(item.href) && !presetsView
-                    : pathname.startsWith(item.href);
+                  const isActive = pathname.startsWith(item.href);
 
                   return (
                     <Link
@@ -194,11 +205,11 @@ function AdminLayoutContent({ children, userName }) {
 
         {/* User Footer - Conservando tu lógica dinámica y accesibilidad pero con el color de texto oscuro */}
         <div className="shrink-0 p-4 mt-auto">
-          <Link href={alertsHref} onClick={() => setSidebarOpen(false)} className="mb-3 flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium text-white/85 transition-colors hover:bg-white/10 hover:text-white">
+          <button type="button" aria-haspopup="dialog" onClick={() => { setSidebarOpen(false); setAlertsOpen(true); }} className="mb-3 flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm font-medium text-white/85 transition-colors hover:bg-white/10 hover:text-white">
             <span className="relative inline-flex"><Bell className="h-4 w-4" />{alertCount > 0 && <span className="absolute -right-2 -top-2 h-2.5 w-2.5 rounded-full border border-[#7f1218] bg-[#F59E0B]" />}</span>
             <span>Alertas de enlaces</span>
             {alertCount > 0 && <span className="ml-auto rounded-full bg-[#F59E0B] px-2 py-0.5 text-xs font-bold text-[#321B00]">{alertCount > 99 ? "99+" : alertCount}</span>}
-          </Link>
+          </button>
           <button type="button" onClick={signOut} disabled={signingOut} aria-label={`Cerrar sesión de ${userName}`} className="w-full text-left disabled:opacity-60">
             <div className="flex items-center justify-between p-3 rounded-xl bg-white/10 hover:bg-white/15 transition-colors cursor-pointer group">
               <div className="min-w-0 flex items-center gap-3">
@@ -226,6 +237,8 @@ function AdminLayoutContent({ children, userName }) {
           className="fixed inset-0 bg-black/40 z-40 md:hidden backdrop-blur-sm"
         />
       )}
+
+      <LinkAlertsMenu open={alertsOpen} onClose={closeAlerts} />
 
       {/* Main Content Area */}
       <main className="flex-1 min-w-0 p-4 md:p-8 w-full max-w-7xl mx-auto">

@@ -18,7 +18,14 @@ services:
   rabbitmq:
     <<: *service
     build: ./RabbitMQ
+    user: rabbitmq
     env_file: ./RabbitMQ/.env
+    healthcheck: 
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 30s
     cap_add:
       - SETGID
       - SETUID
@@ -29,6 +36,12 @@ services:
     <<: *service
     build: ./Backend
     image: harvest-backend
+    pull_policy: never
+    depends_on:
+      rustfs-init:
+        condition: service_completed_successfully
+      rabbitmq:
+        condition: service_healthy
     env_file: ./Backend/.env
     environment:
       DJANGO_DEBUG: ${DJANGO_DEBUG:-0}
@@ -37,20 +50,25 @@ services:
 
   worker:
     <<: *service
-    build: ./Backend
     image: harvest-backend
+    pull_policy: never
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
     env_file: ./Backend/.env
     command: ["celery", "-A", "project", "worker",
               "--loglevel=INFO", "--queues=harvesting", "--concurrency=2"]
 
-  cron:
+  beat:
     <<: *service
-    build: ./Cron
-    env_file: ./Cron/.env
-    cap_drop: []
-    cap_add:
-      - SETUID
-      - SETGID
+    image: harvest-backend
+    pull_policy: never
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+    env_file: ./Backend/.env
+    command: ["celery", "-A", "project", "beat", "--loglevel=INFO",
+              "--schedule=/tmp/celerybeat-schedule"]
 
   frontend:
     <<: *service
@@ -65,9 +83,52 @@ services:
     ports:
       - "127.0.0.1:3000:3000"
 
+  rustfs:
+    <<: *service
+    image: rustfs/rustfs:latest
+    ports:
+      - "127.0.0.1:9000:9000"
+      - "127.0.0.1:9001:9001"
+    volumes:
+      - rustfs-data:/data
+      - rustfs-logs:/var/log/rustfs/
+    env_file:
+      - ./RustFS/.env
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:9000/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+    environment:
+      RUSTFS_ADDRESS: ":9000"
+      RUSTFS_CONSOLE_ADDRESS: ":9001"
+      RUSTFS_CONSOLE_ENABLE: "true"
+      RUSTFS_OBS_LOGGER_LEVEL: "error"
+      RUSTFS_OBS_LOG_DIRECTORY: "/var/log/rustfs/"
+    command: /data
+
+  rustfs-init:
+    <<: *service
+    image: rustfs/rc:latest
+    restart: "no"
+    depends_on:
+      rustfs:
+        condition: service_healthy
+    env_file:
+      - ./RustFS/.env
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        rc alias set local http://rustfs:9000 "$$RUSTFS_ACCESS_KEY" "$$RUSTFS_SECRET_KEY" --region us-east-1 --bucket-lookup path
+        rc bucket create local/imagenes --ignore-existing
+        rc anonymous set download local/imagenes
+
 networks:
   services:
     driver: bridge
 
 volumes:
   rabbitmq_data:
+  rustfs-data:
+  rustfs-logs:

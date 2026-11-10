@@ -2,9 +2,12 @@ from dataclasses import dataclass
 from datetime import date, time
 from typing import Any
 
+from rest_framework import serializers
+
 from .models import AuditableModel
 
 from .relations import sync_auditable_relations
+from .storage import ImageStorageError, validate_uploaded_image
 
 
 @dataclass(frozen=True)
@@ -290,3 +293,22 @@ class SoftDeleteRelationSyncMixin:
             ]
 
         return representation
+
+
+class ImageUploadSerializer(serializers.Serializer):
+    """Entrada multipart para subir una imagen a RustFS."""
+
+    image = serializers.FileField(
+        write_only=True,
+        help_text=(
+            "Archivo de imagen JPEG, PNG, GIF o WebP. "
+            "El campo es opcional en las fichas de Platform y Journal."
+        ),
+    )
+
+    def validate_image(self, value):
+        try:
+            validate_uploaded_image(value)
+        except ImageStorageError as error:
+            raise serializers.ValidationError(error.message) from error
+        return value

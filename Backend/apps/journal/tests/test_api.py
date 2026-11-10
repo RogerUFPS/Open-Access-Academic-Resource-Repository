@@ -1,9 +1,12 @@
 from typing import Any
+from unittest.mock import patch
 
+from django.core.files.uploadedfile import SimpleUploadedFile
 from django.utils import timezone
 from rest_framework.test import APITestCase
 
 from apps.account.models import User
+from apps.core.storage import StoredImage
 from apps.catalog.models import (
     AcademicProgram,
     Country,
@@ -146,7 +149,8 @@ class JournalAPITests(APITestCase):
 
     def _complete_for_publication(self, journal):
         journal.publication_date = "2020-01-01"
-        journal.save(update_fields=["publication_date"])
+        journal.url_image = "https://example.org/journal.png"
+        journal.save(update_fields=["publication_date", "url_image"])
         specs = (
             (models.SharedJournalLanguage, "language", self.language),
             (models.SharedJournalCountry, "country", self.country),
@@ -160,11 +164,18 @@ class JournalAPITests(APITestCase):
             defaults = {"created_by": self.system}
             if through is models.SharedJournalKnowledgeArea:
                 defaults["is_derived"] = True
-            through.objects.get_or_create(
+            relation, _ = through.objects.get_or_create(
                 journal=journal,
                 **{field: value},
                 defaults=defaults,
             )
+            if through is models.SharedJournalPlatform:
+                platform_models.LinkCheckLog.objects.create(
+                    platform=self.platform,
+                    journal_platform=relation,
+                    url=f"https://example.org/journal/{journal.pk}",
+                    created_by=self.system,
+                )
 
     # ==========================================================================
     # CRUD ADMINISTRATIVO
@@ -220,6 +231,88 @@ class JournalAPITests(APITestCase):
         self.assertFalse(data["active"])
         self.assertIsNone(data["validated_by"])
         self.assertIsNone(data["validated_at"])
+
+    @patch("apps.core.viewsets.upload_image")
+    def test_upload_image_action_sets_permanent_url(self, upload_image):
+        journal = self._create_journal(
+            issn="5555-5555",
+            title="Journal with image",
+        )
+        upload_image.return_value = StoredImage(
+            key="journals/logo.png",
+            url="http://localhost:9000/imagenes/journals/logo.png",
+            content_type="image/png",
+            size=40,
+        )
+
+        response = self.client.post(
+            f"/api/journals/{journal.pk}/image/",
+            {
+                "image": SimpleUploadedFile(
+                    "logo.png",
+                    b"\x89PNG\r\n\x1a\n" + (b"\x00" * 32),
+                    content_type="image/png",
+                )
+            },
+            format="multipart",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            response.data["url_image"],
+            "http://localhost:9000/imagenes/journals/logo.png",
+        )
+
+        journal.refresh_from_db()
+        self.assertEqual(
+            journal.url_image,
+            "http://localhost:9000/imagenes/journals/logo.png",
+        )
+        self.assertEqual(journal.updated_by_id, self.system.pk)
+
+    def test_changing_journal_image_url_clears_outdated_thumbnail(self):
+        journal = self._create_journal(
+            issn="5555-5557",
+            title="Journal with replaceable image",
+        )
+        journal.url_image = "https://example.org/old.png"
+        journal.url_image_thumbnail = "https://example.org/old.thumbnail.webp"
+        journal.save(update_fields=["url_image", "url_image_thumbnail"])
+
+        response = self.client.patch(
+            f"/api/journals/{journal.pk}/",
+            {"url_image": "https://example.org/new.png"},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIsNone(response.data["url_image_thumbnail"])
+        journal.refresh_from_db()
+        self.assertIsNone(journal.url_image_thumbnail)
+
+    @patch("apps.core.viewsets.delete_image_by_url")
+    def test_delete_image_action_clears_url(self, delete_image_by_url):
+        journal = self._create_journal(
+            issn="5555-5556",
+            title="Journal without image",
+        )
+        journal.url_image = (
+            "http://localhost:9000/imagenes/journals/logo.png"
+        )
+        journal.save(update_fields=["url_image"])
+
+        response = self.client.delete(
+            f"/api/journals/{journal.pk}/image/",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIsNone(response.data["url_image"])
+
+        journal.refresh_from_db()
+        self.assertIsNone(journal.url_image)
+        delete_image_by_url.assert_called_once_with(
+            "http://localhost:9000/imagenes/journals/logo.png"
+        )
 
     def test_create_cannot_publish_with_read_only_fields(self):
         response = self.client.post(
@@ -286,15 +379,17 @@ class JournalAPITests(APITestCase):
         data = self._get_data(response)
 
         self.assertEqual(response.status_code, 201)
+        # El área enviada manualmente se ignora; solo se deriva la que
+        # corresponde al programa académico.
         self.assertEqual(
             {item["id"] for item in data["knowledge_areas"]},
-            {self.knowledge_area.pk, manual_area.pk},
+            {self.knowledge_area.pk},
         )
         by_id = {item["id"]: item for item in data["knowledge_areas"]}
         self.assertTrue(by_id[self.knowledge_area.pk]["is_derived"])
+        self.assertFalse(by_id[self.knowledge_area.pk]["is_manual"])
         self.assertFalse(by_id[self.knowledge_area.pk]["editable"])
-        self.assertTrue(by_id[manual_area.pk]["is_manual"])
-        self.assertTrue(by_id[manual_area.pk]["editable"])
+        self.assertNotIn(manual_area.pk, by_id)
 
     def test_create_journal_endpoint_allows_draft_platform(self):
         draft_platform = Platform.objects.create(

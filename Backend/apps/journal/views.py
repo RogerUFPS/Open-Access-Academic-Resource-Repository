@@ -11,11 +11,15 @@ from drf_spectacular.utils import (
 from rest_framework import serializers as drf_serializers
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
+from rest_framework.parsers import FormParser, MultiPartParser
 from rest_framework.response import Response
 
+from apps.core.serializers import ImageUploadSerializer
 from apps.core.viewsets import (
     AuditableViewSet,
     DeleteSerializer,
+    PublicReadCacheMixin,
+    ResourceImageMixin,
     get_acting_user,
 )
 
@@ -83,6 +87,35 @@ def _with_platform_urls(queryset, *, published_only=False):
             to_attr="_url_platform_links",
         )
     )
+
+
+def _with_public_relations(queryset):
+    relation_specs = (
+        ("language_links", models.SharedJournalLanguage, "language"),
+        ("country_links", models.SharedJournalCountry, "country"),
+        ("knowledge_area_links", models.SharedJournalKnowledgeArea, "knowledge_area"),
+        ("material_type_links", models.SharedJournalMaterialType, "material_type"),
+        ("academic_program_links", models.SharedJournalAcademicProgram, "academic_program"),
+        ("license_links", models.SharedJournalLicense, "license"),
+    )
+    prefetches = []
+    for relation_name, through_model, relation_field in relation_specs:
+        queryset_for_relation = through_model.objects.select_related(relation_field)
+        if relation_name != "license_links":
+            queryset_for_relation = queryset_for_relation.filter(
+                **{f"{relation_field}__deleted_at__isnull": True}
+            )
+        queryset_for_relation = queryset_for_relation.order_by(
+            f"{relation_field}__name"
+        )
+        prefetches.append(
+            Prefetch(
+                relation_name,
+                queryset=queryset_for_relation,
+                to_attr=f"_public_{relation_name}",
+            )
+        )
+    return queryset.prefetch_related(*prefetches)
 
 
 @extend_schema_view(
@@ -169,7 +202,7 @@ def _with_platform_urls(queryset, *, published_only=False):
         tags=["Revistas - Administración"],
     ),
 )
-class JournalViewSet(AuditableViewSet):
+class JournalViewSet(ResourceImageMixin, AuditableViewSet):
     """
     CRUD administrativo y ciclo de validación
     de revistas académicas.
@@ -178,6 +211,7 @@ class JournalViewSet(AuditableViewSet):
     queryset = _with_platform_urls(models.Journal.objects.all())
 
     serializer_class = serializers.JournalSerializer
+    image_folder = "journals"
 
     search_fields = [
         "title",
@@ -244,28 +278,6 @@ class JournalViewSet(AuditableViewSet):
         now = timezone.now()
         body = serializers.JournalPublishSerializer(data=request.data)
         body.is_valid(raise_exception=True)
-
-        if "licenses" in body.validated_data:
-            selected = {item.pk for item in body.validated_data["licenses"]}
-            existing = {
-                link.license_id: link
-                for link in models.SharedJournalLicense.all_objects.filter(journal=journal)
-            }
-            for license_id, link in existing.items():
-                if license_id in selected:
-                    if link.is_deleted:
-                        link.restore()
-                elif not link.is_deleted:
-                    link.soft_delete(
-                        user=user,
-                        explanation="Licencia retirada durante la publicación.",
-                    )
-            for license_id in selected - existing.keys():
-                models.SharedJournalLicense.objects.create(
-                    journal=journal,
-                    license_id=license_id,
-                    created_by=user,
-                )
 
         services.validate_journal_for_publication(journal)
 
@@ -369,6 +381,35 @@ class JournalViewSet(AuditableViewSet):
         )
 
     @extend_schema(
+        summary="Administrar imagen de revista",
+        description=(
+            "``POST`` sube una imagen JPEG, PNG, GIF o WebP a RustFS y la "
+            "asigna a ``url_image``; la imagen es opcional y la respuesta "
+            "incluye una URL pública permanente, sin expiración. "
+            "``DELETE`` quita la imagen. Si fue subida por este backend, "
+            "también se elimina de RustFS; las URLs externas solo se "
+            "desasocian."
+        ),
+        request=ImageUploadSerializer,
+        responses={
+            200: serializers.JournalSerializer,
+            400: None,
+            503: None,
+        },
+        tags=["Revistas - Administración"],
+    )
+    @action(
+        detail=True,
+        methods=["post", "delete"],
+        url_path="image",
+        parser_classes=[MultiPartParser, FormParser],
+    )
+    def image(self, request, pk=None):
+        if request.method == "DELETE":
+            return self._delete_resource_image(request)
+        return self._upload_resource_image(request)
+
+    @extend_schema(
         summary="Restaurar revista eliminada",
         description=(
             "Restaura una revista eliminada mediante Soft Delete. "
@@ -456,13 +497,14 @@ class JournalViewSet(AuditableViewSet):
     ),
 )
 class JournalPublicViewSet(
+    PublicReadCacheMixin,
     viewsets.ReadOnlyModelViewSet
 ):
     """
     Exploración pública de revistas activas y validadas.
     """
 
-    queryset = _with_platform_urls((
+    queryset = _with_public_relations(_with_platform_urls((
         models.Journal.objects
         .filter(
             active=True,
@@ -472,7 +514,7 @@ class JournalPublicViewSet(
             "editorial"
         )
         .distinct()
-    ), published_only=True)
+    ), published_only=True))
 
     serializer_class = (
         serializers.JournalPublicSerializer

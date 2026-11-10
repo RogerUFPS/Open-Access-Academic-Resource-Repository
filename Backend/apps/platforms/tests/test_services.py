@@ -149,6 +149,23 @@ class PlatformServicesTests(TestCase):
             published.validated_at,
         )
 
+    def test_platform_can_be_published_without_academic_classification(self):
+        """Los programas y áreas no son obligatorios para publicar."""
+        platform = self._setup_complete_platform()
+        models.SharedPlatformAcademicProgram.objects.filter(
+            platform=platform,
+        ).delete()
+        models.SharedPlatformKnowledgeArea.objects.filter(
+            platform=platform,
+        ).delete()
+
+        published = services.publish_platform(
+            platform=platform,
+            user=self.system,
+        )
+
+        self.assertEqual(published.status, models.Platform.Status.PUBLICADO)
+
     def test_non_harvestable_platform_can_be_published_without_api_url(self):
         platform = self._setup_complete_platform()
         platform.is_harvestable = False
@@ -161,6 +178,16 @@ class PlatformServicesTests(TestCase):
         )
 
         self.assertEqual(published.status, models.Platform.Status.PUBLICADO)
+
+    def test_platform_cannot_be_published_without_image(self):
+        platform = self._setup_complete_platform()
+        platform.url_image = None
+        platform.save(update_fields=["url_image"])
+
+        with self.assertRaises(ValidationError) as context:
+            services.publish_platform(platform=platform, user=self.system)
+
+        self.assertIn("url_image", context.exception.detail)
 
     def test_harvestable_platform_cannot_be_published_without_api_url(self):
         platform = self._setup_complete_platform()
@@ -207,6 +234,16 @@ class PlatformServicesTests(TestCase):
 
         self.assertIn(
             "institutions",
+            errors,
+        )
+
+        # La clasificación académica es opcional para publicar.
+        self.assertNotIn(
+            "academic_programs",
+            errors,
+        )
+        self.assertNotIn(
+            "knowledge_areas",
             errors,
         )
 

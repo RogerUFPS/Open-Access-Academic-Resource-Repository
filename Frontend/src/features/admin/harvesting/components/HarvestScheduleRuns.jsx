@@ -3,13 +3,15 @@
 import { useEffect, useRef, useState } from "react";
 import Button from "@/shared/components/Button";
 import Notice from "@/shared/components/Notice";
-import { getScheduleHarvests, IMMEDIATE_HARVEST_ENABLED } from "@/features/admin/harvesting/harvesting";
+import { getScheduleHarvests, IMMEDIATE_HARVEST_ENABLED, SCHEDULE_HARVESTS_PAGE_SIZE } from "@/features/admin/harvesting/harvesting";
+import { isMissingPage, readPage } from "@/shared/utils/pagination";
 import HarvestExecutions from "./HarvestExecutions";
 import { useHarvestingApi } from "./HarvestingProvider";
 
 export default function HarvestScheduleRuns({ scheduleId, revision, busy }) {
   const { runDueSchedules } = useHarvestingApi();
-  const [rows, setRows] = useState(null);
+  const [listing, setListing] = useState(null);
+  const [page, setPage] = useState(1);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [refreshCount, setRefreshCount] = useState(0);
@@ -24,22 +26,30 @@ export default function HarvestScheduleRuns({ scheduleId, revision, busy }) {
       if (fetching) return;
       fetching = true;
       try {
-        const harvests = await getScheduleHarvests(scheduleId, controller.signal);
+        // Solo la página visible; el sondeo no descarga todo el historial.
+        const response = await getScheduleHarvests(scheduleId, page, controller.signal);
         if (!controller.signal.aborted) {
-          setRows(harvests);
+          setListing(readPage(response, SCHEDULE_HARVESTS_PAGE_SIZE));
           setError("");
         }
       } catch (error) {
-        if (!controller.signal.aborted) setError(error.message);
+        if (controller.signal.aborted) return;
+        if (isMissingPage(error, page)) setPage(1);
+        else setError(error.message);
       } finally {
         fetching = false;
         if (!controller.signal.aborted) setLoading(false);
       }
     }
     load();
-    const timer = setInterval(() => { if (!document.hidden) load(); }, 5000);
+    const timer = setInterval(() => { if (!document.hidden) load(); }, 5 * 60 * 1000);
     return () => { controller.abort(); clearInterval(timer); };
-  }, [scheduleId, revision, refreshCount]);
+  }, [scheduleId, revision, refreshCount, page]);
+
+  function changePage(nextPage) {
+    setLoading(true);
+    setPage(Math.max(1, nextPage));
+  }
 
   function refresh() {
     setLoading(true);
@@ -69,12 +79,17 @@ export default function HarvestScheduleRuns({ scheduleId, revision, busy }) {
         <h2 id="created-runs-title" className="text-[21px] leading-7 font-semibold min-[541px]:text-2xl min-[541px]:leading-8">Ejecuciones de la programación #{scheduleId}</h2>
         <Button variant="quiet" size="small" disabled={!IMMEDIATE_HARVEST_ENABLED || loading || busy || executing} title={IMMEDIATE_HARVEST_ENABLED ? undefined : "Disponible en un próximo sprint"} onClick={updateExecutions}>{executing ? "Ejecutando…" : "Actualizar ejecuciones"}</Button>
       </div>
-      <p className="text-xs text-[#68707C]">Estado actualizado cada 5 segundos. Aquí se muestran únicamente las ejecuciones de esta programación.</p>
+      <p className="text-xs text-[#68707C]">Estado actualizado cada 5 minutos. También se actualiza inmediatamente al cambiar ejecuciones o al solicitar una ejecución manual.</p>
       {IMMEDIATE_HARVEST_ENABLED && <p className="text-xs text-[#68707C]">Actualizar ejecuciones inicia todas las programaciones vencidas, incluidas las de otras cosechas, y después consulta su estado.</p>}
       {executionFeedback && <Notice variant={executionFeedback.variant} live>{executionFeedback.message}</Notice>}
       {loading && <Notice live>Cargando ejecuciones…</Notice>}
       {error && <Notice variant="error" live>{error}</Notice>}
-      {rows && <HarvestExecutions rows={rows} onRefresh={refresh} busy={loading || Boolean(error)} caption={`Ejecuciones de la programación ${scheduleId}`} />}
+      {listing && <HarvestExecutions rows={listing.results} onRefresh={refresh} busy={loading || Boolean(error)} caption={`Ejecuciones de la programación ${scheduleId}`} />}
+      {listing && listing.totalPages > 1 && <div className="flex flex-wrap items-center gap-3">
+        <Button variant="quiet" size="small" disabled={loading || page <= 1} onClick={() => changePage(page - 1)}>Anterior</Button>
+        <span className="text-sm text-[#68707C]">Página {Math.min(page, listing.totalPages)} de {listing.totalPages} · {listing.totalItems} ejecuciones</span>
+        <Button variant="quiet" size="small" disabled={loading || page >= listing.totalPages} onClick={() => changePage(page + 1)}>Siguiente</Button>
+      </div>}
     </section>
   );
 }

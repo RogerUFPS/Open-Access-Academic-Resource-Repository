@@ -34,7 +34,6 @@ export async function fetchPublicApi(path, params = {}, signal) {
     const timeoutSignal = AbortSignal.timeout(requestTimeoutMs);
     response = await fetch(url, {
       headers: { Accept: "application/json" },
-      cache: "no-store",
       signal: signal ? AbortSignal.any([signal, timeoutSignal]) : timeoutSignal,
     });
   } catch (error) {

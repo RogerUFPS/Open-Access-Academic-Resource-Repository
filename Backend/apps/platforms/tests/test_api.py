@@ -2,11 +2,15 @@ from datetime import timedelta
 from typing import Any, cast
 from unittest.mock import patch
 
+from django.core.files.uploadedfile import SimpleUploadedFile
+from django.db import connection
+from django.test.utils import CaptureQueriesContext
 from django.utils import timezone
 from rest_framework.response import Response
 from rest_framework.test import APITestCase
 
 from apps.account.models import User
+from apps.core.storage import StoredImage
 from apps.catalog.models import (
     AcademicProgram,
     Country,
@@ -213,6 +217,124 @@ class PlatformAPITests(APITestCase):
                 journal_platform__isnull=True,
                 url="https://8.8.8.8/scopus",
             ).exists()
+        )
+
+    @patch("apps.core.viewsets.upload_image")
+    def test_upload_image_action_sets_permanent_url(self, upload_image):
+        platform = models.Platform.objects.create(
+            name="Plataforma con imagen",
+            created_by=self.system,
+        )
+        upload_image.return_value = StoredImage(
+            key="platforms/logo.png",
+            url="http://localhost:9000/imagenes/platforms/logo.png",
+            content_type="image/png",
+            size=40,
+            thumbnail_key="platforms/logo.thumbnail.webp",
+            thumbnail_url="http://localhost:9000/imagenes/platforms/logo.thumbnail.webp",
+        )
+
+        response = self.client.post(
+            f"/api/platforms/{platform.pk}/image/",
+            {
+                "image": SimpleUploadedFile(
+                    "logo.png",
+                    b"\x89PNG\r\n\x1a\n" + (b"\x00" * 32),
+                    content_type="image/png",
+                )
+            },
+            format="multipart",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            response.data["url_image"],
+            "http://localhost:9000/imagenes/platforms/logo.png",
+        )
+        self.assertEqual(
+            response.data["url_image_thumbnail"],
+            "http://localhost:9000/imagenes/platforms/logo.thumbnail.webp",
+        )
+
+        platform.refresh_from_db()
+        self.assertEqual(
+            platform.url_image,
+            "http://localhost:9000/imagenes/platforms/logo.png",
+        )
+        self.assertEqual(platform.updated_by_id, self.system.pk)
+
+    def test_changing_platform_image_url_clears_outdated_thumbnail(self):
+        platform = models.Platform.objects.create(
+            name="Plataforma URL actualizable",
+            url_image="https://example.org/old.png",
+            url_image_thumbnail="https://example.org/old.thumbnail.webp",
+            created_by=self.system,
+        )
+        response = self.client.patch(
+            f"/api/platforms/{platform.pk}/",
+            {"url_image": "https://example.org/new.png"},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIsNone(response.data["url_image_thumbnail"])
+        platform.refresh_from_db()
+        self.assertIsNone(platform.url_image_thumbnail)
+
+    def test_public_platform_relations_are_prefetched_per_page(self):
+        first = self._setup_complete_platform("Public query count one")
+        second = self._setup_complete_platform("Public query count two")
+        services.publish_platform(platform=first, user=self.system)
+        services.publish_platform(platform=second, user=self.system)
+
+        with CaptureQueriesContext(connection) as one_item_queries:
+            one_item_response = self.client.get(
+                "/api/platforms/public/",
+                {"page_size": 1},
+            )
+        with CaptureQueriesContext(connection) as two_item_queries:
+            two_item_response = self.client.get(
+                "/api/platforms/public/",
+                {"page_size": 2},
+            )
+
+        self.assertEqual(one_item_response.status_code, 200)
+        self.assertEqual(two_item_response.status_code, 200)
+        self.assertEqual(len(one_item_queries), len(two_item_queries))
+
+    def test_public_platform_list_has_shared_cache_policy_for_anonymous_requests(self):
+        self.client.force_authenticate(user=None)
+        response = self.client.get("/api/platforms/public/")
+        self.assertEqual(response.status_code, 200)
+        cache_control = response.headers["Cache-Control"]
+        self.assertIn("public", cache_control)
+        self.assertIn("max-age=0", cache_control)
+        self.assertIn("s-maxage=300", cache_control)
+
+    def test_public_platform_list_is_not_shared_cached_for_authenticated_requests(self):
+        response = self.client.get("/api/platforms/public/")
+        self.assertEqual(response.status_code, 200)
+        self.assertNotIn("s-maxage=300", response.headers.get("Cache-Control", ""))
+
+    @patch("apps.core.viewsets.delete_image_by_url")
+    def test_delete_image_action_clears_url(self, delete_image_by_url):
+        platform = models.Platform.objects.create(
+            name="Plataforma sin imagen",
+            url_image="http://localhost:9000/imagenes/platforms/logo.png",
+            created_by=self.system,
+        )
+
+        response = self.client.delete(
+            f"/api/platforms/{platform.pk}/image/",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIsNone(response.data["url_image"])
+
+        platform.refresh_from_db()
+        self.assertIsNone(platform.url_image)
+        delete_image_by_url.assert_called_once_with(
+            "http://localhost:9000/imagenes/platforms/logo.png"
         )
 
     def test_create_platform_defaults_to_not_harvestable(self):

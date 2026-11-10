@@ -1,4 +1,7 @@
-import { apiClient } from "@/shared/services/apiClient";
+import { apiClient, deleteMultipart, uploadMultipart } from "@/shared/services/apiClient";
+import { extractResults, fetchAllPages } from "@/shared/services/catalogService";
+
+const LINK_CHECK_LOGS_ENDPOINT = "/api/platforms/link-check-logs/";
 
 const FORBIDDEN_FIELDS = [
   "status",
@@ -13,6 +16,8 @@ const FORBIDDEN_FIELDS = [
   "deleted_by",
   "deleted_at",
   "encrypted_api_key",
+  // Solo lectura: el backend deriva las áreas de los programas académicos.
+  "knowledge_areas",
 ];
 
 function sanitizePayload(data) {
@@ -55,14 +60,31 @@ export const platformService = {
 
   /**
    * Create a new platform (POST /api/platforms/)
-   * Regla de negocio: La creación crea un registro en borrador y solo envía
-   * los datos mínimos necesarios (name y public_url).
+   * Regla de negocio: La creación crea un registro en borrador y conserva
+   * los campos administrativos admitidos por el formulario.
    */
   createPlatform: async (data) => {
     const payload = {
       name: data?.name ? String(data.name).trim() : "",
       public_url: data?.public_url ? String(data.public_url).trim() : "",
     };
+    const editableFields = [
+      "is_harvestable",
+      "base_api_url",
+      "api_key",
+      "url_image",
+      "requires_registration",
+      "has_access_text",
+      "valid_sintaxis",
+      "institutions",
+      "languages",
+      "countries",
+      "material_types",
+      "academic_programs",
+    ];
+    editableFields.forEach((field) => {
+      if (data?.[field] !== undefined) payload[field] = data[field];
+    });
     return apiClient.post("/api/platforms/", payload);
   },
 
@@ -132,48 +154,52 @@ export const platformService = {
   /**
    * Get valid syntax options (GET /api/platforms/valid-sintaxis/)
    */
-  getValidSintaxis: async () => {
-    try {
-      const res = await apiClient.get("/api/platforms/valid-sintaxis/");
-      return Array.isArray(res) ? res : res.results || [];
-    } catch {
-      return [
-        { id: 1, name: "AND, OR, NOT; comillas; filtros por año y colección" },
-        { id: 2, name: "OAI-PMH / Dublin Core" },
-        { id: 3, name: "REST API / JSON Search Syntax" },
-      ];
-    }
-  },
+  // Recorre todas las páginas: el selector no debe truncarse a las primeras 100.
+  getValidSintaxis: async () => fetchAllPages("/api/platforms/valid-sintaxis/"),
 
-  getValidSintaxisList: async () => {
-    const response = await apiClient.get("/api/platforms/valid-sintaxis/");
-    return Array.isArray(response) ? response : response.results || [];
-  },
+  getValidSintaxisList: async () => fetchAllPages("/api/platforms/valid-sintaxis/"),
+  getValidSintaxisById: async (id) =>
+    apiClient.get(`/api/platforms/valid-sintaxis/${id}/`),
   createValidSintaxis: async (data) => apiClient.post("/api/platforms/valid-sintaxis/", data),
   updateValidSintaxis: async (id, data) => apiClient.patch(`/api/platforms/valid-sintaxis/${id}/`, data),
-  deleteValidSintaxis: async (id) => apiClient.delete(`/api/platforms/valid-sintaxis/${id}/`),
+  deleteValidSintaxis: async (id, deleteExplanation = "") => apiClient.delete(
+    `/api/platforms/valid-sintaxis/${id}/`,
+    deleteExplanation ? { delete_explanation: deleteExplanation } : null
+  ),
   findSimilarSintaxis: async (data) => apiClient.post("/api/platforms/valid-sintaxis/similar/", data),
+  uploadPlatformImage: async (id, file) =>
+    uploadMultipart(`/api/platforms/${id}/image/`, "image", file),
+  deletePlatformImage: async (id) =>
+    deleteMultipart(`/api/platforms/${id}/image/`),
 
   /**
-   * Get link check logs history (GET /api/platforms/link-check-logs/)
+   * Estado vigente de la URL general de una plataforma:
+   * GET /api/platforms/link-check-logs/?platform={id}&current=true&journal_platform__isnull=true
+   * Devuelve el LinkCheckLog vigente o null si aún no hay registro.
    */
-  getLinkCheckLogs: async (params = {}) => {
-    try {
-      return await apiClient.get("/api/platforms/link-check-logs/", params);
-    } catch {
-      return { results: [] };
-    }
+  getCurrentPlatformLinkLog: async (id) => {
+    const response = await apiClient.get(LINK_CHECK_LOGS_ENDPOINT, {
+      platform: id,
+      current: "true",
+      journal_platform__isnull: "true",
+      page_size: 1,
+    });
+    return extractResults(response)[0] || null;
   },
+
+  /**
+   * Historial completo (vigente y sustituido) de la URL general de una
+   * plataforma, recorriendo todas las páginas. Excluye los enlaces de revistas.
+   */
+  getPlatformLinkHistory: async (id) =>
+    fetchAllPages(LINK_CHECK_LOGS_ENDPOINT, { platform: id, journal_platform__isnull: "true" }),
 
   /**
    * Helper to load catalog list safely from /api/catalog/{resource}/
    */
   getCatalogData: async (endpoint, fallback = []) => {
     try {
-      const res = await apiClient.get(endpoint);
-      if (Array.isArray(res)) return res;
-      if (res && Array.isArray(res.results)) return res.results;
-      return fallback;
+      return await fetchAllPages(endpoint);
     } catch {
       return fallback;
     }
@@ -183,8 +209,12 @@ export const platformService = {
    * Load catalog options from /api/catalog/ endpoints
    */
   loadFormCatalogs: async () => {
-    const [sintaxis, institutions, languages, countries, materialTypes, academicPrograms] = await Promise.all([
-      platformService.getValidSintaxis(),
+    const sintaxisResult = await platformService.getValidSintaxis().then(
+      (sintaxis) => ({ sintaxis: Array.isArray(sintaxis) ? sintaxis : sintaxis.results || [] }),
+      (error) => ({ sintaxis: [], sintaxisError: error })
+    );
+    const [sintaxis, institutions, languages, countries, materialTypes] = await Promise.all([
+      Promise.resolve(sintaxisResult.sintaxis),
       platformService.getCatalogData("/api/catalog/institutions/", [
         { id: 1, name: "SciELO Network" },
         { id: 2, name: "Universidad Francisco de Paula Santander" },
@@ -205,21 +235,15 @@ export const platformService = {
         { id: 2, name: "Libros y Monografías" },
         { id: 3, name: "Tesis y Disertaciones" },
       ]),
-      platformService.getCatalogData("/api/catalog/academic-programs/", [
-        { id: 1, name: "Ingeniería de Sistemas" },
-        { id: 2, name: "Ingeniería Industrial" },
-        { id: 3, name: "Medicina" },
-        { id: 4, name: "Todos los programas" },
-      ]),
     ]);
 
     return {
       sintaxis: Array.isArray(sintaxis) ? sintaxis : sintaxis.results || [],
+      sintaxisError: sintaxisResult.sintaxisError || null,
       institutions,
       languages,
       countries,
       materialTypes,
-      academicPrograms,
     };
   },
 };

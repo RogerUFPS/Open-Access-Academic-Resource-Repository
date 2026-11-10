@@ -1,5 +1,6 @@
 import os
 
+from celery.schedules import crontab
 from dotenv import load_dotenv
 
 from .base import *
@@ -54,9 +55,29 @@ CELERY_TASK_IGNORE_RESULT = True
 CELERY_TASK_ACKS_LATE = True
 CELERY_TASK_REJECT_ON_WORKER_LOST = True
 CELERY_WORKER_PREFETCH_MULTIPLIER = 1
+CELERY_ENABLE_UTC = True
+CELERY_TIMEZONE = "UTC"
+CELERY_BEAT_SCHEDULE = {
+    "harvesting-run-due-every-5m": {
+        "task": "apps.scheduler.tasks.dispatch_http_job",
+        "schedule": crontab(minute="*/5"),
+        "kwargs": {"job": "harvesting_due"},
+    },
+    "platforms-check-links-every-4h": {
+        "task": "apps.scheduler.tasks.dispatch_http_job",
+        "schedule": crontab(minute=0, hour="*/4"),
+        "kwargs": {"job": "check_links"},
+    },
+    "platforms-check-failed-links-every-15m": {
+        "task": "apps.scheduler.tasks.dispatch_http_job",
+        "schedule": crontab(minute="*/15"),
+        "kwargs": {"job": "check_failed_links"},
+    },
+}
+SCHEDULER_API_URL = os.getenv("SCHEDULER_API_URL", "http://backend:8000")
+SCHEDULER_API_TOKEN = os.getenv("SCHEDULER_API_TOKEN", "")
+SCHEDULER_SERVICE_USER_ID = os.getenv("SCHEDULER_SERVICE_USER_ID", "")
 LINK_CHECK_BATCH_SIZE = max(1, int(os.getenv("LINK_CHECK_BATCH_SIZE", "50")))
-# Ruta real existente. Vacío evita inventar un dominio o enlazar una vista que
-# todavía no soporte el contrato de caídas confirmadas.
 LINK_FAILURE_FRONTEND_URL = os.getenv("LINK_FAILURE_FRONTEND_URL", "")
 FRONTEND_LOGIN_URL = os.getenv(
     "FRONTEND_LOGIN_URL",
@@ -95,9 +116,35 @@ else:
                 "POSTGRES_PORT",
                 os.getenv("DATABASE_PORT", "5432"),
             ),
-            "OPTIONS": {"sslmode": "require"},
+            "OPTIONS": {"sslmode": os.getenv("DATABASE_SSLMODE", "require")},
         }
     }
+
+# --- Almacenamiento S3 (RustFS) ---
+S3_ENDPOINT = os.getenv("S3_ENDPOINT", "")
+S3_PUBLIC_ENDPOINT = os.getenv("S3_PUBLIC_ENDPOINT", S3_ENDPOINT)
+S3_BUCKET = os.getenv("S3_BUCKET", "imagenes")
+S3_REGION = os.getenv("S3_REGION", "us-east-1")
+S3_ACCESS_KEY = os.getenv(
+    "S3_ACCESS_KEY",
+    os.getenv("RUSTFS_ACCESS_KEY", ""),
+)
+S3_SECRET_KEY = os.getenv(
+    "S3_SECRET_KEY",
+    os.getenv("RUSTFS_SECRET_KEY", ""),
+)
+S3_MAX_IMAGE_SIZE = max(
+    1,
+    int(os.getenv("S3_MAX_IMAGE_SIZE", str(5 * 1024 * 1024))),
+)
+S3_ALLOWED_IMAGE_CONTENT_TYPES = tuple(
+    item.strip()
+    for item in os.getenv(
+        "S3_ALLOWED_IMAGE_CONTENT_TYPES",
+        "image/jpeg,image/png,image/gif,image/webp",
+    ).split(",")
+    if item.strip()
+)
 
 SPECTACULAR_SETTINGS = {
     "TITLE": "API Sistema de Revistas",

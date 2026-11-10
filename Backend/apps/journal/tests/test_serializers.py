@@ -142,6 +142,22 @@ class JournalSerializersTests(TestCase):
         self.assertIsNone(journal.validated_by)
         self.assertIsNone(journal.validated_at)
 
+    def test_draft_journal_can_be_created_without_platform_url(self):
+        serializer = serializers.JournalSerializer(
+            data={
+                "issn": "2020-3030",
+                "title": "Journal pendiente de URL",
+                "platforms": [{"platform": self.platform.pk}],
+            },
+        )
+
+        self.assertTrue(serializer.is_valid(), serializer.errors)
+        journal = serializer.save(created_by=self.system)
+
+        self.assertFalse(journal.active)
+        self.assertEqual(journal.platform_links.count(), 1)
+        self.assertFalse(journal.platform_links.first().link_check_logs.exists())
+
     def test_journal_serializer_create_with_all_relations(self):
         """
         Crea una revista y sincroniza las seis relaciones configuradas.
@@ -362,7 +378,7 @@ class JournalSerializersTests(TestCase):
             },
         )
 
-    def test_knowledge_areas_accept_manual_selection(self):
+    def test_knowledge_areas_are_read_only(self):
         serializer = serializers.JournalSerializer(
             data={
                 "issn": "3456-7890",
@@ -377,19 +393,21 @@ class JournalSerializersTests(TestCase):
         )
 
         self.assertTrue(serializer.is_valid(), serializer.errors)
+        self.assertNotIn("knowledge_areas", serializer.validated_data)
         journal = serializer.save(created_by=self.system)
 
+        # Solo se materializa el área derivada del programa seleccionado.
         self.assertEqual(
             set(journal.knowledge_area_links.values_list(
                 "knowledge_area_id", flat=True,
             )),
-            {self.knowledge_area.pk, self.knowledge_area_secondary.pk},
+            {self.knowledge_area.pk},
         )
-        manual = journal.knowledge_area_links.get(
-            knowledge_area=self.knowledge_area_secondary
+        derived = journal.knowledge_area_links.get(
+            knowledge_area=self.knowledge_area
         )
-        self.assertTrue(manual.is_manual)
-        self.assertFalse(manual.is_derived)
+        self.assertFalse(derived.is_manual)
+        self.assertTrue(derived.is_derived)
 
     def test_patch_without_academic_programs_preserves_derived_relations(self):
         journal = self._journal(

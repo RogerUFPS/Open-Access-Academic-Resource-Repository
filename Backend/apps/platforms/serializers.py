@@ -10,7 +10,6 @@ from apps.catalog.models import (
     KnowledgeArea,
     Language,
     MaterialType,
-    SharedAcademicProgramKnowledgeArea,
 )
 from apps.core.serializers import (
     RelationConfig,
@@ -36,11 +35,6 @@ PLATFORM_RELATION_CONFIG = (
         data_field="countries",
         through_model=models.SharedPlatformCountry,
         relation_field="country",
-    ),
-    RelationConfig(
-        data_field="knowledge_areas",
-        through_model=models.SharedPlatformKnowledgeArea,
-        relation_field="knowledge_area",
     ),
     RelationConfig(
         data_field="material_types",
@@ -285,6 +279,14 @@ class PlatformLinksCheckResponseSerializer(serializers.Serializer):
     results = PlatformLinkCheckResultSerializer(many=True)
 
 
+class PlatformKnowledgeAreaOriginSerializer(serializers.Serializer):
+    id = serializers.IntegerField()
+    name = serializers.CharField()
+    is_manual = serializers.BooleanField()
+    is_derived = serializers.BooleanField()
+    editable = serializers.BooleanField()
+
+
 class PlatformSerializer(
     SoftDeleteRelationSyncMixin,
     ArchivedNameMixin,
@@ -296,9 +298,10 @@ class PlatformSerializer(
     Las relaciones mediante tablas intermedias se sincronizan
     mediante SoftDeleteRelationSyncMixin.
 
-    La relación con áreas del conocimiento no se recibe directamente
-    del cliente: se deriva automáticamente a partir de los programas
-    académicos seleccionados y de SharedAcademicProgramKnowledgeArea.
+    ``academic_programs`` es opcional y puede seleccionarse manualmente.
+    ``knowledge_areas`` nunca se recibe del cliente: se deriva automáticamente
+    de los programas académicos efectivos (manuales y derivados) mediante
+    SharedAcademicProgramKnowledgeArea.
     """
 
     archived_unique_fields = ("name",)
@@ -381,11 +384,11 @@ class PlatformSerializer(
         write_only=True,
     )
 
-    knowledge_areas = serializers.PrimaryKeyRelatedField(
-        many=True,
-        queryset=KnowledgeArea.objects.all(),
-        required=False,
-        write_only=True,
+    knowledge_areas = serializers.SerializerMethodField(
+        help_text=(
+            "Áreas del conocimiento derivadas automáticamente de los "
+            "programas académicos efectivos. Es un campo de solo lectura."
+        ),
     )
 
     material_types = serializers.PrimaryKeyRelatedField(
@@ -414,6 +417,7 @@ class PlatformSerializer(
             "public_url",
             "api_key",
             "url_image",
+            "url_image_thumbnail",
             "start_period",
             "finish_period",
             "requires_registration",
@@ -435,6 +439,7 @@ class PlatformSerializer(
             "finish_period",
             "validated_by",
             "validated_at",
+            "url_image_thumbnail",
         ]
 
     def to_internal_value(self, data):
@@ -448,7 +453,8 @@ class PlatformSerializer(
         return super().to_internal_value(data)
 
     def validate_public_url(self, value):
-        services.validate_safe_http_url(value, field_name="public_url")
+        if value is not None:
+            services.validate_safe_http_url(value, field_name="public_url")
         return value
 
     def validate_base_api_url(self, value):
@@ -478,11 +484,6 @@ class PlatformSerializer(
         academic_programs.
         """
         attrs = super().validate(attrs)
-
-        if self.instance is None and not attrs.get("public_url"):
-            raise serializers.ValidationError({
-                "public_url": "La URL pública es obligatoria al crear una plataforma."
-            })
 
         instance = self.instance
 
@@ -547,12 +548,36 @@ class PlatformSerializer(
 
         return attrs
 
+    @extend_schema_field(PlatformKnowledgeAreaOriginSerializer(many=True))
+    def get_knowledge_areas(self, obj):
+        """Áreas efectivas derivadas de los programas académicos."""
+        links = (
+            models.SharedPlatformKnowledgeArea.objects
+            .filter(platform=obj)
+            .select_related("knowledge_area")
+            .order_by("knowledge_area__name")
+        )
+        return [
+            {
+                "id": link.knowledge_area_id,
+                "name": link.knowledge_area.name,
+                "is_manual": link.is_manual,
+                "is_derived": link.is_derived,
+                "editable": False,
+            }
+            for link in links
+            if link.is_manual or link.is_derived
+        ]
+
     def _prepare_relation_data(self, validated_data):
         """
-        Extrae las relaciones recibidas y deriva las knowledge_areas
-        cuando el cliente ha enviado academic_programs.
+        Extrae las relaciones manuales recibidas.
 
-        Si academic_programs no fue enviado, las relaciones existentes
+        ``knowledge_areas`` no forma parte de las relaciones de entrada:
+        se deriva en ``classification.recalculate_platforms`` a partir de
+        los programas académicos efectivos.
+
+        Si ``academic_programs`` no fue enviado, las relaciones existentes
         no se modifican.
         """
         return self._extract_relation_data(validated_data)
@@ -655,6 +680,11 @@ class PlatformSerializer(
         instance,
         validated_data,
     ):
+        if (
+            "url_image" in validated_data
+            and validated_data["url_image"] != instance.url_image
+        ):
+            instance.url_image_thumbnail = None
         public_url_was_sent = "public_url" in validated_data
         public_url = validated_data.pop("public_url", None)
         disabling_harvesting = validated_data.get("is_harvestable") is False
@@ -828,6 +858,7 @@ class PlatformPublicSerializer(
             "is_harvestable",
             "public_url",
             "url_image",
+            "url_image_thumbnail",
             "start_period",
             "finish_period",
             "requires_registration",
@@ -846,88 +877,116 @@ class PlatformPublicSerializer(
         PlatformPublicInstitutionSchemaSerializer(many=True)
     )
     def get_institutions(self, obj):
-        return list(
-            Institution.objects.filter(
-                platform_support_links__platform=obj,
-                platform_support_links__deleted_at__isnull=True,
-            ).values(
-                "id",
-                "name",
+        links = getattr(obj, "_public_support_links", None)
+        if links is None:
+            return list(
+                Institution.objects.filter(
+                    platform_support_links__platform=obj,
+                    platform_support_links__deleted_at__isnull=True,
+                ).values("id", "name")
             )
-        )
+        return [
+            {"id": link.institution_id, "name": link.institution.name}
+            for link in links
+        ]
 
     @extend_schema_field(
         PlatformPublicLanguageSchemaSerializer(many=True)
     )
     def get_languages(self, obj):
-        return list(
-            Language.objects.filter(
-                platform_links__platform=obj,
-                platform_links__deleted_at__isnull=True,
-            ).values(
-                "id",
-                "name",
-                "abbreviation",
+        links = getattr(obj, "_public_language_links", None)
+        if links is None:
+            return list(
+                Language.objects.filter(
+                    platform_links__platform=obj,
+                    platform_links__deleted_at__isnull=True,
+                ).values("id", "name", "abbreviation")
             )
-        )
+        return [
+            {
+                "id": link.language_id,
+                "name": link.language.name,
+                "abbreviation": link.language.abbreviation,
+            }
+            for link in links
+        ]
 
     @extend_schema_field(
         PlatformPublicCountrySchemaSerializer(many=True)
     )
     def get_countries(self, obj):
-        return list(
-            Country.objects.filter(
-                platform_links__platform=obj,
-                platform_links__deleted_at__isnull=True,
-            ).values(
-                "id",
-                "name",
-                "abbreviation",
-                "emoji_flag",
+        links = getattr(obj, "_public_country_links", None)
+        if links is None:
+            return list(
+                Country.objects.filter(
+                    platform_links__platform=obj,
+                    platform_links__deleted_at__isnull=True,
+                ).values("id", "name", "abbreviation", "emoji_flag")
             )
-        )
+        return [
+            {
+                "id": link.country_id,
+                "name": link.country.name,
+                "abbreviation": link.country.abbreviation,
+                "emoji_flag": link.country.emoji_flag,
+            }
+            for link in links
+        ]
 
     @extend_schema_field(
         PlatformPublicKnowledgeAreaSchemaSerializer(many=True)
     )
     def get_knowledge_areas(self, obj):
-        return list(
-            KnowledgeArea.objects.filter(
-                platform_links__platform=obj,
-                platform_links__deleted_at__isnull=True,
-            ).values(
-                "id",
-                "name",
+        links = getattr(obj, "_public_knowledge_area_links", None)
+        if links is None:
+            return list(
+                KnowledgeArea.objects.filter(
+                    platform_links__platform=obj,
+                    platform_links__deleted_at__isnull=True,
+                ).values("id", "name")
             )
-        )
+        return [
+            {"id": link.knowledge_area_id, "name": link.knowledge_area.name}
+            for link in links
+            if link.is_manual or link.is_derived
+        ]
 
     @extend_schema_field(
         PlatformPublicMaterialTypeSchemaSerializer(many=True)
     )
     def get_material_types(self, obj):
-        return list(
-            MaterialType.objects.filter(
-                platform_links__platform=obj,
-                platform_links__deleted_at__isnull=True,
-            ).values(
-                "id",
-                "name",
+        links = getattr(obj, "_public_material_type_links", None)
+        if links is None:
+            return list(
+                MaterialType.objects.filter(
+                    platform_links__platform=obj,
+                    platform_links__deleted_at__isnull=True,
+                ).values("id", "name")
             )
-        )
+        return [
+            {"id": link.material_type_id, "name": link.material_type.name}
+            for link in links
+        ]
 
     @extend_schema_field(
         PlatformPublicAcademicProgramSchemaSerializer(many=True)
     )
     def get_academic_programs(self, obj):
-        return list(
-            AcademicProgram.objects.filter(
-                platform_links__platform=obj,
-                platform_links__deleted_at__isnull=True,
-            ).values(
-                "id",
-                "name",
+        links = getattr(obj, "_public_academic_program_links", None)
+        if links is None:
+            return list(
+                AcademicProgram.objects.filter(
+                    platform_links__platform=obj,
+                    platform_links__deleted_at__isnull=True,
+                ).values("id", "name")
             )
-        )
+        return [
+            {
+                "id": link.academic_program_id,
+                "name": link.academic_program.name,
+            }
+            for link in links
+        ]
 
     @extend_schema_field(
         PlatformPublicLinkStatusSchemaSerializer

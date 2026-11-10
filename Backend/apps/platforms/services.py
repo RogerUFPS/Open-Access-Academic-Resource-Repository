@@ -231,18 +231,6 @@ REQUIRED_PLATFORM_RELATIONS = (
         "language",
         "un idioma activo asociado",
     ),
-    (
-        "knowledge_areas",
-        models.SharedPlatformKnowledgeArea,
-        "knowledge_area",
-        "un área de conocimiento activa asociada",
-    ),
-    (
-        "academic_programs",
-        models.SharedPlatformAcademicProgram,
-        "academic_program",
-        "un programa académico activo asociado",
-    ),
 )
 
 
@@ -270,6 +258,11 @@ def validate_platform_for_publication(
     if not platform.name or not platform.name.strip():
         errors["name"] = (
             "La plataforma debe tener un nombre."
+        )
+
+    if not platform.url_image or not platform.url_image.strip():
+        errors["url_image"] = (
+            "La plataforma debe tener una URL de imagen antes de publicarse."
         )
 
     # La URL pública es independiente de base_api_url. La URL vigente debe
@@ -301,11 +294,6 @@ def validate_platform_for_publication(
     if platform.is_harvestable and not platform.base_api_url:
         errors["base_api_url"] = (
             "Una plataforma cosechable debe tener una URL base de API."
-        )
-
-    if not platform.url_image:
-        errors["url_image"] = (
-            "La plataforma debe tener una URL de imagen para publicarse."
         )
 
     if not platform.is_harvestable and (

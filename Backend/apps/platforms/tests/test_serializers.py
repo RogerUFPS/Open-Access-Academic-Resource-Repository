@@ -148,7 +148,7 @@ class PlatformSerializersTests(TestCase):
 
         self.assertEqual(
             platform.knowledge_area_links.count(),
-            0,
+            1,
         )
 
         self.assertEqual(
@@ -158,8 +158,19 @@ class PlatformSerializersTests(TestCase):
                     flat=True,
                 )
             ),
-            [],
+            [self.knowledge_area.pk],
         )
+
+    def test_platform_draft_can_be_created_without_public_url(self):
+        serializer = serializers.PlatformSerializer(
+            data={"name": "Plataforma en borrador"},
+        )
+
+        self.assertTrue(serializer.is_valid(), serializer.errors)
+        platform = serializer.save(created_by=self.system)
+
+        self.assertEqual(platform.status, models.Platform.Status.BORRADOR)
+        self.assertIsNone(serializers.PlatformSerializer(platform).data["public_url"])
 
     def test_platform_serializer_creates_manual_academic_classification(
         self,
@@ -204,7 +215,7 @@ class PlatformSerializersTests(TestCase):
                     flat=True,
                 )
             ),
-            set(),
+            {self.knowledge_area.pk, self.knowledge_area_secondary.pk},
         )
 
         data = serializers.PlatformSerializer(
@@ -213,18 +224,18 @@ class PlatformSerializersTests(TestCase):
 
         self.assertEqual(
             {item["id"] for item in data["knowledge_areas"]},
-            set(),
+            {self.knowledge_area.pk, self.knowledge_area_secondary.pk},
         )
 
-    def test_platform_serializer_accepts_knowledge_areas_as_manual_input(
+    def test_platform_serializer_does_not_accept_knowledge_areas_as_input(
         self,
     ):
-        """Las áreas y programas pueden coexistir con fuentes derivadas."""
+        """Las áreas son de solo lectura y se derivan de los programas."""
         data = {
             "name": "JSTOR",
             "public_url": "https://8.8.8.8/jstor",
             "knowledge_areas": [
-                self.knowledge_area.pk,
+                self.knowledge_area_secondary.pk,
             ],
             "academic_programs": [
                 self.academic_program.pk,
@@ -240,7 +251,7 @@ class PlatformSerializersTests(TestCase):
             serializer.errors,
         )
 
-        self.assertIn(
+        self.assertNotIn(
             "knowledge_areas",
             serializer.validated_data,
         )
@@ -253,6 +264,8 @@ class PlatformSerializersTests(TestCase):
             created_by=self.system,
         )
 
+        # Solo aparece el área relacionada con el programa seleccionado;
+        # el intento de selección manual se ignora.
         self.assertEqual(
             list(
                 platform.knowledge_area_links.values_list(
@@ -550,7 +563,7 @@ class PlatformSerializersTests(TestCase):
                     flat=True,
                 )
             ),
-            [],
+            [self.knowledge_area.pk],
         )
 
     def test_platform_serializer_empty_academic_programs_removes_manual_origin(
@@ -588,7 +601,7 @@ class PlatformSerializersTests(TestCase):
 
         self.assertEqual(
             platform.knowledge_area_links.count(),
-            0,
+            1,
         )
 
         serializer = serializers.PlatformSerializer(
