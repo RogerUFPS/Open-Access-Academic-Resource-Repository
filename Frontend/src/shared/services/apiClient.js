@@ -294,10 +294,11 @@ const accountQueries = {
   preset: (id, signal) => accountsRequest(`presets/${encodeURIComponent(id)}/`, { signal }),
 };
 
-export function createAccountsApi(mutateAction) {
+export function createAccountsApi(mutateAction, { me = accountQueries.me } = {}) {
   const mutate = (path, method, body) => accountsRequest(path, { method, body }, mutateAction);
   return {
     ...accountQueries,
+    me,
     login: (body) => mutate("auth/login/", "POST", body),
     logout: () => mutate("auth/logout/", "POST"),
     changePassword: (body) => mutate("password/change/", "POST", body),

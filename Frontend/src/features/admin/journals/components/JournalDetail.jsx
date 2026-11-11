@@ -79,10 +79,9 @@ export default function JournalDetail({ journalId }) {
     setEditorialName("");
     setEditorialError(null);
     try {
-      const [data, catData, licData] = await Promise.all([
+      const [data, catData] = await Promise.all([
         journalService.getJournalById(journalId),
         journalService.loadFormCatalogs(),
-        journalService.getLicenses().catch(() => []),
       ]);
 
       const editorialId =
@@ -128,10 +127,7 @@ export default function JournalDetail({ journalId }) {
       setEditorialName(resolvedEditorialName);
       setEditorialError(editorialRequestError);
       setUserNames(Object.fromEntries(resolvedUsers));
-      setCatalogs({
-        ...catData,
-        licenses: Array.isArray(licData) ? licData : [],
-      });
+      setCatalogs(catData);
     } catch (err) {
       console.error("Error loading journal detail:", err);
       setError(err.message || "No se pudo cargar la información de la revista.");
