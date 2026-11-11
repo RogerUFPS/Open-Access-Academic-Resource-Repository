@@ -24,17 +24,25 @@ RECIPIENT_QUERY_CHUNK_SIZE = 200
 
 def failure_recipients():
     addresses = set()
-    for user in User.objects.filter(is_active=True).prefetch_related("presets").iterator(
-        chunk_size=RECIPIENT_QUERY_CHUNK_SIZE,
-    ):
-        if not has_permission(user, "platforms", "platforms", "check_link"):
-            continue
-        address = (user.email or "").strip()
-        try:
-            validate_email(address)
-        except ValidationError:
-            continue
-        addresses.add(address)
+    users = User.objects.filter(is_active=True).order_by("pk")
+    last_pk = None
+    while True:
+        page = users if last_pk is None else users.filter(pk__gt=last_pk)
+        # Evaluar cada lote sin iterator(): no depende de un cursor del servidor
+        # que pueda desaparecer entre transacciones de una conexión pooled.
+        batch = list(page.prefetch_related("presets")[:RECIPIENT_QUERY_CHUNK_SIZE])
+        if not batch:
+            break
+        last_pk = batch[-1].pk
+        for user in batch:
+            if not has_permission(user, "platforms", "platforms", "check_link"):
+                continue
+            address = (user.email or "").strip()
+            try:
+                validate_email(address)
+            except ValidationError:
+                continue
+            addresses.add(address)
     return sorted(addresses)
 
 

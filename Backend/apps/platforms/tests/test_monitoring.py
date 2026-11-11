@@ -3,11 +3,18 @@ from threading import Barrier, Lock
 from unittest.mock import patch
 from urllib.parse import parse_qs, urlsplit
 
+from celery.exceptions import Retry
 from django.db import close_old_connections, connection
 from django.db import IntegrityError, transaction
+from django.db.utils import (
+    InterfaceError,
+    OperationalError as DatabaseOperationalError,
+    ProgrammingError,
+)
 from django.test import TestCase, TransactionTestCase, override_settings, skipUnlessDBFeature
 from django.utils import timezone
 from kombu.exceptions import OperationalError
+from psycopg.errors import InvalidCursorName
 from rest_framework.test import APIClient, APITestCase
 
 from apps.account.email import EmailDeliveryError
@@ -753,6 +760,36 @@ class ManualNotificationTests(MonitorFixtures, APITestCase):
         self.assertEqual(self.publisher.call_count, 2)
         self.sender.assert_called_once()
 
+    def test_fifth_failure_cursor_error_retries_without_a_sixth_check_or_duplicate_email(self):
+        for _ in range(5):
+            self.step("manual", drain=False)
+        fifth = self.latest()
+        self.assertEqual(fifth.fail_count, 5)
+        self.publisher.assert_called_once_with()
+
+        error = ProgrammingError("cursor does not exist")
+        error.__cause__ = InvalidCursorName("cursor does not exist")
+        with (
+            patch("apps.platforms.notifications.failure_recipients", side_effect=error),
+            patch.object(tasks.notify_link_failures, "retry", side_effect=Retry()) as retry,
+        ):
+            with self.assertRaises(Retry):
+                self.drain_notification()
+        retry.assert_called_once_with(exc=error, countdown=1)
+        self.sender.assert_not_called()
+        self.assertEqual(self.confirmed_ids(), {fifth.pk})
+        self.assertIsNone(self.latest().failure_notified_at)
+
+        # Simular la entrega de la tarea reintentada, sin otra comprobación HTTP.
+        self.assertEqual(self.drain_notification(), 1)
+        notified = self.latest()
+        self.assertEqual(notified.pk, fifth.pk)
+        self.assertEqual(notified.fail_count, 5)
+        self.assertIsNotNone(notified.failure_notified_at)
+        self.assertEqual(self.drain_notification(), 0)
+        self.sender.assert_called_once()
+        self.publisher.assert_called_once_with()
+
     def test_manual_notification_is_deferred_until_commit(self):
         self.log(count=4, checked=True)
         with self.captureOnCommitCallbacks(execute=True):
@@ -860,6 +897,66 @@ class MonitorTaskTests(MonitorFixtures, TestCase):
 
 @override_settings(LINK_FAILURE_FRONTEND_URL="https://repository.example/admin/alertas")
 class NotificationTests(MonitorFixtures, TestCase):
+    @patch("apps.platforms.notifications.RECIPIENT_QUERY_CHUNK_SIZE", 2)
+    def test_recipients_span_multiple_pages_without_server_side_iteration(self):
+        preset = AccessPreset.objects.create(
+            name="Avisos paginados", permissions=CHECK_PERMISSION, created_by=self.user,
+        )
+        expected = {self.user.email}
+        for index in range(5):
+            user = User.objects.create_user(
+                email=f"recipient-{index}@example.org",
+                permissions=CHECK_PERMISSION if index % 2 == 0 else {},
+            )
+            if index % 2:
+                user.presets.add(preset)
+            expected.add(user.email)
+        User.objects.create_user(email="no-access@example.org")
+        User.objects.create_user(
+            email="disabled@example.org", permissions=CHECK_PERMISSION, is_active=False,
+        )
+        with patch("django.db.models.query.QuerySet.iterator", side_effect=AssertionError("server cursor")):
+            self.assertEqual(notifications.failure_recipients(), sorted(expected))
+
+    @patch("apps.platforms.tasks.notify_confirmed_failures")
+    def test_connection_errors_request_retry_with_bounded_backoff(self, notify):
+        for error in (DatabaseOperationalError("connection lost"), InterfaceError("connection closed")):
+            with self.subTest(error=type(error).__name__):
+                notify.side_effect = error
+                with patch.object(tasks.notify_link_failures, "retry", side_effect=Retry()) as retry:
+                    tasks.notify_link_failures.push_request(retries=3)
+                    try:
+                        with self.assertRaises(Retry):
+                            tasks.notify_link_failures.run()
+                    finally:
+                        tasks.notify_link_failures.pop_request()
+                retry.assert_called_once_with(exc=error, countdown=8)
+
+    @patch("apps.platforms.tasks.notify_confirmed_failures", side_effect=ProgrammingError("missing column"))
+    def test_other_programming_errors_are_not_retried(self, _notify):
+        with patch.object(tasks.notify_link_failures, "retry") as retry:
+            with self.assertRaises(ProgrammingError):
+                tasks.notify_link_failures.run()
+        retry.assert_not_called()
+
+    @patch("apps.platforms.notifications.email.send_email")
+    def test_database_retry_limit_leaves_the_fifth_failure_pending(self, send):
+        log = self.log(count=5, checked=True)
+        error = DatabaseOperationalError("connection unavailable")
+        with patch("apps.platforms.notifications.failure_recipients", side_effect=error):
+            tasks.notify_link_failures.push_request(
+                retries=tasks.TASK_RETRIES, called_directly=False, is_eager=True,
+            )
+            try:
+                with self.assertRaises(DatabaseOperationalError):
+                    tasks.notify_link_failures.run()
+            finally:
+                tasks.notify_link_failures.pop_request()
+        send.assert_not_called()
+        log.refresh_from_db()
+        self.assertEqual(log.fail_count, 5)
+        self.assertIsNone(log.failure_notified_at)
+
     @override_settings(
         LINK_FAILURE_FRONTEND_URL=(
             "https://portal.example.test/admin/alertas"
