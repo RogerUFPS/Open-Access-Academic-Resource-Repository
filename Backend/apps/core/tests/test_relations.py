@@ -13,7 +13,7 @@ class AuditableRelationsTests(TestCase):
     @classmethod
     def setUpTestData(cls):
         cls.user = User.objects.create_user(
-            code=0, full_name="Sistema", email="core-relations@test.local"
+            full_name="Sistema", email="core-relations@test.local"
         )
         cls.program = AcademicProgram.objects.create(
             name="programa core", created_by=cls.user
