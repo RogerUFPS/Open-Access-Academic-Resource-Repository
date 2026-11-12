@@ -86,7 +86,14 @@ FRONTEND_LOGIN_URL = os.getenv(
 SESSION_COOKIE_HTTPONLY = True
 SESSION_COOKIE_SECURE = not DEBUG
 SESSION_COOKIE_AGE = 15 * 60
-SESSION_SAVE_EVERY_REQUEST = True
+# La renovación por inactividad la hace ThrottledSessionRenewalMiddleware
+# (apps.core.middleware) como máximo cada SESSION_RENEWAL_INTERVAL segundos,
+# en lugar de escribir la sesión en la base en cada petición.
+SESSION_SAVE_EVERY_REQUEST = False
+SESSION_RENEWAL_INTERVAL = min(
+    max(0, int(os.getenv("SESSION_RENEWAL_INTERVAL", "60"))),
+    SESSION_COOKIE_AGE,
+)
 CSRF_COOKIE_SECURE = not DEBUG
 SESSION_COOKIE_SAMESITE = "None" if not DEBUG else "Lax"
 CSRF_COOKIE_SAMESITE = SESSION_COOKIE_SAMESITE
@@ -117,8 +124,28 @@ else:
                 os.getenv("DATABASE_PORT", "5432"),
             ),
             "OPTIONS": {"sslmode": os.getenv("DATABASE_SSLMODE", "require")},
+            # El pool sustituye a las conexiones persistentes; Django no admite
+            # ambos mecanismos a la vez.
+            "CONN_MAX_AGE": 0,
         }
     }
+
+    # Pool de conexiones de psycopg (Django >= 5.1). Solo se activa en el
+    # servicio web: Celery prefork cierra el pool al terminar cada tarea, por
+    # lo que en worker/beat añadiría aperturas de conexión en lugar de evitarlas.
+    if env_bool("DATABASE_POOL", False):
+        _pool_min_size = max(1, int(os.getenv("DATABASE_POOL_MIN_SIZE", "2")))
+        DATABASES["default"]["OPTIONS"]["pool"] = {
+            "min_size": _pool_min_size,
+            "max_size": max(
+                _pool_min_size,
+                int(os.getenv("DATABASE_POOL_MAX_SIZE", "4")),
+            ),
+            # Segundos que una petición espera una conexión libre.
+            "timeout": float(os.getenv("DATABASE_POOL_TIMEOUT", "10")),
+            # Cierra conexiones ociosas antes de que el proveedor las corte.
+            "max_idle": float(os.getenv("DATABASE_POOL_MAX_IDLE", "300")),
+        }
 
 # --- Almacenamiento S3 (RustFS) ---
 S3_ENDPOINT = os.getenv("S3_ENDPOINT", "")
