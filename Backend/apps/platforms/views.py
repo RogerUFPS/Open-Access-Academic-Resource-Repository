@@ -129,6 +129,29 @@ def _with_public_relations(queryset):
     return queryset.select_related("valid_sintaxis").prefetch_related(*prefetches)
 
 
+def _with_admin_relations(queryset):
+    # Las reglas administrativas difieren de las públicas: conservar el filtro
+    # del manager de los vínculos y la representación actual de procedencia.
+    relation_specs = (
+        ("support_links", "institutions", models.SharedPlatformSupport, "institution"),
+        ("language_links", "languages", models.SharedPlatformLanguage, "language"),
+        ("country_links", "countries", models.SharedPlatformCountry, "country"),
+        ("knowledge_area_links", "knowledge_areas", models.SharedPlatformKnowledgeArea, "knowledge_area"),
+        ("material_type_links", "material_types", models.SharedPlatformMaterialType, "material_type"),
+        ("academic_program_links", "academic_programs", models.SharedPlatformAcademicProgram, "academic_program"),
+    )
+    return queryset.prefetch_related(*(
+        Prefetch(
+            relation_name,
+            queryset=through_model.objects.select_related(relation_field).order_by(
+                f"{relation_field}__name",
+            ),
+            to_attr=f"_admin_{data_field}",
+        )
+        for relation_name, data_field, through_model, relation_field in relation_specs
+    ))
+
+
 # ==============================================================================
 # VALID SINTAXIS
 # ==============================================================================
@@ -468,6 +491,12 @@ class PlatformViewSet(ResourceImageMixin, AuditableViewSet):
     queryset = _with_public_link_logs(models.Platform.objects.all())
     serializer_class = serializers.PlatformSerializer
     image_folder = "platforms"
+
+    def get_queryset(self):
+        queryset = super().get_queryset()
+        if getattr(self, "action", None) == "list":
+            return _with_admin_relations(queryset)
+        return queryset
 
     search_fields = [
         "name",
