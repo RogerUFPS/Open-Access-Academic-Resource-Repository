@@ -24,5 +24,5 @@ export default async function AdminRouteLayout({ children }) {
 
   if (!user || user.force_password_change) redirect("/admin/login");
 
-  return <AccountsGateway><AdminLayout userName={getUserDisplayName(user)}>{children}</AdminLayout></AccountsGateway>;
+  return <AccountsGateway initialUser={user}><AdminLayout userName={getUserDisplayName(user)}>{children}</AdminLayout></AccountsGateway>;
 }

@@ -128,7 +128,7 @@ async function mutateBackend(path, method, body, timeoutMs = 90000) {
   }
 }
 
-export default function AccountsGateway({ children }) {
+export default function AccountsGateway({ children, initialUser = null }) {
   async function mutateAccount(path, method, body) {
     "use server";
 
@@ -149,7 +149,7 @@ export default function AccountsGateway({ children }) {
     return mutateBackend(path, method, body, longRunning ? null : 90000);
   }
 
-  return <AccountsProvider mutateAction={mutateAccount}>
+  return <AccountsProvider mutateAction={mutateAccount} initialUser={initialUser}>
     <HarvestingProvider mutateAction={mutateHarvest}>{children}</HarvestingProvider>
   </AccountsProvider>;
 }
