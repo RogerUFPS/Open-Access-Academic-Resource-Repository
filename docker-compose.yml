@@ -15,6 +15,21 @@ x-service: &service
     - services
 
 services:
+  backend-init:
+    <<: *service
+    build: ./Backend
+    image: harvest-backend-init
+    pull_policy: never
+    restart: "no"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    env_file: ./Backend/.env
+    environment:
+      DJANGO_DEBUG: ${DJANGO_DEBUG:-0}
+      DATABASE_POOL: "0"
+    command: ["sh", "-c", "python manage.py migrate --noinput && python manage.py bootstrap_superadmin"]
+
   rabbitmq:
     <<: *service
     build: ./RabbitMQ
@@ -38,6 +53,8 @@ services:
     image: harvest-backend
     pull_policy: never
     depends_on:
+      backend-init:
+        condition: service_completed_successfully
       rustfs-init:
         condition: service_completed_successfully
       rabbitmq:
@@ -45,7 +62,6 @@ services:
     env_file: ./Backend/.env
     environment:
       DJANGO_DEBUG: ${DJANGO_DEBUG:-0}
-      # Pool de conexiones solo para el servicio web (no para worker/beat).
       DATABASE_POOL: ${DATABASE_POOL:-1}
     ports:
       - "127.0.0.1:8000:8000"
@@ -85,13 +101,9 @@ services:
     ports:
       - "127.0.0.1:3000:3000"
 
-  # PostgreSQL local opcional para desarrollo. No arranca salvo que se active
-  # el perfil: docker compose --profile localdb up -d
-  # Ver Postgres/README.md
   postgres:
     <<: *service
     image: ${LOCAL_POSTGRES_IMAGE:-postgres:18-alpine}
-    profiles: ["localdb"]
     env_file: ./Postgres/.env
     cap_add:
       - CHOWN
@@ -108,23 +120,6 @@ services:
       - "127.0.0.1:${LOCAL_POSTGRES_PORT:-5433}:5432"
     volumes:
       - postgres-data:/var/lib/postgresql
-
-  # Copia la base remota (solo lectura) a la local. BORRA la base local.
-  # docker compose --profile localdb-sync run --rm postgres-sync
-  postgres-sync:
-    <<: *service
-    image: ${LOCAL_POSTGRES_IMAGE:-postgres:18-alpine}
-    profiles: ["localdb-sync"]
-    restart: "no"
-    env_file: ./Postgres/.env
-    depends_on:
-      postgres:
-        condition: service_healthy
-    volumes:
-      - ./Postgres/sync-from-remote.sh:/scripts/sync-from-remote.sh:ro
-    entrypoint: ["/bin/sh", "-c"]
-    # sed tolera finales de línea CRLF si el script se extrajo en Windows.
-    command: ["sed 's/\\r$$//' /scripts/sync-from-remote.sh | sh"]
 
   rustfs:
     <<: *service

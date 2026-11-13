@@ -18,7 +18,6 @@ class UserSerializer(serializers.ModelSerializer):
             "collegue_code",
             "full_name",
             "is_active",
-            "is_superadmin",
             "force_password_change",
             "permissions",
             "effective_permissions",
@@ -29,7 +28,6 @@ class UserSerializer(serializers.ModelSerializer):
         read_only_fields = (
             "id",
             "is_active",
-            "is_superadmin",
             "force_password_change",
             "effective_permissions",
             "presets",

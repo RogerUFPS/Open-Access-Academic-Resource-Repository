@@ -39,13 +39,6 @@ class UserManager(BaseUserManager):
         user.save(using=self._db)
         return user
 
-    def create_superuser(self, email, password=None, **extra_fields):
-        if not password:
-            raise ValueError("El superadmin debe tener una contraseña.")
-        extra_fields.setdefault("is_superadmin", True)
-        return self.create_user(email, password, **extra_fields)
-
-
 class User(SoftDeleteMixin, AbstractBaseUser):
     """Cuenta autenticada por correo electrónico."""
 
@@ -56,6 +49,8 @@ class User(SoftDeleteMixin, AbstractBaseUser):
     is_active = models.BooleanField(default=True)
     is_superadmin = models.BooleanField(default=False)
     force_password_change = models.BooleanField(default=False)
+    mfa_secret = models.TextField(blank=True, default="")
+    mfa_enabled = models.BooleanField(default=False)
     permissions = models.JSONField(default=dict, blank=True)
     session_key = models.CharField(max_length=40, null=True, blank=True)
 
@@ -177,3 +172,37 @@ class SessionTermination(models.Model):
                 ).hexdigest(),
                 defaults={"user": user, "reason": reason},
             )
+
+
+class SuperadminAuditEvent(models.Model):
+    """Security events for superadmin lifecycle and authentication."""
+
+    actor = models.ForeignKey(User, null=True, blank=True, on_delete=models.SET_NULL,
+                              related_name="superadmin_events_as_actor")
+    actor_email = models.EmailField(blank=True)
+    action = models.CharField(max_length=64)
+    target = models.ForeignKey(User, null=True, blank=True, on_delete=models.SET_NULL,
+                               related_name="superadmin_events_as_target")
+    target_email = models.EmailField(blank=True)
+    details = models.JSONField(default=dict, blank=True)
+    timestamp = models.DateTimeField(default=timezone.now, db_index=True)
+
+    class Meta:
+        ordering = ["-timestamp", "-pk"]
+
+    def save(self, *args, **kwargs):
+        if self.pk is not None:
+            from django.core.exceptions import PermissionDenied
+            raise PermissionDenied("Superadmin audit events are append-only.")
+        return super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        from django.core.exceptions import PermissionDenied
+        raise PermissionDenied("Superadmin audit events are append-only.")
+
+
+class SuperadminBootstrapState(models.Model):
+    """Durable marker that closes the environment bootstrap path permanently."""
+
+    id = models.PositiveSmallIntegerField(primary_key=True, default=1, editable=False)
+    completed_at = models.DateTimeField(null=True, blank=True)

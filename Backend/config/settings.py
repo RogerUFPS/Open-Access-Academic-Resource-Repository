@@ -41,6 +41,7 @@ DEFAULT_FROM_EMAIL = os.getenv(
     os.getenv("RESEND_FROM_EMAIL", "onboarding@resend.dev"),
 )
 RESEND_FROM_EMAIL = DEFAULT_FROM_EMAIL
+SUPERADMIN_EMAIL = os.getenv("SUPERADMIN_EMAIL", "").strip()
 CELERY_BROKER_URL = os.getenv(
     "CELERY_BROKER_URL",
     "amqp://harvest:harvest@rabbitmq:5672//",

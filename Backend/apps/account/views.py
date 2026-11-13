@@ -3,7 +3,7 @@ from html import escape
 
 from django.contrib.auth import authenticate, login, logout, update_session_auth_hash
 from django.contrib.sessions.backends.db import SessionStore
-from django.db import transaction
+from django.db import IntegrityError, transaction
 from django.utils import timezone
 from django.views.decorators.csrf import csrf_protect, ensure_csrf_cookie
 from django.utils.decorators import method_decorator
@@ -15,6 +15,14 @@ from rest_framework.views import APIView
 from .email import EmailDeliveryError, login_link_html, send_email
 from .models import AccessPreset, SessionTermination, User
 from .permissions import PERMISSION_MATRIX
+from .security import (
+    audit_superadmin,
+    encrypt_totp_secret,
+    enrollment_uri,
+    new_totp_secret,
+    verify_totp,
+)
+from apps.core.utils.crypto import decrypt_api_key
 from .serializers import (
     AccessPresetSerializer,
     AssignPresetsSerializer,
@@ -64,6 +72,9 @@ class LoginView(APIView):
             password=serializer.validated_data["password"],
         )
         if user is None:
+            candidate = User.objects.filter(email__iexact=email, is_superadmin=True).first()
+            if candidate:
+                audit_superadmin("login_failed", target=candidate, details={"stage": "password"})
             return Response(
                 {"detail": "Correo o contraseña incorrectos."},
                 status=status.HTTP_401_UNAUTHORIZED,
@@ -78,21 +89,150 @@ class LoginView(APIView):
                 SessionTermination.record(user, user.session_key)
                 SessionStore(session_key=user.session_key).delete()
             login(request, user)
+            if user.is_superadmin:
+                request.session["superadmin_mfa_satisfied"] = False
+                request.session["superadmin_mfa_enrollment_required"] = not user.mfa_enabled
+                audit_superadmin("login_password_accepted", actor=user, target=user)
+            else:
+                request.session.pop("superadmin_mfa_satisfied", None)
             request.session.save()
             user.session_key = request.session.session_key
             user.save(update_fields=["session_key"])
 
         return Response({
-            "user": UserSerializer(user).data,
+            "user": {**UserSerializer(user).data, "is_superadmin": user.is_superadmin,
+                     "mfa_enabled": user.mfa_enabled},
             "must_change_password": user.force_password_change,
+            "is_superadmin": user.is_superadmin,
+            "mfa_required": user.is_superadmin,
+            "mfa_enrollment_required": bool(user.is_superadmin and not user.mfa_enabled),
+            "mfa_satisfied": bool(not user.is_superadmin or request.session.get("superadmin_mfa_satisfied")),
             "previous_session_terminated": previous_session_terminated,
         })
+
+
+class MFAChallengeView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        code = str(request.data.get("code", ""))
+        user = request.user
+        if not user.is_superadmin or not user.is_active or not user.mfa_enabled:
+            if user.is_superadmin:
+                audit_superadmin("mfa_challenge_failed", target=user)
+            return Response({"detail": "No se pudo verificar el código."}, status=400)
+        if not verify_totp(user, code):
+            audit_superadmin("mfa_challenge_failed", actor=user, target=user)
+            return Response({"detail": "Código MFA no válido."}, status=400)
+        request.session["superadmin_mfa_satisfied"] = True
+        request.session.pop("superadmin_mfa_enrollment_required", None)
+        audit_superadmin("mfa_challenge_succeeded", actor=user, target=user)
+        audit_superadmin("login_succeeded", actor=user, target=user)
+        return Response({"mfa_satisfied": True})
+
+
+class MFAEnrollmentView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        user = request.user
+        if not user.is_superadmin or not user.is_active or user.force_password_change:
+            return Response({"detail": "Cambia la contraseña antes de configurar MFA."}, status=403)
+        if user.mfa_enabled:
+            return Response({"detail": "MFA ya está configurado."}, status=409)
+        secret = decrypt_api_key(user.mfa_secret) if user.mfa_secret else ""
+        if not secret:
+            secret = new_totp_secret()
+            user.mfa_secret = encrypt_totp_secret(secret)
+            user.save(update_fields=["mfa_secret"])
+            audit_superadmin("mfa_enrollment_started", actor=user, target=user)
+        return Response({"secret": secret, "otpauth_uri": enrollment_uri(user, secret)})
+
+
+class MFAEnrollmentConfirmView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        user = request.user
+        if (not user.is_superadmin or not user.is_active or user.force_password_change
+                or user.mfa_enabled):
+            return Response({"detail": "No se puede completar la inscripción MFA."}, status=403)
+        if not verify_totp(user, str(request.data.get("code", ""))):
+            audit_superadmin("mfa_enrollment_failed", actor=user, target=user)
+            return Response({"detail": "Código MFA no válido."}, status=400)
+        user.mfa_enabled = True
+        user.save(update_fields=["mfa_enabled"])
+        request.session["superadmin_mfa_satisfied"] = True
+        request.session.pop("superadmin_mfa_enrollment_required", None)
+        audit_superadmin("mfa_enrollment_completed", actor=user, target=user)
+        audit_superadmin("login_succeeded", actor=user, target=user)
+        return Response({"mfa_enabled": True, "mfa_satisfied": True})
+
+
+class SuperadminAccountsView(APIView):
+    """Lifecycle actions for the authenticated superadmin only."""
+
+    def post(self, request):
+        email = str(request.data.get("email", "")).strip().lower()
+        try:
+            from django.core.validators import validate_email
+            validate_email(email)
+        except Exception:
+            return Response({"email": ["Introduce un correo válido."]}, status=400)
+        if User.all_objects.filter(email__iexact=email).exists():
+            return Response({"email": ["Ya existe una cuenta con este correo."]}, status=409)
+        password = temporary_password()
+        try:
+            with transaction.atomic():
+                user = User.objects.create_user(
+                    email=email,
+                    password=password,
+                    is_superadmin=True,
+                    force_password_change=True,
+                    created_by=request.user,
+                )
+                try:
+                    send_email(email, "Nueva cuenta superadmin",
+                        "<p>Tu contraseña temporal es:</p>"
+                        f"<p><strong>{escape(password)}</strong></p>"
+                        "<p>Debes cambiarla y configurar MFA al iniciar sesión.</p>"
+                        f"{login_link_html()}")
+                except EmailDeliveryError:
+                    transaction.set_rollback(True)
+                    return Response({"detail": "No se pudo entregar el correo de invitación."}, status=503)
+                audit_superadmin("superadmin_created", actor=request.user, target=user)
+        except IntegrityError:
+            return Response({"email": ["Ya existe una cuenta con este correo."]}, status=409)
+        return Response({"id": user.pk, "email": user.email,
+                         "force_password_change": True, "mfa_enrollment_required": True}, status=201)
+
+
+class DeactivateSuperadminView(APIView):
+    @transaction.atomic
+    def post(self, request):
+        actor = User.objects.select_for_update().filter(pk=request.user.pk,
+                                                        is_active=True,
+                                                        is_superadmin=True).first()
+        if actor is None:
+            return Response({"detail": "La cuenta ya no está activa."}, status=403)
+        replacement_ready = User.objects.filter(is_superadmin=True, is_active=True,
+            mfa_enabled=True, force_password_change=False).exclude(pk=actor.pk).exists()
+        if not replacement_ready:
+            return Response({"detail": "Se requiere otra cuenta superadmin activa y con MFA configurado."}, status=409)
+        invalidate_current_session(actor, SessionTermination.Reason.ACCOUNT_DISABLED)
+        actor.is_active = False
+        actor.save(update_fields=["is_active", "session_key"])
+        audit_superadmin("superadmin_deactivated", actor=actor, target=actor)
+        logout(request)
+        return Response({"detail": "Cuenta desactivada."})
 
 
 class LogoutView(APIView):
     permission_classes = [IsAuthenticated]
 
     def post(self, request):
+        if request.user.is_superadmin:
+            audit_superadmin("logout", actor=request.user, target=request.user)
         if request.user.session_key == request.session.session_key:
             request.user.session_key = None
             request.user.save(update_fields=["session_key"])
@@ -115,13 +255,25 @@ class MeView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
-        return Response(UserSerializer(request.user).data)
+        user = request.user
+        return Response({**UserSerializer(user).data,
+                         "is_superadmin": user.is_superadmin,
+                         "mfa_enabled": user.mfa_enabled,
+                         "mfa_required": user.is_superadmin,
+                         "mfa_satisfied": bool(not user.is_superadmin or request.session.get("superadmin_mfa_satisfied")),
+                         "mfa_enrollment_required": bool(user.is_superadmin and not user.mfa_enabled),
+                         "must_change_password": user.force_password_change})
 
     def patch(self, request):
         if request.user.force_password_change:
             return Response(
                 {"detail": "Debes cambiar tu contraseña antes de continuar."},
                 status=status.HTTP_403_FORBIDDEN,
+            )
+        if request.user.is_superadmin and "email" in request.data:
+            return Response(
+                {"email": ["El correo de superadmin no se puede cambiar; crea una nueva cuenta y desactiva esta."]},
+                status=status.HTTP_400_BAD_REQUEST,
             )
         serializer = ProfileSerializer(
             request.user,
@@ -155,6 +307,8 @@ class ChangePasswordView(APIView):
         update_session_auth_hash(request, request.user)
         request.user.session_key = request.session.session_key
         request.user.save(update_fields=["session_key"])
+        if request.user.is_superadmin:
+            audit_superadmin("password_changed", actor=request.user, target=request.user)
         return Response({"detail": "La contraseña se cambió correctamente."})
 
 
@@ -165,10 +319,12 @@ class ForgotPasswordView(APIView):
     def post(self, request):
         serializer = ForgotPasswordSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        user = User.objects.filter(
-            email__iexact=serializer.validated_data["email"].strip(),
-            is_active=True,
-        ).first()
+        email = serializer.validated_data["email"].strip()
+        # Superadmin recovery deliberately queries only current, active accounts.
+        user = User.objects.filter(email__iexact=email, is_superadmin=True, is_active=True).first()
+        if user is None:
+            user = User.objects.filter(email__iexact=email, is_superadmin=False,
+                                       is_active=True).first()
         if user is None:
             return Response({
                 "detail": "Si el correo está registrado, recibirás una contraseña provisional."
@@ -186,11 +342,8 @@ class ForgotPasswordView(APIView):
                     f"{login_link_html()}"
                 ),
             )
-        except EmailDeliveryError as error:
-            return Response(
-                {"detail": str(error)},
-                status=status.HTTP_503_SERVICE_UNAVAILABLE,
-            )
+        except EmailDeliveryError:
+            return Response({"detail": "Si el correo está registrado, recibirás una contraseña provisional."})
         invalidate_current_session(
             user,
             reason=SessionTermination.Reason.CREDENTIALS_RESET,
@@ -198,6 +351,8 @@ class ForgotPasswordView(APIView):
         user.set_password(password)
         user.force_password_change = True
         user.save(update_fields=["password", "force_password_change", "session_key"])
+        if user.is_superadmin:
+            audit_superadmin("password_reset", target=user)
         return Response({
             "detail": "Si el correo está registrado, recibirás una contraseña provisional."
         })
