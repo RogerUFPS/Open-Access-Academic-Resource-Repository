@@ -226,6 +226,20 @@ class LinkCheckLog(AuditableModel):
 
     class Meta:
         ordering = ["-created_at", "-pk"]
+        # Sirven a services.current_link_logs(): buscan el registro más
+        # reciente de cada contexto (URL general o relación revista-plataforma).
+        indexes = [
+            models.Index(
+                fields=["platform", "-created_at", "-id"],
+                condition=models.Q(journal_platform__isnull=True),
+                name="link_log_platform_latest",
+            ),
+            models.Index(
+                fields=["journal_platform", "-created_at", "-id"],
+                condition=models.Q(journal_platform__isnull=False),
+                name="link_log_journal_latest",
+            ),
+        ]
         constraints = [
             models.CheckConstraint(
                 condition=(
