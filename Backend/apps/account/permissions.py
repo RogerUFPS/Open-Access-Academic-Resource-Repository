@@ -92,6 +92,9 @@ PUBLIC_ACCOUNT_PATHS = {
 SELF_ACCOUNT_PATHS = {
     "/api/accounts/auth/logout/",
     "/api/accounts/password/change/",
+    "/api/accounts/auth/mfa/challenge/",
+    "/api/accounts/auth/mfa/enroll/",
+    "/api/accounts/auth/mfa/enroll/confirm/",
 }
 
 ACTION_NAMES = {
@@ -161,7 +164,10 @@ class ApplicationPermission(BasePermission):
                 and request.user.is_authenticated
                 and (
                     request.method == "GET"
-                    or not request.user.force_password_change
+                    or (not request.user.force_password_change and (
+                        not request.user.is_superadmin
+                        or request.session.get("superadmin_mfa_satisfied")
+                    ))
                 )
             )
         if path == "/api/accounts/permissions/":
@@ -169,9 +175,35 @@ class ApplicationPermission(BasePermission):
                 request.user
                 and request.user.is_authenticated
                 and not request.user.force_password_change
+                and (not request.user.is_superadmin
+                     or request.session.get("superadmin_mfa_satisfied"))
             )
         if path in SELF_ACCOUNT_PATHS:
-            return bool(request.user and request.user.is_authenticated)
+            authenticated = bool(request.user and request.user.is_authenticated)
+            if not authenticated:
+                return False
+            if path == "/api/accounts/password/change/":
+                return bool(
+                    not request.user.is_superadmin
+                    or request.session.get("superadmin_mfa_satisfied")
+                    or request.user.force_password_change
+                )
+            if request.user.is_superadmin and not request.session.get("superadmin_mfa_satisfied"):
+                return path in {
+                    "/api/accounts/auth/mfa/challenge/",
+                    "/api/accounts/auth/mfa/enroll/",
+                    "/api/accounts/auth/mfa/enroll/confirm/",
+                    "/api/accounts/auth/logout/",
+                }
+            return True
+
+        if path in {"/api/accounts/superadmin/accounts/", "/api/accounts/superadmin/deactivate/"}:
+            return bool(
+                request.user and request.user.is_authenticated
+                and request.user.is_active and request.user.is_superadmin
+                and not request.user.force_password_change
+                and request.session.get("superadmin_mfa_satisfied")
+            )
 
         segments = [part for part in path.strip("/").split("/") if part]
         if len(segments) < 2 or segments[0] != "api":
@@ -190,6 +222,11 @@ class ApplicationPermission(BasePermission):
             return False
         if request.user.force_password_change:
             self.message = "Debes cambiar tu contraseña antes de continuar."
+            return False
+
+        if (request.user.is_superadmin
+                and not request.session.get("superadmin_mfa_satisfied")):
+            self.message = "Debes completar la verificación MFA antes de continuar."
             return False
 
         resource = self._resource(app, tail)

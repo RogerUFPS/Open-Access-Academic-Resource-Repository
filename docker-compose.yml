@@ -15,6 +15,21 @@ x-service: &service
     - services
 
 services:
+  backend-init:
+    <<: *service
+    build: ./Backend
+    image: harvest-backend-init
+    pull_policy: never
+    restart: "no"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    env_file: ./Backend/.env
+    environment:
+      DJANGO_DEBUG: ${DJANGO_DEBUG:-0}
+      DATABASE_POOL: "0"
+    command: ["sh", "-c", "python manage.py migrate --noinput && python manage.py bootstrap_superadmin"]
+
   rabbitmq:
     <<: *service
     build: ./RabbitMQ
@@ -38,6 +53,8 @@ services:
     image: harvest-backend
     pull_policy: never
     depends_on:
+      backend-init:
+        condition: service_completed_successfully
       rustfs-init:
         condition: service_completed_successfully
       rabbitmq:
