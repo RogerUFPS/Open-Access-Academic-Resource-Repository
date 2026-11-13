@@ -20,12 +20,14 @@ function getImageUrl(url) {
 
 export default function ResourceThumb({
   src,
+  thumbnailSrc,
   name,
   fallback,
   className = "",
   imageClassName = "",
+  loading,
 }) {
-  const imageUrl = getImageUrl(src);
+  const imageUrl = getImageUrl(thumbnailSrc) || getImageUrl(src);
   const [failedSrc, setFailedSrc] = useState("");
 
   useEffect(() => {
@@ -48,6 +50,7 @@ export default function ResourceThumb({
       alt={`Logo de ${name}`}
       className={`object-contain ${imageClassName || className}`}
       src={imageUrl}
+      loading={loading}
       onError={() => setFailedSrc(imageUrl)}
     />
   );

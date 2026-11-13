@@ -830,7 +830,9 @@ def check_link_context(
             is_active=is_active,
             last_check=checked_at,
             failure_notified_at=None if is_active else current.failure_notified_at,
-            check_batch_id=check_batch_id or current.check_batch_id,
+            # La procedencia pertenece a este evento, no al anterior. El
+            # contador y la marca del incidente sí se leen del estado vigente.
+            check_batch_id=check_batch_id,
             created_by=user,
         )
 

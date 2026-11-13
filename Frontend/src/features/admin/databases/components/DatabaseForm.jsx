@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { platformService } from "../services/platformService";
 import { capitalizeWords } from "@/lib/utils";
@@ -25,7 +25,7 @@ import useDerivedKnowledgeAreas from "@/shared/components/classification/useDeri
 import { toFieldErrors } from "@/shared/utils/formErrors";
 import { buildPlatformChecklist, isChecklistComplete } from "@/shared/utils/publishChecklists";
 import { ValidSintaxisPanel } from "./ValidSintaxisPanel";
-import { ArrowLeft, CheckCircle2, Save } from "lucide-react";
+import { ArrowLeft, CheckCircle2, RefreshCw, Save } from "lucide-react";
 
 const STATUS_LABELS = {
   BORRADOR: "Borrador",
@@ -144,7 +144,8 @@ export default function DatabaseForm({ initialData = null, isEdit = false, publi
   const [record, setRecord] = useState(initialData);
   const [formData, setFormData] = useState(() => (initialData ? formFromRecord(initialData) : EMPTY_FORM));
   const [clearApiKey, setClearApiKey] = useState(false);
-  const [submitting, setSubmitting] = useState(null); // null | "save" | "publish"
+  const [submitting, setSubmitting] = useState(null); // null | "save" | "check" | "publish"
+  const [verificationStatus, setVerificationStatus] = useState("unverified");
   const [fieldErrors, setFieldErrors] = useState(() => toFieldErrors(publishErrors));
   const [formError, setFormError] = useState(() =>
     publishErrors && Object.keys(publishErrors).length > 0
@@ -211,9 +212,37 @@ export default function DatabaseForm({ initialData = null, isEdit = false, publi
   const recordId = record?.id ?? null;
   const canBePublished = status === "BORRADOR";
 
+  const syncLinkVerificationStatus = useCallback(async (platformId = recordId) => {
+    if (!platformId) return "unverified";
+    try {
+      const link = await platformService.getCurrentPlatformLinkLog(platformId);
+      const newStatus = link?.verification_status || "unverified";
+      setVerificationStatus(newStatus);
+      return newStatus;
+    } catch {
+      setVerificationStatus("unverified");
+      return "unverified";
+    }
+  }, [recordId]);
+
+  useEffect(() => {
+    if (!recordId) {
+      return;
+    }
+    let cancelled = false;
+    platformService.getCurrentPlatformLinkLog(recordId).then((link) => {
+      if (!cancelled) setVerificationStatus(link?.verification_status || "unverified");
+    }).catch(() => {
+      if (!cancelled) setVerificationStatus("unverified");
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [recordId]);
+
   const checklist = buildPlatformChecklist({
     publicUrl: formData.public_url,
-    urlStatus: "pending",
+    urlStatus: verificationStatus,
     validSintaxis: formData.valid_sintaxis,
     institutions: formData.institutions,
     countries: formData.countries,
@@ -230,6 +259,7 @@ export default function DatabaseForm({ initialData = null, isEdit = false, publi
 
   const updateField = (field, value) => {
     setFormData((current) => ({ ...current, [field]: value }));
+    if (field === "public_url") setVerificationStatus("unverified");
     if (fieldErrors[field]) setFieldErrors((current) => ({ ...current, [field]: null }));
   };
 
@@ -315,6 +345,7 @@ export default function DatabaseForm({ initialData = null, isEdit = false, publi
       setFormData(formFromRecord(saved));
       setClearApiKey(false);
     }
+    await syncLinkVerificationStatus(savedId);
 
     if (pendingImage && savedId) {
       try {
@@ -330,6 +361,43 @@ export default function DatabaseForm({ initialData = null, isEdit = false, publi
       }
     }
 
+    if (action === "check" && savedId) {
+      if (!canCheckLink) {
+        setSubmitting(null);
+        toast({
+          title: "No tienes permiso para verificar la URL",
+          description: "Contacta a un administrador para solicitar el permiso platforms.platforms.check_link.",
+          variant: "destructive",
+        });
+        return;
+      }
+      try {
+        const link = await platformService.checkLink(savedId);
+        const newStatus = link?.verification_status || "unverified";
+        setVerificationStatus(newStatus);
+        toast({
+          title: newStatus === "available"
+            ? "URL verificada con éxito"
+            : newStatus === "unavailable"
+            ? "La URL no está disponible"
+            : "Verificación de URL ejecutada",
+          description: newStatus === "available"
+            ? "El enlace público está disponible."
+            : newStatus === "unavailable"
+            ? "Corrige la URL pública antes de publicar."
+            : undefined,
+          variant: newStatus === "unavailable" ? "destructive" : undefined,
+        });
+      } catch (err) {
+        showErrors("Los cambios se guardaron, pero no se pudo verificar la URL pública.", {
+          public_url: linkActionError(err),
+        });
+      } finally {
+        setSubmitting(null);
+      }
+      return;
+    }
+
     // 3. Verificar URL (solo con permiso platforms.platforms.check_link) y publicar.
     // Sin permiso no se invoca check-link: el backend valida la URL vigente al publicar.
     if (action === "publish" && savedId) {
@@ -337,6 +405,7 @@ export default function DatabaseForm({ initialData = null, isEdit = false, publi
         let link;
         try {
           link = await platformService.checkLink(savedId);
+          setVerificationStatus(link?.verification_status || "unverified");
         } catch (err) {
           showErrors("Los cambios se guardaron, pero no se pudo verificar la URL pública.", {
             public_url: linkActionError(err),
@@ -351,7 +420,9 @@ export default function DatabaseForm({ initialData = null, isEdit = false, publi
           setSubmitting(null);
           return;
         }
+        setVerificationStatus("available");
       }
+      await syncLinkVerificationStatus(savedId);
       try {
         await platformService.publishPlatform(savedId);
       } catch (err) {
@@ -463,7 +534,23 @@ export default function DatabaseForm({ initialData = null, isEdit = false, publi
                     placeholder="https://www.scielo.org"
                     className={inputClass}
                   />
-                  <p className="text-[10px] text-gray-400">Se verifica automáticamente (check-link) al publicar.</p>
+                  {verificationStatus !== "unverified" && (
+                    <p className={`text-[10px] font-medium ${
+                      verificationStatus === "available" ? "text-emerald-600" : "text-red-600"
+                    }`}>
+                      {verificationStatus === "available" ? "URL disponible" : "URL no disponible"}
+                    </p>
+                  )}
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() => handleSubmit("check")}
+                    disabled={!formData.public_url.trim() || !canCheckLink || Boolean(submitting)}
+                    className="mt-2 h-8 rounded-lg border-[#C8102E]/30 text-[#C8102E] text-[11px] px-3 gap-1.5"
+                  >
+                    <RefreshCw className={`w-3.5 h-3.5 ${submitting === "check" ? "animate-spin" : ""}`} aria-hidden="true" />
+                    {submitting === "check" ? "Verificando..." : "Verificar URL"}
+                  </Button>
                   <FieldError field="public_url" message={fieldErrors.public_url} />
                 </div>
                 <div id={fieldAnchorId("url_image")} className={`${cardClass} md:col-span-2`}>

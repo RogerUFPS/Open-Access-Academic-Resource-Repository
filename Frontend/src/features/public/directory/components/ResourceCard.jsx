@@ -12,7 +12,9 @@ export default function ResourceCard({ resource, type }) {
           className="h-10 w-10"
           fallback={isDatabase ? "BD" : "R"}
           imageClassName="h-10 w-10 rounded-md border border-[#e7dfd9] bg-white p-1"
+          loading="lazy"
           name={resource.name}
+          thumbnailSrc={resource.url_image_thumbnail}
           src={resource.url_image}
         />
         <span className="text-right text-[11px] font-semibold uppercase tracking-wider text-[#5c5252]">{isDatabase ? "Base de datos" : "Revista"}</span>

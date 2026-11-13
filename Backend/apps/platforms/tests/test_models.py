@@ -29,11 +29,7 @@ from apps.platforms.models import (
 class PlatformModelsTests(TestCase):
     @classmethod
     def setUpTestData(cls):
-        cls.system = User.objects.create_user(
-            code=0,
-            full_name="Sistema",
-            email="sistema@test.local",
-        )
+        cls.system = User.objects.get(code=0)
 
     def test_platform_encryption_and_decryption(self):
         """Verifica que la API Key se almacene cifrada y se descifre correctamente."""
@@ -142,8 +138,8 @@ class PlatformModelsTests(TestCase):
             created_by=self.system,
         )
         country = Country.objects.create(
-            name="colombia",
-            abbreviation="co",
+            name="país pruebas de relaciones Platform",
+            abbreviation="test-co",
             emoji_flag="🇨🇴",
             created_by=self.system,
         )

@@ -1,4 +1,6 @@
+import time
 from datetime import timedelta
+from unittest.mock import patch
 
 from django.contrib.sessions.models import Session
 from django.test import TestCase
@@ -56,7 +58,11 @@ class CookieSessionTests(TestCase):
             expire_date=expiring_soon,
         )
 
-        response = client.get("/api/accounts/auth/me/")
+        # La renovación está limitada por SESSION_RENEWAL_INTERVAL: se simula
+        # una petición posterior a ese intervalo desde el login.
+        later = time.time() + 61
+        with patch("apps.core.middleware.time.time", return_value=later):
+            response = client.get("/api/accounts/auth/me/")
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(client.cookies["sessionid"].value, session_key)

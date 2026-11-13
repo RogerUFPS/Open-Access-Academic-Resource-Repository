@@ -8,6 +8,7 @@ from django.core.validators import validate_email
 from django.db import transaction
 from django.db.models import Q
 from django.utils import timezone
+from kombu.exceptions import OperationalError
 
 from apps.account import email
 from apps.account.models import User
@@ -23,17 +24,25 @@ RECIPIENT_QUERY_CHUNK_SIZE = 200
 
 def failure_recipients():
     addresses = set()
-    for user in User.objects.filter(is_active=True).prefetch_related("presets").iterator(
-        chunk_size=RECIPIENT_QUERY_CHUNK_SIZE,
-    ):
-        if not has_permission(user, "platforms", "platforms", "check_link"):
-            continue
-        address = (user.email or "").strip()
-        try:
-            validate_email(address)
-        except ValidationError:
-            continue
-        addresses.add(address)
+    users = User.objects.filter(is_active=True).order_by("pk")
+    last_pk = None
+    while True:
+        page = users if last_pk is None else users.filter(pk__gt=last_pk)
+        # Evaluar cada lote sin iterator(): no depende de un cursor del servidor
+        # que pueda desaparecer entre transacciones de una conexión pooled.
+        batch = list(page.prefetch_related("presets")[:RECIPIENT_QUERY_CHUNK_SIZE])
+        if not batch:
+            break
+        last_pk = batch[-1].pk
+        for user in batch:
+            if not has_permission(user, "platforms", "platforms", "check_link"):
+                continue
+            address = (user.email or "").strip()
+            try:
+                validate_email(address)
+            except ValidationError:
+                continue
+            addresses.add(address)
     return sorted(addresses)
 
 
@@ -81,6 +90,37 @@ def failure_summary_html(logs, total):
     return html
 
 
+def pending_failure_notifications():
+    """Incidentes vigentes sin notificar y listos para el resumen compartido."""
+    return services.confirmed_link_failures().filter(
+        failure_notified_at__isnull=True,
+    ).filter(
+        Q(check_batch__isnull=True) | Q(check_batch__run__finished_at__isnull=False),
+    )
+
+
+def enqueue_pending_link_failure_notification():
+    """Solicita un resumen tras el commit de una operación manual completa.
+
+    El chequeo de candidatos también ocurre después del commit. No se envía
+    correo aquí ni se convierte un fallo del broker en un fallo del checker.
+    """
+    def publish_if_pending():
+        if not pending_failure_notifications().exists():
+            return
+        # Importación diferida: tasks utiliza el notificador de este módulo.
+        from .tasks import notify_link_failures
+
+        try:
+            notify_link_failures.delay()
+        except OperationalError:
+            logger.warning(
+                "No se pudo encolar el resumen de enlaces; los incidentes siguen pendientes",
+            )
+
+    transaction.on_commit(publish_if_pending, robust=True)
+
+
 def notify_confirmed_failures():
     recipients = failure_recipients()
     if not recipients:
@@ -92,11 +132,7 @@ def notify_confirmed_failures():
         # repetir alertas cuando varios callbacks se ejecutan simultáneamente.
         # Un callback de otra ronda no debe adelantar los resultados parciales
         # de una ronda que todavía tiene workers procesando lotes.
-        ready = services.confirmed_link_failures().filter(
-            failure_notified_at__isnull=True,
-        ).filter(
-            Q(check_batch__isnull=True) | Q(check_batch__run__finished_at__isnull=False),
-        )
+        ready = pending_failure_notifications()
         platform_ids = list(
             ready
             .order_by("platform_id").values_list("platform_id", flat=True).distinct()

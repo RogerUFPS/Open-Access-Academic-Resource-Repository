@@ -30,7 +30,7 @@ from apps.core.pagination import CustomPageNumberPagination
 from apps.account.authentication import CookieSessionAuthentication
 from apps.account.scheduler_authentication import SchedulerTokenAuthentication
 
-from . import classification, filters, models, serializers, services
+from . import classification, filters, models, notifications, serializers, services
 from .tasks import dispatch_link_checks
 from .permissions import LinkVerificationPermission
 
@@ -68,6 +68,24 @@ def _get_or_create_link_check_run(mode, user, idempotency_key):
         if existing:
             return existing, False
         raise
+
+
+@transaction.atomic
+def _dispatch_link_check_run(run_id):
+    """Publica una sola vez una ronda conocida como pendiente de despacho.
+
+    Creación e idempotencia se resuelven antes. El lock serializa también los
+    reintentos de una ronda existente; el coordinador espera este commit antes
+    de planificar. Una publicación fallida deja el identificador vacío.
+    """
+    run = models.LinkCheckRun.objects.select_for_update().get(pk=run_id)
+    if not run.dispatch_task_id:
+        task_id = dispatch_link_checks.delay(run.pk).id
+        if not isinstance(task_id, str) or not task_id.strip():
+            raise OperationalError("Celery no confirmó un identificador de despacho válido.")
+        run.dispatch_task_id = task_id
+        run.save(update_fields=["dispatch_task_id"])
+    return run
 
 
 def _with_public_link_logs(queryset):
@@ -109,6 +127,29 @@ def _with_public_relations(queryset):
             )
         )
     return queryset.select_related("valid_sintaxis").prefetch_related(*prefetches)
+
+
+def _with_admin_relations(queryset):
+    # Las reglas administrativas difieren de las públicas: conservar el filtro
+    # del manager de los vínculos y la representación actual de procedencia.
+    relation_specs = (
+        ("support_links", "institutions", models.SharedPlatformSupport, "institution"),
+        ("language_links", "languages", models.SharedPlatformLanguage, "language"),
+        ("country_links", "countries", models.SharedPlatformCountry, "country"),
+        ("knowledge_area_links", "knowledge_areas", models.SharedPlatformKnowledgeArea, "knowledge_area"),
+        ("material_type_links", "material_types", models.SharedPlatformMaterialType, "material_type"),
+        ("academic_program_links", "academic_programs", models.SharedPlatformAcademicProgram, "academic_program"),
+    )
+    return queryset.prefetch_related(*(
+        Prefetch(
+            relation_name,
+            queryset=through_model.objects.select_related(relation_field).order_by(
+                f"{relation_field}__name",
+            ),
+            to_attr=f"_admin_{data_field}",
+        )
+        for relation_name, data_field, through_model, relation_field in relation_specs
+    ))
 
 
 # ==============================================================================
@@ -451,6 +492,12 @@ class PlatformViewSet(ResourceImageMixin, AuditableViewSet):
     serializer_class = serializers.PlatformSerializer
     image_folder = "platforms"
 
+    def get_queryset(self):
+        queryset = super().get_queryset()
+        if getattr(self, "action", None) == "list":
+            return _with_admin_relations(queryset)
+        return queryset
+
     search_fields = [
         "name",
     ]
@@ -608,7 +655,9 @@ class PlatformViewSet(ResourceImageMixin, AuditableViewSet):
             "Verifica la URL pública de la plataforma y registra el "
             "resultado de la comprobación. Si se envía una URL, esta "
             "se registra y verifica. Si no se envía, se utiliza la "
-            "última URL pública registrada para la plataforma."
+            "última URL pública registrada para la plataforma. Manual y automático "
+            "comparten contador consecutivo. Tras persistir el resultado solicita una "
+            "notificación asíncrona si hay caídas confirmadas pendientes, sin esperar a Resend."
         ),
         request=inline_serializer(
             name="PlatformLinkCheckRequest",
@@ -652,6 +701,7 @@ class PlatformViewSet(ResourceImageMixin, AuditableViewSet):
             user=user,
             url=url,
         )
+        notifications.enqueue_pending_link_failure_notification()
 
         return Response(
             serializers.LinkCheckLogSerializer(link_log).data,
@@ -661,6 +711,12 @@ class PlatformViewSet(ResourceImageMixin, AuditableViewSet):
     @extend_schema(
         summary="Verificar todos los enlaces vigentes de una plataforma",
         operation_id="platform_check_links",
+        description=(
+            "Comprueba la URL general y los contextos Journal–Platform vigentes con el "
+            "mismo contador que Celery. Después de persistir todos los resultados solicita "
+            "un único resumen asíncrono si existen caídas confirmadas sin notificar. "
+            "La respuesta no espera a Resend ni confirma entrega de correo."
+        ),
         request=None,
         responses={200: serializers.PlatformLinksCheckResponseSerializer},
         tags=["Plataformas - Verificación de enlaces"],
@@ -674,12 +730,18 @@ class PlatformViewSet(ResourceImageMixin, AuditableViewSet):
             platform=self.get_object(),
             user=get_acting_user(request),
         )
+        notifications.enqueue_pending_link_failure_notification()
         data = serializers.PlatformLinksCheckResponseSerializer(result).data
         return Response(data, status=status.HTTP_200_OK)
 
     @extend_schema(
         summary="Verificar todos los enlaces vigentes del sistema",
         operation_id="platform_check_links_global",
+        description=(
+            "Operación síncrona existente. Persiste los resultados y, al finalizar, "
+            "solicita una sola tarea del notificador compartido si hay candidatos. "
+            "No envía correo por URL ni espera a Resend. Conserva la respuesta 204."
+        ),
         request=None,
         responses={204: None},
         tags=["Plataformas - Verificación de enlaces"],
@@ -690,6 +752,7 @@ class PlatformViewSet(ResourceImageMixin, AuditableViewSet):
     )
     def check_all_links(self, request):
         services.check_all_current_links(user=get_acting_user(request))
+        notifications.enqueue_pending_link_failure_notification()
         return Response(status=status.HTTP_204_NO_CONTENT)
 
     def _enqueue_link_run(self, request, mode):
@@ -700,7 +763,7 @@ class PlatformViewSet(ResourceImageMixin, AuditableViewSet):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        run, created = _get_or_create_link_check_run(
+        run, _created = _get_or_create_link_check_run(
             mode,
             get_acting_user(request),
             idempotency_key,
@@ -711,21 +774,18 @@ class PlatformViewSet(ResourceImageMixin, AuditableViewSet):
                 status=status.HTTP_409_CONFLICT,
             )
 
-        if created:
-            try:
-                task = dispatch_link_checks.delay(run.pk)
-            except OperationalError:
-                logger.exception("No se pudo encolar ronda de enlaces: run=%s", run.pk)
-                return Response(
-                    {"detail": "No se pudo confirmar el envío al broker.", "run_id": run.pk},
-                    status=status.HTTP_503_SERVICE_UNAVAILABLE,
-                )
-            run.dispatch_task_id = task.id
-            run.save(update_fields=["dispatch_task_id"])
+        try:
+            run = _dispatch_link_check_run(run.pk)
+        except OperationalError:
+            logger.exception("No se pudo encolar ronda de enlaces: run=%s", run.pk)
+            return Response(
+                {"detail": "No se pudo confirmar el envío al broker.", "run_id": run.pk},
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
         return Response(
             {
                 "run_id": run.pk,
-                "task_id": run.dispatch_task_id or None,
+                "task_id": run.dispatch_task_id,
                 "mode": mode,
             },
             status=status.HTTP_202_ACCEPTED,
@@ -734,12 +794,20 @@ class PlatformViewSet(ResourceImageMixin, AuditableViewSet):
     @extend_schema(
         summary="Encolar verificación total de enlaces vigentes",
         description=(
-            "Asíncrono: cron cada 4 horas. Requiere sesión autenticada, CSRF y "
-            "permiso platforms.platforms.check_link. No espera las comprobaciones HTTP. "
-            "Usa Celery/RabbitMQ existentes y notifica nuevas caídas tras completar los lotes."
+            "Asíncrono: Celery Beat/apps.scheduler cada 4 horas. Admite Bearer mediante "
+            "SchedulerTokenAuthentication o sesión administrativa con CSRF; exige "
+            "platforms.platforms.check_link. Reutiliza la ronda activa y admite Idempotency-Key. "
+            "Si una publicación anterior falló, reintenta el despacho de esa misma ronda "
+            "bajo bloqueo. Una respuesta 202 incluye siempre un task_id no vacío. "
+            "No espera comprobaciones HTTP ni correo; usa Celery/RabbitMQ existentes."
         ),
         request=None,
-        responses={202: serializers.LinkCheckTriggerResponseSerializer, 401: None, 403: None, 503: None},
+        parameters=[OpenApiParameter(
+            name="Idempotency-Key", type=OpenApiTypes.STR,
+            location=OpenApiParameter.HEADER,
+            description="Opcional, hasta 255 caracteres. Reutilizar al reintentar la misma operación.",
+        )],
+        responses={202: serializers.LinkCheckTriggerResponseSerializer, 400: None, 401: None, 403: None, 409: None, 503: None},
         tags=["Plataformas - Verificación de enlaces"],
     )
     @action(
@@ -756,12 +824,20 @@ class PlatformViewSet(ResourceImageMixin, AuditableViewSet):
     @extend_schema(
         summary="Encolar reintentos de enlaces con 1–4 fallos consecutivos",
         description=(
-            "Asíncrono: cron cada 15 minutos. Misma sesión, CSRF y permiso "
-            "platforms.platforms.check_link. Solo URLs vigentes comprobadas y no disponibles. "
-            "Cinco fallos confirman una caída; desde entonces solo participa en la ronda total."
+            "Asíncrono: Celery Beat/apps.scheduler cada 15 minutos. Admite Bearer del "
+            "scheduler o sesión administrativa con CSRF; exige platforms.platforms.check_link. "
+            "Solo URLs vigentes comprobadas, no disponibles y con 1–4 fallos consecutivos. "
+            "El contador es compartido con verificaciones manuales. Desde el quinto fallo "
+            "solo participa en la ronda total. Reutiliza rondas e Idempotency-Key y permite "
+            "republicar una ronda sin despacho confirmado. Un 202 siempre incluye task_id."
         ),
         request=None,
-        responses={202: serializers.LinkCheckTriggerResponseSerializer, 401: None, 403: None, 503: None},
+        parameters=[OpenApiParameter(
+            name="Idempotency-Key", type=OpenApiTypes.STR,
+            location=OpenApiParameter.HEADER,
+            description="Opcional, hasta 255 caracteres. Reutilizar al reintentar la misma operación.",
+        )],
+        responses={202: serializers.LinkCheckTriggerResponseSerializer, 400: None, 401: None, 403: None, 409: None, 503: None},
         tags=["Plataformas - Verificación de enlaces"],
     )
     @action(

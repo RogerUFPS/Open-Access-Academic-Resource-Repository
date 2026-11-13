@@ -5,6 +5,11 @@ import logging
 from celery import shared_task
 from django.conf import settings
 from django.db import transaction
+from django.db.utils import (
+    InterfaceError,
+    OperationalError as DatabaseOperationalError,
+    ProgrammingError,
+)
 from django.utils import timezone
 from rest_framework.exceptions import ValidationError
 
@@ -125,3 +130,15 @@ def notify_link_failures(self):
     except EmailDeliveryError:
         logger.warning("Falló el envío del resumen de enlaces; las marcas siguen pendientes")
         raise
+    except (DatabaseOperationalError, InterfaceError, ProgrammingError) as exc:
+        # InvalidCursorName llega envuelto por Django como ProgrammingError.
+        # No reintentar otros errores de programación (p. ej. columnas ausentes).
+        sqlstate = getattr(exc.__cause__, "sqlstate", None)
+        if isinstance(exc, ProgrammingError) and sqlstate != "34000":
+            raise
+        logger.warning(
+            "Falló la base de datos del resumen de enlaces; se solicita reintento: "
+            "error_type=%s sqlstate=%s retry=%s",
+            type(exc).__name__, sqlstate, self.request.retries,
+        )
+        raise self.retry(exc=exc, countdown=min(2 ** self.request.retries, 60))
