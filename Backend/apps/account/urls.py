@@ -9,6 +9,7 @@ urlpatterns = [
     path("auth/mfa/enroll/", views.MFAEnrollmentView.as_view(), name="account-mfa-enroll"),
     path("auth/mfa/enroll/confirm/", views.MFAEnrollmentConfirmView.as_view(), name="account-mfa-enroll-confirm"),
     path("auth/logout/", views.LogoutView.as_view(), name="account-logout"),
+    path("auth/session/", views.SessionView.as_view(), name="account-session"),
     path("auth/me/", views.MeView.as_view(), name="account-me"),
     path("register/", views.RegisterView.as_view(), name="account-register"),
     path("password/change/", views.ChangePasswordView.as_view(), name="password-change"),

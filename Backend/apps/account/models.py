@@ -39,6 +39,13 @@ class UserManager(BaseUserManager):
         user.save(using=self._db)
         return user
 
+    def create_superuser(self, email=None, password=None, **extra_fields):
+        extra_fields.setdefault("is_superadmin", True)
+        extra_fields.setdefault("is_active", True)
+        if extra_fields.get("is_superadmin") is not True:
+            raise ValueError("Una cuenta superadmin debe tener is_superadmin=True.")
+        return self.create_user(email=email, password=password, **extra_fields)
+
 class User(SoftDeleteMixin, AbstractBaseUser):
     """Cuenta autenticada por correo electrónico."""
 

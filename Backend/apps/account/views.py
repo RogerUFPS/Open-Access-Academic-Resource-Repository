@@ -5,6 +5,7 @@ from django.contrib.auth import authenticate, login, logout, update_session_auth
 from django.contrib.sessions.backends.db import SessionStore
 from django.db import IntegrityError, transaction
 from django.utils import timezone
+from django.conf import settings
 from django.views.decorators.csrf import csrf_protect, ensure_csrf_cookie
 from django.utils.decorators import method_decorator
 from rest_framework import status
@@ -21,6 +22,25 @@ from .security import (
     enrollment_uri,
     new_totp_secret,
     verify_totp,
+)
+from .session_security import (
+    MFA_ENROLLMENT_STARTED_AT,
+    has_recent_authentication,
+    initialize_session_security,
+    make_private_no_store,
+    mark_mfa_verified,
+    rotate_authenticated_session,
+    session_metadata,
+)
+from .throttles import (
+    LoginBurstThrottle,
+    LoginSustainedThrottle,
+    MFABurstThrottle,
+    MFASustainedThrottle,
+    PasswordRecoveryThrottle,
+    clear_failures,
+    progressive_wait,
+    record_failure,
 )
 from apps.core.utils.crypto import decrypt_api_key
 from .serializers import (
@@ -42,6 +62,18 @@ def temporary_password():
     return secrets.token_urlsafe(18)
 
 
+def recent_authentication_required(request):
+    if has_recent_authentication(request):
+        return None
+    return Response(
+        {
+            "detail": "Vuelve a autenticarte antes de realizar esta operación crítica.",
+            "code": "recent_authentication_required",
+        },
+        status=status.HTTP_403_FORBIDDEN,
+    )
+
+
 def invalidate_current_session(user, reason):
     session_key = user.session_key
     if session_key:
@@ -55,23 +87,35 @@ class CsrfView(APIView):
 
     @method_decorator(ensure_csrf_cookie)
     def get(self, request):
-        return Response({"detail": "Token CSRF disponible en la cookie csrftoken."})
+        return make_private_no_store(Response({
+            "detail": "Token CSRF disponible en la cookie configurada."
+        }))
 
 
 class LoginView(APIView):
     permission_classes = [AllowAny]
+    throttle_classes = [LoginBurstThrottle, LoginSustainedThrottle]
 
     @method_decorator(csrf_protect)
     def post(self, request):
         serializer = LoginSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         email = serializer.validated_data["email"].strip().lower()
+        wait = progressive_wait(request, email, "login")
+        if wait:
+            response = Response(
+                {"detail": "Demasiados intentos fallidos. Intenta nuevamente más tarde."},
+                status=status.HTTP_429_TOO_MANY_REQUESTS,
+            )
+            response["Retry-After"] = str(wait)
+            return response
         user = authenticate(
             request,
             email=email,
             password=serializer.validated_data["password"],
         )
         if user is None:
+            record_failure(request, email, "login")
             candidate = User.objects.filter(email__iexact=email, is_superadmin=True).first()
             if candidate:
                 audit_superadmin("login_failed", target=candidate, details={"stage": "password"})
@@ -79,6 +123,7 @@ class LoginView(APIView):
                 {"detail": "Correo o contraseña incorrectos."},
                 status=status.HTTP_401_UNAUTHORIZED,
             )
+        clear_failures(request, email, "login")
 
         with transaction.atomic():
             user = User.objects.select_for_update().get(pk=user.pk)
@@ -89,6 +134,7 @@ class LoginView(APIView):
                 SessionTermination.record(user, user.session_key)
                 SessionStore(session_key=user.session_key).delete()
             login(request, user)
+            initialize_session_security(request)
             if user.is_superadmin:
                 request.session["superadmin_mfa_satisfied"] = False
                 request.session["superadmin_mfa_enrollment_required"] = not user.mfa_enabled
@@ -98,6 +144,20 @@ class LoginView(APIView):
             request.session.save()
             user.session_key = request.session.session_key
             user.save(update_fields=["session_key"])
+
+        if previous_session_terminated:
+            try:
+                send_email(
+                    user.email,
+                    "Aviso de nuevo inicio de sesión",
+                    (
+                        "<p>Se inició una nueva sesión y la sesión anterior fue cerrada.</p>"
+                        "<p>Si no reconoces esta actividad, recupera tu contraseña inmediatamente.</p>"
+                    ),
+                )
+            except EmailDeliveryError:
+                # La entrega del aviso no debe impedir un login legítimo.
+                pass
 
         return Response({
             "user": {**UserSerializer(user).data, "is_superadmin": user.is_superadmin,
@@ -113,19 +173,32 @@ class LoginView(APIView):
 
 class MFAChallengeView(APIView):
     permission_classes = [IsAuthenticated]
+    throttle_classes = [MFABurstThrottle, MFASustainedThrottle]
 
     def post(self, request):
         code = str(request.data.get("code", ""))
         user = request.user
+        wait = progressive_wait(request, user.pk, "mfa")
+        if wait:
+            response = Response(
+                {"detail": "Demasiados códigos incorrectos. Intenta nuevamente más tarde."},
+                status=status.HTTP_429_TOO_MANY_REQUESTS,
+            )
+            response["Retry-After"] = str(wait)
+            return response
         if not user.is_superadmin or not user.is_active or not user.mfa_enabled:
             if user.is_superadmin:
                 audit_superadmin("mfa_challenge_failed", target=user)
             return Response({"detail": "No se pudo verificar el código."}, status=400)
         if not verify_totp(user, code):
+            record_failure(request, user.pk, "mfa")
             audit_superadmin("mfa_challenge_failed", actor=user, target=user)
             return Response({"detail": "Código MFA no válido."}, status=400)
+        clear_failures(request, user.pk, "mfa")
         request.session["superadmin_mfa_satisfied"] = True
         request.session.pop("superadmin_mfa_enrollment_required", None)
+        mark_mfa_verified(request)
+        rotate_authenticated_session(request, user)
         audit_superadmin("mfa_challenge_succeeded", actor=user, target=user)
         audit_superadmin("login_succeeded", actor=user, target=user)
         return Response({"mfa_satisfied": True})
@@ -134,36 +207,69 @@ class MFAChallengeView(APIView):
 class MFAEnrollmentView(APIView):
     permission_classes = [IsAuthenticated]
 
-    def get(self, request):
+    def post(self, request):
         user = request.user
         if not user.is_superadmin or not user.is_active or user.force_password_change:
             return Response({"detail": "Cambia la contraseña antes de configurar MFA."}, status=403)
         if user.mfa_enabled:
             return Response({"detail": "MFA ya está configurado."}, status=409)
-        secret = decrypt_api_key(user.mfa_secret) if user.mfa_secret else ""
+        started_at = request.session.get(MFA_ENROLLMENT_STARTED_AT)
+        expired = (
+            not isinstance(started_at, int)
+            or int(timezone.now().timestamp()) - started_at > settings.MFA_ENROLLMENT_TTL
+        )
+        secret = decrypt_api_key(user.mfa_secret) if user.mfa_secret and not expired else ""
         if not secret:
             secret = new_totp_secret()
             user.mfa_secret = encrypt_totp_secret(secret)
             user.save(update_fields=["mfa_secret"])
+            request.session[MFA_ENROLLMENT_STARTED_AT] = int(timezone.now().timestamp())
             audit_superadmin("mfa_enrollment_started", actor=user, target=user)
-        return Response({"secret": secret, "otpauth_uri": enrollment_uri(user, secret)})
+        return make_private_no_store(Response({
+            "secret": secret,
+            "otpauth_uri": enrollment_uri(user, secret),
+            "expires_in": settings.MFA_ENROLLMENT_TTL,
+        }))
 
 
 class MFAEnrollmentConfirmView(APIView):
     permission_classes = [IsAuthenticated]
+    throttle_classes = [MFABurstThrottle, MFASustainedThrottle]
 
     def post(self, request):
         user = request.user
         if (not user.is_superadmin or not user.is_active or user.force_password_change
                 or user.mfa_enabled):
             return Response({"detail": "No se puede completar la inscripción MFA."}, status=403)
+        started_at = request.session.get(MFA_ENROLLMENT_STARTED_AT)
+        if (
+            not isinstance(started_at, int)
+            or int(timezone.now().timestamp()) - started_at > settings.MFA_ENROLLMENT_TTL
+        ):
+            return Response(
+                {"detail": "La inscripción MFA expiró. Iníciala nuevamente."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        wait = progressive_wait(request, user.pk, "mfa")
+        if wait:
+            response = Response(
+                {"detail": "Demasiados códigos incorrectos. Intenta nuevamente más tarde."},
+                status=status.HTTP_429_TOO_MANY_REQUESTS,
+            )
+            response["Retry-After"] = str(wait)
+            return response
         if not verify_totp(user, str(request.data.get("code", ""))):
+            record_failure(request, user.pk, "mfa")
             audit_superadmin("mfa_enrollment_failed", actor=user, target=user)
             return Response({"detail": "Código MFA no válido."}, status=400)
+        clear_failures(request, user.pk, "mfa")
         user.mfa_enabled = True
         user.save(update_fields=["mfa_enabled"])
         request.session["superadmin_mfa_satisfied"] = True
         request.session.pop("superadmin_mfa_enrollment_required", None)
+        request.session.pop(MFA_ENROLLMENT_STARTED_AT, None)
+        mark_mfa_verified(request)
+        rotate_authenticated_session(request, user)
         audit_superadmin("mfa_enrollment_completed", actor=user, target=user)
         audit_superadmin("login_succeeded", actor=user, target=user)
         return Response({"mfa_enabled": True, "mfa_satisfied": True})
@@ -173,6 +279,9 @@ class SuperadminAccountsView(APIView):
     """Lifecycle actions for the authenticated superadmin only."""
 
     def post(self, request):
+        denied = recent_authentication_required(request)
+        if denied:
+            return denied
         email = str(request.data.get("email", "")).strip().lower()
         try:
             from django.core.validators import validate_email
@@ -210,6 +319,9 @@ class SuperadminAccountsView(APIView):
 class DeactivateSuperadminView(APIView):
     @transaction.atomic
     def post(self, request):
+        denied = recent_authentication_required(request)
+        if denied:
+            return denied
         actor = User.objects.select_for_update().filter(pk=request.user.pk,
                                                         is_active=True,
                                                         is_superadmin=True).first()
@@ -238,6 +350,20 @@ class LogoutView(APIView):
             request.user.save(update_fields=["session_key"])
         logout(request)
         return Response({"detail": "Sesión cerrada."})
+
+
+class SessionView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        return make_private_no_store(Response(session_metadata(request)))
+
+    def delete(self, request):
+        if request.user.session_key == request.session.session_key:
+            request.user.session_key = None
+            request.user.save(update_fields=["session_key"])
+        logout(request)
+        return Response(status=status.HTTP_204_NO_CONTENT)
 
 
 class RegisterView(APIView):
@@ -305,6 +431,7 @@ class ChangePasswordView(APIView):
         request.user.updated_at = timezone.now()
         request.user.save()
         update_session_auth_hash(request, request.user)
+        initialize_session_security(request)
         request.user.session_key = request.session.session_key
         request.user.save(update_fields=["session_key"])
         if request.user.is_superadmin:
@@ -314,6 +441,7 @@ class ChangePasswordView(APIView):
 
 class ForgotPasswordView(APIView):
     permission_classes = [AllowAny]
+    throttle_classes = [PasswordRecoveryThrottle]
 
     @method_decorator(csrf_protect)
     def post(self, request):
@@ -360,14 +488,15 @@ class ForgotPasswordView(APIView):
 
 class UsersView(APIView):
     def get(self, request):
-        return Response(UserSerializer(User.objects.order_by("id"), many=True).data)
+        users = User.objects.prefetch_related("presets").order_by("id")
+        return Response(UserSerializer(users, many=True).data)
 
 
 class ArchivedUsersView(APIView):
     def get(self, request):
         users = User.all_objects.filter(
             deleted_at__isnull=False,
-        ).order_by("id")
+        ).prefetch_related("presets").order_by("id")
         return Response(UserSerializer(users, many=True).data)
 
 
@@ -401,6 +530,9 @@ class UserDetailView(APIView):
         return Response(UserSerializer(user).data)
 
     def delete(self, request, pk):
+        denied = recent_authentication_required(request)
+        if denied:
+            return denied
         user = self.get_object(pk)
         if user is None or user.deleted_at is not None:
             return Response({"detail": "Cuenta no encontrada."}, status=404)
@@ -455,6 +587,9 @@ class UserRestoreView(APIView):
 
 class InviteView(APIView):
     def post(self, request):
+        denied = recent_authentication_required(request)
+        if denied:
+            return denied
         serializer = InviteSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         password = temporary_password()
@@ -491,6 +626,9 @@ class InviteView(APIView):
 
 class UserPermissionsView(APIView):
     def put(self, request, pk):
+        denied = recent_authentication_required(request)
+        if denied:
+            return denied
         user = User.all_objects.filter(pk=pk).first()
         if user is None or user.deleted_at is not None:
             return Response({"detail": "Cuenta no encontrada."}, status=404)
@@ -510,6 +648,9 @@ class UserPermissionsView(APIView):
 
 class UserPresetsView(APIView):
     def put(self, request, pk):
+        denied = recent_authentication_required(request)
+        if denied:
+            return denied
         user = User.all_objects.filter(pk=pk).first()
         if user is None or user.deleted_at is not None:
             return Response({"detail": "Cuenta no encontrada."}, status=404)
@@ -532,6 +673,9 @@ class PresetsView(APIView):
         return Response(AccessPresetSerializer(AccessPreset.objects.all(), many=True).data)
 
     def post(self, request):
+        denied = recent_authentication_required(request)
+        if denied:
+            return denied
         serializer = AccessPresetSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         serializer.save(created_by=request.user)
@@ -549,6 +693,9 @@ class PresetDetailView(APIView):
         return Response(AccessPresetSerializer(preset).data)
 
     def patch(self, request, pk):
+        denied = recent_authentication_required(request)
+        if denied:
+            return denied
         preset = self.get_object(pk)
         if preset is None:
             return Response({"detail": "Preset no encontrado."}, status=404)
@@ -558,6 +705,9 @@ class PresetDetailView(APIView):
         return Response(serializer.data)
 
     def delete(self, request, pk):
+        denied = recent_authentication_required(request)
+        if denied:
+            return denied
         preset = self.get_object(pk)
         if preset is None:
             return Response({"detail": "Preset no encontrado."}, status=404)
