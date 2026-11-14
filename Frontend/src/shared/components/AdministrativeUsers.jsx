@@ -116,6 +116,7 @@ export default function AdministrativeUsers() {
           <p className="mt-3 text-[15px] text-[#6B758A]">Consulta el personal administrativo autorizado para gestionar y curar el directorio.</p>
         </div>
         <div className="flex flex-wrap gap-3">
+        {viewer?.is_superadmin && <Button variant="outline" className={buttonStyle} href="/admin/usuarios?vista=superadmin">Superadministración</Button>}
         {(viewer?.is_superadmin || viewer?.effective_permissions?.accounts?.presets?.view) && <Button variant="outline" className={buttonStyle} href="/admin/usuarios?vista=presets">Presets de permisos</Button>}
         {hasAccountPermission(viewer, "invite") && <Button href="/admin/usuarios?vista=crear" className={`${primaryStyle} !h-[42px] min-w-40`}>Crear usuario</Button>}
         </div>
@@ -140,14 +141,14 @@ export default function AdministrativeUsers() {
                 <tr key={user.id} className="h-[62px] border-b border-[#D1D6E0]">
                   <td className="px-2.5">#{user.id}</td>
                   <td className="break-words px-2.5">{user.collegue_code || "—"}</td>
-                  <td className="break-words px-2.5">{user.full_name || user.email}{user.is_superadmin && <span className="block text-[11px] text-[#6B758A]">Superadministrador</span>}</td>
+                  <td className="break-words px-2.5">{user.full_name || user.email}</td>
                   <td className="px-2.5">{user.created_at ? new Date(user.created_at).toLocaleDateString("es-CO", { day: "2-digit", month: "short", year: "numeric" }) : "—"}</td>
                   <td className="px-2.5">{user.created_by?.full_name || (typeof user.created_by === "string" ? user.created_by : "—")}</td>
                   <td className={`px-2.5 font-semibold ${user.is_active ? "text-[#1F8C52]" : "text-[#6B758A]"}`}>{user.is_active ? "Activo" : "Inactivo"}</td>
                   <td className="px-1"><div className="flex gap-1.5">
                     {hasAccountPermission(viewer, "update") && <Button size="small" variant="outline" href={`/admin/usuarios?vista=editar&usuario=${encodeURIComponent(user.id)}`} className={buttonStyle} aria-label={`Editar a ${user.full_name || user.email}`}>Editar</Button>}
                     <Button size="small" variant="outline" href={`/admin/usuarios?vista=permisos&usuario=${encodeURIComponent(user.id)}`} className={buttonStyle}>Permisos</Button>
-                    {hasAccountPermission(viewer, "delete") && <Button size="sm" className={primaryStyle} disabled={user.is_superadmin || !user.is_active} onClick={() => setSelected(user)} aria-label={`Eliminar a ${user.full_name || user.email}`}>Eliminar</Button>}
+                    {hasAccountPermission(viewer, "delete") && <Button size="sm" className={primaryStyle} disabled={!user.is_active || (viewer?.is_superadmin && user.id === viewer.id)} onClick={() => setSelected(user)} aria-label={`Eliminar a ${user.full_name || user.email}`}>Eliminar</Button>}
                   </div></td>
                 </tr>
               ))}

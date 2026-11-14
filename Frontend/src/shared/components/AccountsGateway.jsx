@@ -13,6 +13,8 @@ const ALLOWED_ACCOUNT_MUTATIONS = [
   ["PATCH", /^presets\/\d+\/$/],
   ["DELETE", /^presets\/\d+\/$/],
   ["POST", /^auth\/(login|logout)\/$/],
+  ["POST", /^auth\/mfa\/(challenge|enroll\/confirm)\/$/],
+  ["POST", /^superadmin\/(accounts|deactivate)\/$/],
   ["POST", /^password\/(change|forgot)\/$/],
   ["POST", /^users\/invite\/$/],
   ["POST", /^users\/\d+\/restore\/$/],
