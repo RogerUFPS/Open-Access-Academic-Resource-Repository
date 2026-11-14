@@ -1,3 +1,5 @@
+import uuid
+
 from django.db import models
 
 from apps.core.models import AuditableModel
@@ -84,6 +86,24 @@ class ScheduleEvent(AuditableModel):
 
     def __str__(self):
         return f"Schedule event #{self.pk} - {self.scheduled_for}"
+
+
+class HarvestRunRequest(models.Model):
+    """Persistent result of a keyed ``run-due`` HTTP request."""
+
+    class State(models.TextChoices):
+        PROCESSING = "processing", "PROCESSING"
+        COMPLETED = "completed", "COMPLETED"
+
+    idempotency_key = models.CharField(max_length=255, unique=True)
+    operation = models.CharField(max_length=255, default="run_due")
+    state = models.CharField(max_length=20, choices=State.choices, default=State.PROCESSING)
+    processing_token = models.UUIDField(default=uuid.uuid4, editable=False)
+    response_status = models.PositiveSmallIntegerField(null=True, blank=True)
+    response_body = models.JSONField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    completed_at = models.DateTimeField(null=True, blank=True)
 
 
 class Harvest(AuditableModel):

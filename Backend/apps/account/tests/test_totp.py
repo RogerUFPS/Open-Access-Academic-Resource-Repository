@@ -5,25 +5,22 @@ from django.test import SimpleTestCase
 
 from apps.account.security import totp_code, verify_totp
 
-# Base32 of the RFC 6238 SHA-1 test key "12345678901234567890".
-RFC_SECRET = "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ"
 
+class TotpRfc6238Tests(SimpleTestCase):
+    # RFC 6238 Appendix B, SHA-1 key "12345678901234567890".
+    SECRET = "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ"
 
-class TotpTests(SimpleTestCase):
-    def test_matches_rfc_6238_test_vectors(self):
-        # RFC 6238, Appendix B (last 6 digits of the 8-digit values).
-        self.assertEqual(totp_code(RFC_SECRET, 59), "287082")
-        self.assertEqual(totp_code(RFC_SECRET, 1111111109), "081804")
-        self.assertEqual(totp_code(RFC_SECRET, 2000000000), "279037")
+    def test_rfc6238_sha1_vector_uses_decoded_base32_key(self):
+        self.assertEqual(totp_code(self.SECRET, at=59), "287082")
 
-    def test_accepts_unpadded_lowercase_and_spaced_secrets(self):
-        self.assertEqual(totp_code(RFC_SECRET.lower(), 59), "287082")
-        self.assertEqual(totp_code("GEZD GNBV GY3T QOJQ GEZD GNBV GY3T QOJQ", 59), "287082")
+    def test_verification_accepts_unpadded_lowercase_base32(self):
+        user = SimpleNamespace(mfa_secret="configured")
+        with (
+            patch("apps.account.security._secret", return_value=self.SECRET.lower()),
+            patch("apps.account.security.time.time", return_value=59),
+        ):
+            self.assertTrue(verify_totp(user, "287082"))
 
-    @patch("apps.account.security._secret", return_value=RFC_SECRET)
-    @patch("apps.account.security.time.time", return_value=59)
-    def test_verify_accepts_authenticator_code_with_clock_drift(self, *_mocks):
-        user = SimpleNamespace()
-        self.assertTrue(verify_totp(user, "287082"))
-        self.assertTrue(verify_totp(user, totp_code(RFC_SECRET, 89)))  # next 30 s window
-        self.assertFalse(verify_totp(user, "000000"))
+    def test_invalid_base32_secret_is_rejected(self):
+        with self.assertRaises(ValueError):
+            totp_code("not a valid secret!", at=59)

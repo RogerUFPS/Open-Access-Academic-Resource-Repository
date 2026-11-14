@@ -1,10 +1,18 @@
 from django.utils import timezone
+from django.db import connection
+from django.test.utils import CaptureQueriesContext
 from rest_framework import status
 from rest_framework.test import APITestCase
 from unittest.mock import patch
 
 from apps.account.models import User
-from apps.harvesting.models import Harvest, HarvestJournal, Schedule, ScheduleEvent
+from apps.harvesting.models import (
+    Harvest,
+    HarvestJournal,
+    HarvestRunRequest,
+    Schedule,
+    ScheduleEvent,
+)
 from apps.journal.models import Journal
 from apps.platforms.models import Platform
 
@@ -12,12 +20,27 @@ from apps.platforms.models import Platform
 class HarvestingViewsTestCase(APITestCase):
     @classmethod
     def setUpTestData(cls):
-        cls.user = User.objects.create_user(
-            code=0,
-            full_name="Sistema",
-            email="sistema@test.local",
-            is_superadmin=True,
-        )
+        cls.user = User.objects.get(code=0)
+        cls.user.permissions = {
+            "harvesting": {
+                "schedules": {
+                    "view": True,
+                    "create": True,
+                    "update": True,
+                    "delete": True,
+                    "restore": True,
+                    "run_due": True,
+                },
+                "events": {"view": True, "create": True},
+                "harvests": {
+                    "view": True,
+                    "create": True,
+                    "pause": True,
+                    "resume": True,
+                },
+            },
+        }
+        cls.user.save(update_fields=["permissions"])
         cls.platform = Platform.objects.create(
             name="OpenAlex Test",
             base_api_url="https://api.openalex.org",
@@ -96,6 +119,48 @@ class HarvestingViewsTestCase(APITestCase):
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(response.data, [])
         run_scheduled.assert_called_once_with()
+
+    @patch("apps.harvesting.views.services.run_scheduled_harvests", return_value=[])
+    def test_run_due_replays_the_persisted_response_for_the_same_key(self, run_scheduled):
+        headers = {"HTTP_IDEMPOTENCY_KEY": "harvesting_due:task-123"}
+
+        first = self.client.post("/api/harvesting/schedules/run-due/", **headers)
+        second = self.client.post("/api/harvesting/schedules/run-due/", **headers)
+
+        self.assertEqual(first.status_code, status.HTTP_200_OK)
+        self.assertEqual(second.status_code, status.HTTP_200_OK)
+        self.assertEqual(second.data, first.data)
+        run_scheduled.assert_called_once_with()
+        request = HarvestRunRequest.objects.get(idempotency_key="harvesting_due:task-123")
+        self.assertEqual(request.state, HarvestRunRequest.State.COMPLETED)
+        self.assertEqual(request.response_body, [])
+
+    @patch(
+        "apps.harvesting.views.services.run_scheduled_harvests",
+        side_effect=RuntimeError("broker unavailable"),
+    )
+    def test_run_due_failure_releases_key_for_a_safe_retry(self, run_scheduled):
+        response = self.client.post(
+            "/api/harvesting/schedules/run-due/",
+            HTTP_IDEMPOTENCY_KEY="retryable-key",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_503_SERVICE_UNAVAILABLE)
+        self.assertFalse(HarvestRunRequest.objects.filter(idempotency_key="retryable-key").exists())
+        run_scheduled.assert_called_once_with()
+
+    @patch("apps.harvesting.views.services.run_scheduled_harvests")
+    def test_run_due_reports_an_in_flight_duplicate_as_retryable(self, run_scheduled):
+        HarvestRunRequest.objects.create(idempotency_key="in-flight-key")
+
+        response = self.client.post(
+            "/api/harvesting/schedules/run-due/",
+            HTTP_IDEMPOTENCY_KEY="in-flight-key",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_425_TOO_EARLY)
+        self.assertEqual(response["Retry-After"], "5")
+        run_scheduled.assert_not_called()
 
     def test_harvest_and_event_endpoints_are_read_only(self):
         schedule = Schedule.objects.create(
@@ -204,6 +269,46 @@ class HarvestingViewsTestCase(APITestCase):
 
         self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
 
+    def test_harvest_journals_query_count_does_not_grow_per_journal(self):
+        harvest = Harvest.objects.create(
+            platform=self.platform,
+            max_quantity=10,
+            created_by=self.user,
+        )
+        journals = [
+            Journal.objects.create(
+                issn=f"9876-{index:04}",
+                title=f"Revista rendimiento cosecha {index:02}",
+                created_by=self.user,
+            )
+            for index in range(5)
+        ]
+        HarvestJournal.objects.bulk_create([
+            HarvestJournal(
+                harvest=harvest,
+                journal=journal,
+                result=HarvestJournal.Result.ADDED,
+            )
+            for journal in journals
+        ])
+
+        with CaptureQueriesContext(connection) as single:
+            one = self.client.get(
+                f"/api/harvesting/harvests/{harvest.pk}/journals/",
+                {"page_size": 1},
+            )
+        with CaptureQueriesContext(connection) as multiple:
+            five = self.client.get(
+                f"/api/harvesting/harvests/{harvest.pk}/journals/",
+                {"page_size": 5},
+            )
+
+        self.assertEqual(one.status_code, status.HTTP_200_OK)
+        self.assertEqual(five.status_code, status.HTTP_200_OK)
+        self.assertEqual(len(one.data["results"]), 1)
+        self.assertEqual(len(five.data["results"]), 5)
+        self.assertEqual(len(single), len(multiple))
+
     def test_pending_harvest_can_be_paused_and_queued_to_resume(self):
         harvest = Harvest.objects.create(
             platform=self.platform,
@@ -260,3 +365,54 @@ class HarvestingViewsTestCase(APITestCase):
             format="json",
         )
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_resume_replays_success_for_the_same_idempotency_key(self):
+        harvest = Harvest.objects.create(
+            platform=self.platform,
+            max_quantity=100,
+            state=Harvest.State.PAUSED,
+            created_by=self.user,
+        )
+        headers = {"HTTP_IDEMPOTENCY_KEY": "resume-harvest-once"}
+        with patch(
+            "apps.harvesting.views.services.dispatch_harvest_to_worker",
+            side_effect=lambda item: item,
+        ) as dispatch:
+            first = self.client.post(
+                f"/api/harvesting/harvests/{harvest.pk}/resume/",
+                **headers,
+            )
+            second = self.client.post(
+                f"/api/harvesting/harvests/{harvest.pk}/resume/",
+                **headers,
+            )
+
+        self.assertEqual(first.status_code, status.HTTP_202_ACCEPTED)
+        self.assertEqual(second.status_code, status.HTTP_202_ACCEPTED)
+        self.assertEqual(second.data, first.data)
+        dispatch.assert_called_once()
+
+    def test_resume_broker_failure_restores_paused_state_and_releases_key(self):
+        harvest = Harvest.objects.create(
+            platform=self.platform,
+            max_quantity=100,
+            state=Harvest.State.PAUSED,
+            created_by=self.user,
+        )
+        with patch(
+            "apps.harvesting.views.services.dispatch_harvest_to_worker",
+            side_effect=RuntimeError("broker unavailable"),
+        ):
+            response = self.client.post(
+                f"/api/harvesting/harvests/{harvest.pk}/resume/",
+                HTTP_IDEMPOTENCY_KEY="resume-after-broker-failure",
+            )
+
+        harvest.refresh_from_db()
+        self.assertEqual(response.status_code, status.HTTP_503_SERVICE_UNAVAILABLE)
+        self.assertEqual(harvest.state, Harvest.State.PAUSED)
+        self.assertFalse(
+            HarvestRunRequest.objects.filter(
+                idempotency_key="resume-after-broker-failure",
+            ).exists()
+        )

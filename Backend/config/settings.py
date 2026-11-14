@@ -1,6 +1,7 @@
 import os
 
 from celery.schedules import crontab
+from django.core.exceptions import ImproperlyConfigured
 from dotenv import load_dotenv
 
 from .base import *
@@ -35,6 +36,10 @@ CORS_ALLOWED_ORIGINS = [
 
 CORS_ALLOW_ALL_ORIGINS = env_bool("CORS_ALLOW", False)
 CORS_ALLOW_CREDENTIALS = True
+if not DEBUG and CORS_ALLOW_ALL_ORIGINS:
+    raise ImproperlyConfigured(
+        "CORS_ALLOW no puede habilitarse junto con credenciales en producción."
+    )
 RESEND_API_KEY = os.getenv("RESEND_API_KEY", "")
 DEFAULT_FROM_EMAIL = os.getenv(
     "DEFAULT_FROM_EMAIL",
@@ -84,9 +89,29 @@ FRONTEND_LOGIN_URL = os.getenv(
     "FRONTEND_LOGIN_URL",
     "https://repositorio-biblioteca-frontend.vercel.app/admin/login",
 )
+SECURE_DEPLOYMENT = env_bool("SECURE_DEPLOYMENT", False)
+SECURE_SSL_REDIRECT = SECURE_DEPLOYMENT
+SECURE_HSTS_SECONDS = int(os.getenv(
+    "SECURE_HSTS_SECONDS",
+    "31536000" if SECURE_DEPLOYMENT else "0",
+))
+SECURE_HSTS_INCLUDE_SUBDOMAINS = env_bool(
+    "SECURE_HSTS_INCLUDE_SUBDOMAINS",
+    SECURE_DEPLOYMENT,
+)
+SECURE_HSTS_PRELOAD = env_bool("SECURE_HSTS_PRELOAD", SECURE_DEPLOYMENT)
+SECURE_REFERRER_POLICY = "same-origin"
+SECURE_CROSS_ORIGIN_OPENER_POLICY = "same-origin"
+if SECURE_DEPLOYMENT:
+    # Solo debe habilitarse cuando el proxy elimina la cabecera entrante y
+    # escribe su propio X-Forwarded-Proto.
+    SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
+
 SESSION_COOKIE_HTTPONLY = True
-SESSION_COOKIE_SECURE = not DEBUG
+SESSION_COOKIE_SECURE = SECURE_DEPLOYMENT or not DEBUG
 SESSION_COOKIE_AGE = 15 * 60
+SESSION_COOKIE_NAME = os.getenv("SESSION_COOKIE_NAME", "sessionid")
+SESSION_COOKIE_PATH = "/"
 # La renovación por inactividad la hace ThrottledSessionRenewalMiddleware
 # (apps.core.middleware) como máximo cada SESSION_RENEWAL_INTERVAL segundos,
 # en lugar de escribir la sesión en la base en cada petición.
@@ -95,9 +120,32 @@ SESSION_RENEWAL_INTERVAL = min(
     max(0, int(os.getenv("SESSION_RENEWAL_INTERVAL", "60"))),
     SESSION_COOKIE_AGE,
 )
-CSRF_COOKIE_SECURE = not DEBUG
-SESSION_COOKIE_SAMESITE = "None" if not DEBUG else "Lax"
-CSRF_COOKIE_SAMESITE = SESSION_COOKIE_SAMESITE
+CSRF_COOKIE_NAME = os.getenv("CSRF_COOKIE_NAME", "csrftoken")
+CSRF_COOKIE_SECURE = SESSION_COOKIE_SECURE
+CSRF_COOKIE_PATH = "/"
+SESSION_COOKIE_SAMESITE = "Lax"
+CSRF_COOKIE_SAMESITE = "Lax"
+
+for _cookie_name, _cookie_secure in (
+    (SESSION_COOKIE_NAME, SESSION_COOKIE_SECURE),
+    (CSRF_COOKIE_NAME, CSRF_COOKIE_SECURE),
+):
+    if _cookie_name.startswith("__Host-") and not _cookie_secure:
+        raise ImproperlyConfigured(
+            f"{_cookie_name} requiere una cookie Secure."
+        )
+if SECURE_DEPLOYMENT and (
+    not SESSION_COOKIE_NAME.startswith("__Host-")
+    or not CSRF_COOKIE_NAME.startswith("__Host-")
+):
+    raise ImproperlyConfigured(
+        "SECURE_DEPLOYMENT requiere nombres de cookie con prefijo __Host-."
+    )
+
+MFA_ENROLLMENT_TTL = max(60, int(os.getenv("MFA_ENROLLMENT_TTL", "600")))
+RECENT_AUTH_AGE = max(60, int(os.getenv("RECENT_AUTH_AGE", "300")))
+NUM_PROXIES = max(0, int(os.getenv("NUM_PROXIES", "1")))
+REST_FRAMEWORK["NUM_PROXIES"] = NUM_PROXIES
 
 if os.getenv("DJANGO_TESTING", "").lower() in {"1", "true", "yes", "on"}:
     DATABASES = {

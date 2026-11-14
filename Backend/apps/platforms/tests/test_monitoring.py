@@ -166,6 +166,19 @@ class CheckStateTests(MonitorFixtures, TestCase):
 
 
 class MonitorAPITests(MonitorFixtures, APITestCase):
+    def setUp(self):
+        super().setUp()
+        # API tests use token/permission authentication, not the superadmin MFA
+        # session flow tested by the account app.
+        self.user.is_superadmin = False
+        self.user.permissions = {
+            "platforms": {
+                "platforms": {"view": True, "check_link": True},
+                "link-check-logs": {"view": True},
+            },
+        }
+        self.user.save(update_fields=["is_superadmin", "permissions"])
+
     @patch("apps.platforms.views.dispatch_link_checks.delay")
     @patch("apps.platforms.services._perform_link_check")
     def test_triggers_accept_without_http(self, check, enqueue):
@@ -262,10 +275,40 @@ class MonitorAPITests(MonitorFixtures, APITestCase):
         self.assertEqual(first.data["run_id"], second.data["run_id"])
         self.assertEqual(first.data["task_id"], second.data["task_id"])
         self.assertEqual(
-            models.LinkCheckRun.objects.filter(idempotency_key="same-request-key").count(),
+            models.LinkCheckRequest.objects.filter(
+                requested_by=self.user,
+                idempotency_key="same-request-key",
+            ).count(),
             1,
         )
         enqueue.assert_called_once_with(first.data["run_id"])
+
+    @patch("apps.platforms.views.dispatch_link_checks.delay")
+    def test_every_key_coalesced_into_an_active_run_remains_replayable(self, enqueue):
+        enqueue.return_value.id = "shared-task"
+        self.client.force_authenticate(self.user)
+        first = self.client.post(
+            "/api/platforms/check-links-async/",
+            HTTP_IDEMPOTENCY_KEY="first-key",
+        )
+        joined = self.client.post(
+            "/api/platforms/check-links-async/",
+            HTTP_IDEMPOTENCY_KEY="joined-key",
+        )
+        self.assertEqual(joined.data["run_id"], first.data["run_id"])
+        models.LinkCheckRun.objects.filter(pk=first.data["run_id"]).update(
+            finished_at=timezone.now(),
+        )
+
+        replay = self.client.post(
+            "/api/platforms/check-links-async/",
+            HTTP_IDEMPOTENCY_KEY="joined-key",
+        )
+
+        self.assertEqual(replay.status_code, 202)
+        self.assertEqual(replay.data, joined.data)
+        self.assertEqual(models.LinkCheckRun.objects.count(), 1)
+        enqueue.assert_called_once()
 
     @patch("apps.platforms.views.dispatch_link_checks.delay")
     def test_active_run_reused_after_concurrent_unique_constraint_winner(self, enqueue):
@@ -352,9 +395,15 @@ class MonitorAPITests(MonitorFixtures, APITestCase):
 
     @patch("apps.platforms.views.dispatch_link_checks.delay")
     def test_idempotency_key_cannot_be_reused_for_another_mode(self, enqueue):
-        models.LinkCheckRun.objects.create(
-            mode="all", requested_by=self.user, idempotency_key="one-operation",
+        run = models.LinkCheckRun.objects.create(
+            mode="all", requested_by=self.user,
             dispatch_task_id="already-dispatched",
+        )
+        models.LinkCheckRequest.objects.create(
+            mode="all",
+            requested_by=self.user,
+            idempotency_key="one-operation",
+            run=run,
         )
         self.client.force_authenticate(self.user)
         response = self.client.post(
@@ -1062,6 +1111,12 @@ class NotificationTests(MonitorFixtures, TestCase):
 
 
 class MonitorConcurrencyTests(MonitorFixtures, TransactionTestCase):
+    def setUp(self):
+        super().setUp()
+        self.user.is_superadmin = False
+        self.user.permissions = CHECK_PERMISSION
+        self.user.save(update_fields=["is_superadmin", "permissions"])
+
     def in_thread(self, callback):
         close_old_connections()
         try:
@@ -1083,14 +1138,14 @@ class MonitorConcurrencyTests(MonitorFixtures, TransactionTestCase):
         invocation_lock = Lock()
         initial_reads = 0
 
-        def synchronized_lookup(mode, idempotency_key):
+        def synchronized_lookup(mode, user, idempotency_key):
             nonlocal initial_reads
             with invocation_lock:
                 initial_reads += 1
                 should_wait = initial_reads <= 2
             if should_wait:
                 barrier.wait(timeout=10)
-            return _existing_link_check_run(mode, idempotency_key)
+            return _existing_link_check_run(mode, user, idempotency_key)
 
         def post_trigger():
             def request():

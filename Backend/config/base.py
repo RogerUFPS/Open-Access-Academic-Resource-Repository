@@ -32,6 +32,7 @@ MIDDLEWARE = [
     'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
     'django.contrib.auth.middleware.AuthenticationMiddleware',
+    'apps.account.middleware.SessionSecurityMiddleware',
     'apps.account.middleware.AuditDisableForPublicMiddleware',
     'auditlog.middleware.AuditlogMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
@@ -68,6 +69,13 @@ REST_FRAMEWORK = {
     "DEFAULT_PERMISSION_CLASSES": [
         "apps.account.permissions.ApplicationPermission",
     ],
+    "DEFAULT_THROTTLE_RATES": {
+        "login_burst": "5/minute",
+        "login_sustained": "30/hour",
+        "mfa_burst": "5/minute",
+        "mfa_sustained": "20/hour",
+        "password_recovery": "3/hour",
+    },
 }
 
 AUTH_PASSWORD_VALIDATORS = [
