@@ -1,3 +1,5 @@
+import os
+
 from django.conf import settings
 from django.db import migrations
 
@@ -823,6 +825,9 @@ MODEL_NAMES = {
 
 
 def seed_catalog_data(apps, schema_editor):
+    if os.getenv("DJANGO_TESTING", "").lower() in {"1", "true", "yes", "on"}:
+        return
+
     User = apps.get_model("account", "User")
     user = User.objects.filter(code=0).first()
     if user is None:

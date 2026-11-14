@@ -1,4 +1,7 @@
+import os
+
 from django.conf import settings
+from django.contrib.auth.hashers import make_password
 from django.db import migrations
 
 
@@ -237,6 +240,9 @@ PROGRAMS = (
 
 
 def seed_ufps_catalog(apps, schema_editor):
+    if os.getenv("DJANGO_TESTING", "").lower() in {"1", "true", "yes", "on"}:
+        return
+
     User = apps.get_model("account", "User")
     KnowledgeArea = apps.get_model("catalog", "KnowledgeArea")
     AcademicProgram = apps.get_model("catalog", "AcademicProgram")
@@ -253,7 +259,7 @@ def seed_ufps_catalog(apps, schema_editor):
             full_name="Sistema",
             email="sistema@local.dev",
         )
-        user.set_unusable_password()
+        user.password = make_password(None)
         user.save()
 
     areas = {}

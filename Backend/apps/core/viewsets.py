@@ -104,7 +104,14 @@ class AuditableViewSet(viewsets.ModelViewSet):
 
     @action(detail=False, methods=["get"], url_path="archived")
     def archived(self, request):
-        queryset = self.queryset.model.all_objects.filter(deleted_at__isnull=False)
+        base = self.get_queryset()
+        queryset = base.model.all_objects.filter(deleted_at__isnull=False)
+        select_related = base.query.select_related
+        if isinstance(select_related, dict):
+            queryset = queryset.select_related(*select_related)
+        elif select_related:
+            queryset = queryset.select_related()
+        queryset = queryset.prefetch_related(*base._prefetch_related_lookups)
         queryset = self.filter_queryset(queryset)
         page = self.paginate_queryset(queryset)
         if page is not None:

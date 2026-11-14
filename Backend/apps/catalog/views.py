@@ -1,4 +1,5 @@
 from apps.core.viewsets import AuditableViewSet, get_acting_user
+from django.db.models import Prefetch
 
 from . import models, serializers
 from rest_framework.decorators import action
@@ -12,6 +13,14 @@ from apps.platforms import models as platform_models
 IN_USE_MESSAGE = (
     "No se puede eliminar el registro porque está siendo utilizado por otros "
     "registros vigentes."
+)
+
+ACTIVE_PROGRAM_AREA_LINKS = Prefetch(
+    "knowledge_area_links",
+    queryset=models.SharedAcademicProgramKnowledgeArea.objects.filter(
+        knowledge_area__deleted_at__isnull=True,
+    ),
+    to_attr="_active_area_links",
 )
 
 
@@ -240,7 +249,7 @@ class KnowledgeAreaViewSet(ProtectedCatalogViewSet):
         area = self.get_object()
         queryset = models.AcademicProgram.objects.filter(
             knowledge_area_links__knowledge_area=area,
-        )
+        ).prefetch_related(ACTIVE_PROGRAM_AREA_LINKS)
         queryset = self.filter_queryset(queryset)
         page = self.paginate_queryset(queryset)
         serializer = serializers.AcademicProgramSerializer(
@@ -255,7 +264,9 @@ class KnowledgeAreaViewSet(ProtectedCatalogViewSet):
 class AcademicProgramViewSet(ProtectedCatalogViewSet):
     platform_through = platform_models.SharedPlatformAcademicProgram
     platform_relation_field = "academic_program"
-    queryset = models.AcademicProgram.objects.all()
+    queryset = models.AcademicProgram.objects.prefetch_related(
+        ACTIVE_PROGRAM_AREA_LINKS,
+    ).all()
     serializer_class = serializers.AcademicProgramSerializer
     search_fields = ["name"]
     ordering_fields = ["name", "created_at"]
