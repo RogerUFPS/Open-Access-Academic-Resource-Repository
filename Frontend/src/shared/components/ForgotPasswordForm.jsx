@@ -5,7 +5,7 @@ import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 import AccountFeedback from "@/shared/components/AccountFeedback";
-import { LoginField } from "@/shared/components/AdminLoginForm";
+import LoginField from "@/shared/components/LoginField";
 import { useAccountsApi } from "@/shared/components/AccountsProvider";
 
 export default function ForgotPasswordForm() {

@@ -21,6 +21,7 @@ import {
 import { getLinkAlertsPage } from "@/features/admin/harvesting/harvesting";
 import { CONFIRMED_FAILURES_QUERY } from "@/features/admin/harvesting/linkMonitoring";
 import LinkAlertsMenu from "@/features/admin/harvesting/components/LinkAlertsMenu";
+import { ACCOUNT_FORBIDDEN_EVENT, pendingAccountStep } from "@/shared/services/apiClient";
 
 const ALERT_POLL_MS = 2 * 60 * 1000;
 
@@ -42,6 +43,28 @@ function AdminLayoutContent({ children, userName }) {
   const [alertCount, setAlertCount] = useState(0);
   const [alertsOpen, setAlertsOpen] = useState(false);
   const closeAlerts = useCallback(() => setAlertsOpen(false), []);
+
+  // A 403 can mean the account must now change its password or complete MFA
+  // (e.g. after a reset). Re-read /auth/me/ and send it to the pending step.
+  useEffect(() => {
+    let checking = false;
+    async function recheckAccount() {
+      if (checking) return;
+      checking = true;
+      try {
+        if (pendingAccountStep(await accountsApi.currentUser())) {
+          router.replace("/admin/login");
+          router.refresh();
+        }
+      } catch {
+        // 401 is handled by the session-expired dialog; other failures keep the page's own error.
+      } finally {
+        checking = false;
+      }
+    }
+    window.addEventListener(ACCOUNT_FORBIDDEN_EVENT, recheckAccount);
+    return () => window.removeEventListener(ACCOUNT_FORBIDDEN_EVENT, recheckAccount);
+  }, [accountsApi, router]);
 
   // Contador de caídas confirmadas vigentes (total_items de la primera página).
   // Sondeo moderado, pausado mientras la pestaña está oculta.

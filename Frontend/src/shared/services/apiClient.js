@@ -1,6 +1,7 @@
 import { notifySessionExpired, shouldSkipSessionExpiredAlert } from "@/shared/utils/sessionExpiration";
 
 const isBrowser = typeof window !== "undefined";
+export const ACCOUNT_FORBIDDEN_EVENT = "library:account-forbidden";
 const API_BASE_URL = isBrowser
   ? process.env.NEXT_PUBLIC_API_URL
   : process.env.BACKEND_INTERNAL_URL || process.env.NEXT_PUBLIC_API_URL;
@@ -66,6 +67,11 @@ async function handleResponse(response, endpoint = "") {
   }
 
   if (!response.ok) {
+    if (response.status === 403 && isBrowser) {
+      // The backend answers 403 when the account still has to change its
+      // password or complete MFA; the admin layout re-checks /auth/me/.
+      window.dispatchEvent(new CustomEvent(ACCOUNT_FORBIDDEN_EVENT, { detail: { endpoint } }));
+    }
     let errorMessage = `Error ${response.status}: ${response.statusText}`;
     const extractedMessage = extractApiErrorText(data);
     if (extractedMessage) errorMessage = extractedMessage;
@@ -282,10 +288,30 @@ export function hasAccountPermission(user, action) {
   return Boolean(user?.is_superadmin || user?.effective_permissions?.accounts?.users?.[action]);
 }
 
+/**
+ * Next onboarding step for the signed-in account, based only on its own
+ * /auth/me/ or login flags: "password", "mfa-enroll", "mfa-challenge" or null.
+ */
+export function pendingAccountStep(account) {
+  if (!account) return null;
+  const user = account.user ?? account;
+  if (account.must_change_password || user.must_change_password || user.force_password_change) return "password";
+  const isSuperadmin = Boolean(account.is_superadmin ?? user.is_superadmin);
+  const mfaSatisfied = account.mfa_satisfied ?? user.mfa_satisfied;
+  if (isSuperadmin && !mfaSatisfied) {
+    const enrollment = account.mfa_enrollment_required ?? user.mfa_enrollment_required;
+    return enrollment ? "mfa-enroll" : "mfa-challenge";
+  }
+  return null;
+}
+
 // Reads do not depend on the Server Action reference, which can change when
 // Next.js refreshes session cookies. Keep these callbacks stable for effects.
 const accountQueries = {
   me: (signal) => accountsRequest("auth/me/", { signal }),
+  // Always asks the backend, even where `me` reuses the server-validated user.
+  currentUser: (signal) => accountsRequest("auth/me/", { signal }),
+  mfaEnrollment: (signal) => accountsRequest("auth/mfa/enroll/", { signal }),
   users: (signal) => accountsRequest("users/", { signal }),
   archivedUsers: (signal) => accountsRequest("users/archived/", { signal }),
   user: (id, signal) => accountsRequest(`users/${encodeURIComponent(id)}/`, { signal }),
@@ -300,9 +326,13 @@ export function createAccountsApi(mutateAction, { me = accountQueries.me } = {})
     ...accountQueries,
     me,
     login: (body) => mutate("auth/login/", "POST", body),
-    logout: () => mutate("auth/logout/", "POST"),
+    logout: () => mutate("auth/logout/", "POST", {}),
     changePassword: (body) => mutate("password/change/", "POST", body),
     forgotPassword: (body) => mutate("password/forgot/", "POST", body),
+    confirmMfaEnrollment: (code) => mutate("auth/mfa/enroll/confirm/", "POST", { code }),
+    mfaChallenge: (code) => mutate("auth/mfa/challenge/", "POST", { code }),
+    createSuperadmin: (email) => mutate("superadmin/accounts/", "POST", { email }),
+    deactivateSuperadmin: () => mutate("superadmin/deactivate/", "POST", {}),
     invite: (body) => mutate("users/invite/", "POST", body),
     updateUser: (id, body) => mutate(`users/${encodeURIComponent(id)}/`, "PATCH", body),
     deactivate: (id) => mutate(`users/${encodeURIComponent(id)}/`, "DELETE"),
