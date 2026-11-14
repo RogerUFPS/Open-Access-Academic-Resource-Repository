@@ -36,13 +36,14 @@ from .permissions import LinkVerificationPermission
 
 logger = logging.getLogger(__name__)
 
-def _existing_link_check_run(mode, idempotency_key):
+def _existing_link_check_run(mode, user, idempotency_key):
     if idempotency_key:
-        run = models.LinkCheckRun.objects.filter(
+        request = models.LinkCheckRequest.objects.select_related("run").filter(
+            requested_by=user,
             idempotency_key=idempotency_key,
         ).first()
-        if run:
-            return run
+        if request:
+            return request.run
     return models.LinkCheckRun.objects.filter(
         mode=mode,
         finished_at__isnull=True,
@@ -52,20 +53,42 @@ def _existing_link_check_run(mode, idempotency_key):
 def _get_or_create_link_check_run(mode, user, idempotency_key):
     try:
         with transaction.atomic():
-            existing = _existing_link_check_run(mode, idempotency_key)
-            if existing:
-                return existing, False
-            run = models.LinkCheckRun.objects.create(
-                mode=mode,
-                requested_by=user,
-                idempotency_key=idempotency_key,
-            )
-        return run, True
+            if idempotency_key:
+                request = models.LinkCheckRequest.objects.select_related("run").filter(
+                    requested_by=user,
+                    idempotency_key=idempotency_key,
+                ).first()
+                if request:
+                    return request.run, False
+            existing = _existing_link_check_run(mode, user, None)
+            if existing is None:
+                existing = models.LinkCheckRun.objects.create(
+                    mode=mode,
+                    requested_by=user,
+                )
+                created = True
+            else:
+                created = False
+            if idempotency_key:
+                models.LinkCheckRequest.objects.create(
+                    requested_by=user,
+                    idempotency_key=idempotency_key,
+                    mode=mode,
+                    run=existing,
+                )
+        return existing, created
     except IntegrityError:
-        # A concurrent request may win either the idempotency-key or active-mode
-        # unique constraint after our initial read.
-        existing = _existing_link_check_run(mode, idempotency_key)
+        # A concurrent request may win the request-key or active-mode unique
+        # constraint after our initial read.
+        existing = _existing_link_check_run(mode, user, idempotency_key)
         if existing:
+            if idempotency_key:
+                request, _ = models.LinkCheckRequest.objects.get_or_create(
+                    requested_by=user,
+                    idempotency_key=idempotency_key,
+                    defaults={"mode": mode, "run": existing},
+                )
+                existing = request.run
             return existing, False
         raise
 

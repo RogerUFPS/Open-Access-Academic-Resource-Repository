@@ -304,6 +304,29 @@ class LinkCheckRun(models.Model):
         ]
 
 
+class LinkCheckRequest(models.Model):
+    """Durable mapping from an HTTP idempotency key to its logical run.
+
+    More than one request key may legitimately join the same active run. The
+    mapping therefore belongs in its own table instead of on ``LinkCheckRun``.
+    Keys are scoped to the authenticated caller's request namespace.
+    """
+
+    requested_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT)
+    idempotency_key = models.CharField(max_length=255)
+    mode = models.CharField(max_length=10, choices=[("all", "Total"), ("failed", "Reintentos")])
+    run = models.ForeignKey(LinkCheckRun, on_delete=models.PROTECT, related_name="requests")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["requested_by", "idempotency_key"],
+                name="unique_link_check_request_key_per_user",
+            ),
+        ]
+
+
 class LinkCheckBatch(models.Model):
     run = models.ForeignKey(LinkCheckRun, on_delete=models.CASCADE, related_name="batches")
     # IDs de eventos vigentes al planificar. Si cambian, el worker los omite.
