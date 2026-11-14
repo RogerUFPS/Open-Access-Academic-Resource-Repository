@@ -24,6 +24,7 @@ from rest_framework.response import Response
 from apps.core.viewsets import AuditableViewSet, get_acting_user
 from apps.journal.models import Journal
 from apps.journal.serializers import JournalSerializer
+from apps.journal.views import with_admin_relations, with_platform_urls
 from . import filters, models, serializers
 from . import services
 
@@ -257,10 +258,12 @@ class HarvestViewSet(viewsets.ReadOnlyModelViewSet):
     @action(detail=True, methods=["get"], url_path="journals")
     def journals(self, request, pk=None):
         harvest = self.get_object()
-        journals = Journal.all_objects.filter(
-            harvest_records__harvest=harvest,
-            harvest_records__result=models.HarvestJournal.Result.ADDED,
-        ).distinct().order_by("title", "pk")
+        journals = with_admin_relations(with_platform_urls(
+            Journal.all_objects.filter(
+                harvest_records__harvest=harvest,
+                harvest_records__result=models.HarvestJournal.Result.ADDED,
+            ).distinct().order_by("title", "pk")
+        ))
         page = self.paginate_queryset(journals)
         if page is not None:
             return self.get_paginated_response(

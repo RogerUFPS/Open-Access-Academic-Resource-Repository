@@ -1,4 +1,6 @@
 from django.utils import timezone
+from django.db import connection
+from django.test.utils import CaptureQueriesContext
 from rest_framework import status
 from rest_framework.test import APITestCase
 from unittest.mock import patch
@@ -266,6 +268,46 @@ class HarvestingViewsTestCase(APITestCase):
         response = self.client.get("/api/harvesting/harvests/999999/journals/")
 
         self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+
+    def test_harvest_journals_query_count_does_not_grow_per_journal(self):
+        harvest = Harvest.objects.create(
+            platform=self.platform,
+            max_quantity=10,
+            created_by=self.user,
+        )
+        journals = [
+            Journal.objects.create(
+                issn=f"9876-{index:04}",
+                title=f"Revista rendimiento cosecha {index:02}",
+                created_by=self.user,
+            )
+            for index in range(5)
+        ]
+        HarvestJournal.objects.bulk_create([
+            HarvestJournal(
+                harvest=harvest,
+                journal=journal,
+                result=HarvestJournal.Result.ADDED,
+            )
+            for journal in journals
+        ])
+
+        with CaptureQueriesContext(connection) as single:
+            one = self.client.get(
+                f"/api/harvesting/harvests/{harvest.pk}/journals/",
+                {"page_size": 1},
+            )
+        with CaptureQueriesContext(connection) as multiple:
+            five = self.client.get(
+                f"/api/harvesting/harvests/{harvest.pk}/journals/",
+                {"page_size": 5},
+            )
+
+        self.assertEqual(one.status_code, status.HTTP_200_OK)
+        self.assertEqual(five.status_code, status.HTTP_200_OK)
+        self.assertEqual(len(one.data["results"]), 1)
+        self.assertEqual(len(five.data["results"]), 5)
+        self.assertEqual(len(single), len(multiple))
 
     def test_pending_harvest_can_be_paused_and_queued_to_resume(self):
         harvest = Harvest.objects.create(

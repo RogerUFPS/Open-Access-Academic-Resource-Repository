@@ -49,7 +49,8 @@ class LicenseViewSet(AuditableViewSet):
         return super().destroy(request, *args, **kwargs)
 
 
-def _with_platform_urls(queryset, *, published_only=False):
+def with_platform_urls(queryset, *, published_only=False):
+    """Prefetch platform URLs and their latest link-check logs for journals."""
     platform_links = (
         models.SharedJournalPlatform.objects
         .filter(platform__deleted_at__isnull=True)
@@ -118,7 +119,8 @@ def _with_public_relations(queryset):
     return queryset.prefetch_related(*prefetches)
 
 
-def _with_admin_relations(queryset):
+def with_admin_relations(queryset):
+    """Prefetch every relation consumed by the administrative serializer."""
     prefetches = []
     for config in serializers.JOURNAL_RELATION_CONFIG:
         # La representación enriquecida de plataformas ya utiliza
@@ -237,7 +239,7 @@ class JournalViewSet(ResourceImageMixin, AuditableViewSet):
     de revistas académicas.
     """
 
-    queryset = _with_platform_urls(models.Journal.objects.all())
+    queryset = with_platform_urls(models.Journal.objects.all())
 
     serializer_class = serializers.JournalSerializer
     image_folder = "journals"
@@ -245,7 +247,7 @@ class JournalViewSet(ResourceImageMixin, AuditableViewSet):
     def get_queryset(self):
         queryset = super().get_queryset()
         if getattr(self, "action", None) == "list":
-            return _with_admin_relations(queryset)
+            return with_admin_relations(queryset)
         return queryset
 
     search_fields = [
@@ -539,7 +541,7 @@ class JournalPublicViewSet(
     Exploración pública de revistas activas y validadas.
     """
 
-    queryset = _with_public_relations(_with_platform_urls((
+    queryset = _with_public_relations(with_platform_urls((
         models.Journal.objects
         .filter(
             active=True,

@@ -1,5 +1,7 @@
 """Consultas constantes y contrato del listado administrativo de revistas."""
 
+import time
+
 from django.db import connection
 from django.test.utils import CaptureQueriesContext
 from django.utils import timezone
@@ -71,6 +73,10 @@ class JournalAdminQueryTests(APITestCase):
 
     def setUp(self):
         self.client.force_authenticate(self.user)
+        session = self.client.session
+        session["superadmin_mfa_satisfied"] = True
+        session["_session_renewed_at"] = int(time.time())
+        session.save()
 
     def test_admin_list_query_count_does_not_grow_per_journal(self):
         with CaptureQueriesContext(connection) as single:
@@ -115,7 +121,7 @@ class JournalAdminQueryTests(APITestCase):
 
     def test_empty_prefetched_relations_do_not_fall_back_to_per_row_queries(self):
         journal = models.Journal.objects.create(issn="9001-0000", title="Rendimiento Journal vacío", created_by=self.user)
-        loaded = views._with_admin_relations(views._with_platform_urls(models.Journal.objects.filter(pk=journal.pk))).get()
+        loaded = views.with_admin_relations(views.with_platform_urls(models.Journal.objects.filter(pk=journal.pk))).get()
         with self.assertNumQueries(0):
             data = serializers.JournalSerializer(loaded).data
         for field in ("languages", "countries", "material_types", "academic_programs", "knowledge_areas", "platforms", "licenses"):

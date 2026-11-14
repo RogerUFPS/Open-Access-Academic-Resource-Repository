@@ -1,4 +1,5 @@
 import base64
+import binascii
 import hashlib
 import hmac
 import struct
@@ -26,8 +27,14 @@ def _secret(user):
 
 
 def totp_code(secret, at=None):
-    counter = int((at or time.time()) // 30)
-    digest = hmac.new(secret.encode(), struct.pack(">Q", counter), hashlib.sha1).digest()
+    counter = int((time.time() if at is None else at) // 30)
+    normalized_secret = secret.strip().upper()
+    padded_secret = normalized_secret + "=" * (-len(normalized_secret) % 8)
+    try:
+        key = base64.b32decode(padded_secret, casefold=True)
+    except (binascii.Error, ValueError) as error:
+        raise ValueError("Invalid Base32 TOTP secret.") from error
+    digest = hmac.new(key, struct.pack(">Q", counter), hashlib.sha1).digest()
     offset = digest[-1] & 0x0F
     number = struct.unpack(">I", digest[offset:offset + 4])[0] & 0x7FFFFFFF
     return f"{number % 1_000_000:06d}"
@@ -38,8 +45,11 @@ def verify_totp(user, code):
     if not secret or not code or len(code) != 6 or not code.isdigit():
         return False
     now = time.time()
-    return any(hmac.compare_digest(totp_code(secret, now + shift * 30), code)
-               for shift in (-1, 0, 1))
+    try:
+        return any(hmac.compare_digest(totp_code(secret, now + shift * 30), code)
+                   for shift in (-1, 0, 1))
+    except (binascii.Error, ValueError):
+        return False
 
 
 def new_totp_secret():

@@ -91,6 +91,7 @@ PUBLIC_ACCOUNT_PATHS = {
 }
 SELF_ACCOUNT_PATHS = {
     "/api/accounts/auth/logout/",
+    "/api/accounts/auth/session/",
     "/api/accounts/password/change/",
     "/api/accounts/auth/mfa/challenge/",
     "/api/accounts/auth/mfa/enroll/",
@@ -188,6 +189,8 @@ class ApplicationPermission(BasePermission):
                     or request.session.get("superadmin_mfa_satisfied")
                     or request.user.force_password_change
                 )
+            if path == "/api/accounts/auth/session/":
+                return True
             if request.user.is_superadmin and not request.session.get("superadmin_mfa_satisfied"):
                 return path in {
                     "/api/accounts/auth/mfa/challenge/",
