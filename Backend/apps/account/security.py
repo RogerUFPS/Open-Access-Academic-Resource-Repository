@@ -25,9 +25,15 @@ def _secret(user):
     return decrypt_api_key(user.mfa_secret)
 
 
+def _totp_key(secret):
+    # RFC 6238 / authenticator apps use the Base32-decoded bytes as the HMAC key.
+    normalized = secret.replace(" ", "").upper()
+    return base64.b32decode(normalized + "=" * (-len(normalized) % 8))
+
+
 def totp_code(secret, at=None):
     counter = int((at or time.time()) // 30)
-    digest = hmac.new(secret.encode(), struct.pack(">Q", counter), hashlib.sha1).digest()
+    digest = hmac.new(_totp_key(secret), struct.pack(">Q", counter), hashlib.sha1).digest()
     offset = digest[-1] & 0x0F
     number = struct.unpack(">I", digest[offset:offset + 4])[0] & 0x7FFFFFFF
     return f"{number % 1_000_000:06d}"
