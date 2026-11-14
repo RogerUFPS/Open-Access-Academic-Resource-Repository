@@ -4,9 +4,11 @@ import UserPermissions from "@/shared/components/UserPermissions";
 
 import PermissionPresets from "@/shared/components/PermissionPresets";
 import PermissionPresetForm from "@/shared/components/PermissionPresetForm";
+import SuperadminAccounts from "@/shared/components/SuperadminAccounts";
 
 export default async function UsersPage({ searchParams }) {
   const { vista, usuario, preset, resultado } = await searchParams;
+  if (vista === "superadmin") return <SuperadminAccounts />;
   if (vista === "presets") return <PermissionPresets result={resultado} />;
   if (vista === "crear-preset") return <PermissionPresetForm />;
   if (vista === "editar-preset" && typeof preset === "string" && /^\d+$/.test(preset)) return <PermissionPresetForm key={preset} presetId={preset} />;
