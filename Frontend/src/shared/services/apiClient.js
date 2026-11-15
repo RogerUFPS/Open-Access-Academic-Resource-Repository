@@ -346,8 +346,6 @@ const accountQueries = {
   me: (signal) => accountsRequest("auth/me/", { signal }),
   // Always asks the backend, even where `me` reuses the server-validated user.
   currentUser: (signal) => accountsRequest("auth/me/", { signal }),
-  // Private and non-cacheable: start, expiry, IP and user agent of this session.
-  session: (signal) => accountsRequest("auth/session/", { signal }),
   users: (signal) => accountsRequest("users/", { signal }),
   archivedUsers: (signal) => accountsRequest("users/archived/", { signal }),
   user: (id, signal) => accountsRequest(`users/${encodeURIComponent(id)}/`, { signal }),
@@ -370,7 +368,6 @@ export function createAccountsApi(mutateAction, { me = accountQueries.me } = {})
     confirmMfaEnrollment: (code) => mutate("auth/mfa/enroll/confirm/", "POST", { code }),
     mfaChallenge: (code) => mutate("auth/mfa/challenge/", "POST", { code }),
     createSuperadmin: (email) => mutate("superadmin/accounts/", "POST", { email }),
-    revokeSession: () => mutate("auth/session/", "DELETE"),
     deactivateSuperadmin: () => mutate("superadmin/deactivate/", "POST", {}),
     invite: (body) => mutate("users/invite/", "POST", body),
     updateUser: (id, body) => mutate(`users/${encodeURIComponent(id)}/`, "PATCH", body),

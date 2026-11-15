@@ -23,7 +23,6 @@ const STEP_COPY = {
 
 const REASON_NOTICES = {
   reautenticacion: "Por seguridad, vuelve a iniciar sesión antes de realizar la operación crítica que intentabas. No se repitió automáticamente.",
-  "sesion-revocada": "La sesión fue revocada.",
 };
 const PREVIOUS_SESSION_NOTICE = "Se cerró tu sesión anterior porque iniciaste sesión desde otro lugar.";
 

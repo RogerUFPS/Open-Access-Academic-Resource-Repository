@@ -15,7 +15,6 @@ const ALLOWED_ACCOUNT_MUTATIONS = [
   ["DELETE", /^presets\/\d+\/$/],
   ["POST", /^auth\/(login|logout)\/$/],
   ["POST", /^auth\/mfa\/(challenge|enroll|enroll\/confirm)\/$/],
-  ["DELETE", /^auth\/session\/$/],
   ["POST", /^superadmin\/(accounts|deactivate)\/$/],
   ["POST", /^password\/(change|forgot)\/$/],
   ["POST", /^users\/invite\/$/],
@@ -150,9 +149,9 @@ async function mutateBackend(path, method, body, timeoutMs = 90000) {
       );
       console.error(`[accounts/users/invite] HTTP ${response.status}: ${safeData}`);
     }
-    // Al revocar o cerrar la sesión se descarta también la copia local,
-    // aunque el backend no haya enviado la cookie de eliminación.
-    if (response.ok && (path === "/api/accounts/auth/session/" || path === "/api/accounts/auth/logout/")) {
+    // Al cerrar la sesión se descarta también la copia local, aunque el
+    // backend no haya enviado la cookie de eliminación.
+    if (response.ok && path === "/api/accounts/auth/logout/") {
       store.delete({ name: SESSION_COOKIE_NAME, path: "/", secure: secure || requiresSecureCookie(SESSION_COOKIE_NAME) });
     }
     return { status: response.status, data, retryAfter: retryAfter(response) };

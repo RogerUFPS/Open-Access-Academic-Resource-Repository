@@ -16,7 +16,6 @@ import {
   MessageSquare, 
   LogOut, 
   Menu, 
-  ShieldCheck,
   X 
 } from "lucide-react";
 import { getLinkAlertsPage } from "@/features/admin/harvesting/harvesting";
@@ -142,7 +141,6 @@ function AdminLayoutContent({ children, userName }) {
         { name: "Bitácora", href: "/admin/bitacora", icon: Clock },
         // Los presets de permisos se gestionan desde Administrativos.
         { name: "Administrativos", href: "/admin/usuarios", icon: Users },
-        { name: "Mi sesión", href: "/admin/sesion", icon: ShieldCheck },
       ]
     },
     {
