@@ -21,9 +21,15 @@ const STEP_COPY = {
   "mfa-challenge": ["Verificación en dos pasos", "Ingresa el código de 6 dígitos de tu aplicación autenticadora para continuar."],
 };
 
-const REASON_NOTICES = {
-  reautenticacion: "Por seguridad, vuelve a iniciar sesión antes de realizar la operación crítica que intentabas. No se repitió automáticamente.",
-};
+// `motivo` comes from the URL: a Map has no inherited keys (__proto__,
+// constructor, toString…), so unknown values are simply ignored.
+const REASON_NOTICES = new Map([
+  ["reautenticacion", "Por seguridad, vuelve a iniciar sesión antes de realizar la operación crítica que intentabas. No se repitió automáticamente."],
+]);
+
+function reasonNotice(reason) {
+  return typeof reason === "string" ? REASON_NOTICES.get(reason) ?? "" : "";
+}
 const PREVIOUS_SESSION_NOTICE = "Se cerró tu sesión anterior porque iniciaste sesión desde otro lugar.";
 
 export default function AdminLoginForm({ reason = null }) {
@@ -39,7 +45,7 @@ export default function AdminLoginForm({ reason = null }) {
   const [confirmation, setConfirmation] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
-  const [notice, setNotice] = useState(() => REASON_NOTICES[reason] ?? "");
+  const [notice, setNotice] = useState(() => reasonNotice(reason));
 
   const enterApp = useCallback(() => {
     router.replace("/admin/usuarios");
