@@ -1,6 +1,8 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useRef, useState } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { queryKeys } from "@/shared/query/queryKeys";
 import AdminTable from "@/shared/components/AdminTable";
 import Button from "@/shared/components/Button";
 import FormField from "@/shared/components/FormField";
@@ -24,50 +26,26 @@ const scheduleColumns = [
   ].filter(Boolean).join(" · ") },
 ];
 
-function useHarvestData(loadData, intervalMs = null) {
-  const [state, setState] = useState({ data: null, loading: true, error: "" });
-  const [revision, setRevision] = useState(0);
-  const loadRef = useRef(null);
-  const pollingInterval = typeof intervalMs === "function" ? intervalMs(state.data) : intervalMs;
-
-  useEffect(() => {
-    const controller = new AbortController();
-    let fetching = false;
-    async function load() {
-      if (fetching) return;
-      fetching = true;
-      try {
-        const data = await loadData(controller.signal);
-        if (!controller.signal.aborted) {
-          setState({ data, loading: false, error: "" });
-        }
-      } catch (error) {
-        if (!controller.signal.aborted) setState((current) => ({ ...current, loading: false, error: error.message }));
-      } finally {
-        fetching = false;
-      }
-    }
-    loadRef.current = load;
-    load();
-    return () => { controller.abort(); loadRef.current = null; };
-  }, [loadData, revision]);
-
-  // Changing the polling cadence must not restart the request or fetch immediately.
-  useEffect(() => {
-    if (pollingInterval === null) return;
-    const timer = setInterval(() => { if (!document.hidden) loadRef.current?.(); }, pollingInterval);
-    return () => clearInterval(timer);
-  }, [pollingInterval]);
-
-  const refresh = useCallback(() => {
-    setState((current) => ({ ...current, loading: true }));
-    setRevision((current) => current + 1);
-  }, []);
-
-  return { ...state, refresh };
+// Datos en caché: al volver a la pestaña se muestra lo último visto y se
+// revalida en segundo plano. El sondeo se pausa con la pestaña oculta.
+function useHarvestData(queryKey, loadData, refetchInterval = false) {
+  const query = useQuery({
+    queryKey,
+    queryFn: ({ signal }) => loadData(signal),
+    refetchInterval: typeof refetchInterval === "function"
+      ? (current) => refetchInterval(current.state.data)
+      : refetchInterval,
+  });
+  // Solo hay aviso de carga cuando no existe nada en caché para esta clave.
+  const loading = query.isPending || (query.isError && query.isFetching);
+  const error = query.isError && !query.isFetching ? query.error?.message || "Error al cargar los datos." : "";
+  const { refetch } = query;
+  const refresh = useCallback(() => { refetch(); }, [refetch]);
+  return { data: query.data, loading, error, refresh };
 }
 
 export default function HarvestDashboard() {
+  const queryClient = useQueryClient();
   const { deactivateSchedule, runDueSchedules } = useHarvestingApi();
   const [page, setPage] = useState(1);
   const [pageInput, setPageInput] = useState("1");
@@ -81,20 +59,22 @@ export default function HarvestDashboard() {
   const [scheduleFeedback, setScheduleFeedback] = useState(null);
   const requestPending = useRef(false);
 
-  const loadHarvests = useCallback((signal) => getHarvests(page, signal), [page]);
-  const harvests = useHarvestData(loadHarvests, (data) => (
+  const harvests = useHarvestData(queryKeys.harvests.list(page), (signal) => getHarvests(page, signal), (data) => (
     executing || data?.results.some((row) => ["pending", "running", "pausing"].includes(row.state)) ? 5000 : 30000
   ));
+  const upcomingSchedules = useHarvestData(queryKeys.harvests.schedules, getUpcomingSchedules, 30000);
+  const sources = useHarvestData(queryKeys.harvests.sourceCount, getHarvestSourceCount);
 
-  const loadSchedules = useCallback(async (signal) => {
-    const schedules = await getUpcomingSchedules(signal);
-    if (!signal.aborted) {
-      setSchedulePage((current) => Math.min(current, Math.max(1, Math.ceil(schedules.length / SCHEDULE_PAGE_SIZE))));
-    }
-    return schedules;
-  }, []);
-  const upcomingSchedules = useHarvestData(loadSchedules, 30000);
-  const sources = useHarvestData(getHarvestSourceCount);
+  // Tras una acción se revalidan todas las páginas de ejecuciones en caché.
+  const refreshHarvests = () => queryClient.invalidateQueries({ queryKey: queryKeys.harvests.lists });
+
+  // Si la lista de programaciones se acorta, la página vuelve a la última válida.
+  const scheduleCount = upcomingSchedules.data?.length || 0;
+  const schedulePages = Math.max(1, Math.ceil(scheduleCount / SCHEDULE_PAGE_SIZE));
+  if (upcomingSchedules.data && schedulePage > schedulePages) {
+    setSchedulePage(schedulePages);
+    setSchedulePageInput(String(schedulePages));
+  }
 
   async function executeDue() {
     if (requestPending.current || harvests.loading || upcomingSchedules.loading) return;
@@ -111,7 +91,8 @@ export default function HarvestDashboard() {
       setExecuting(false);
       // The result may be uncertain after a timeout; always read the current state.
       setPage(1);
-      harvests.refresh();
+      setPageInput("1");
+      refreshHarvests();
       upcomingSchedules.refresh();
     }
   }
@@ -156,7 +137,6 @@ export default function HarvestDashboard() {
     const safePage = clampPage(nextPage, Math.max(1, harvests.data?.total_pages ?? 1));
     setPage(safePage);
     setPageInput(String(safePage));
-    harvests.refresh();
   }
 
   function submitPageNumber() {
@@ -166,10 +146,7 @@ export default function HarvestDashboard() {
       return;
     }
     const nextPage = result.page;
-    if (nextPage !== page) {
-      setPage(nextPage);
-      harvests.refresh();
-    }
+    if (nextPage !== page) setPage(nextPage);
     setPageInput(String(nextPage));
   }
 
@@ -185,8 +162,6 @@ export default function HarvestDashboard() {
   }
 
   const runs = harvests.data?.results || [];
-  const scheduleCount = upcomingSchedules.data?.length || 0;
-  const schedulePages = Math.max(1, Math.ceil(scheduleCount / SCHEDULE_PAGE_SIZE));
   const schedules = upcomingSchedules.data?.slice((schedulePage - 1) * SCHEDULE_PAGE_SIZE, schedulePage * SCHEDULE_PAGE_SIZE) || [];
   const totals = runs.reduce((sum, row) => ({
     added: sum.added + row.records_added, updated: sum.updated + row.records_updated, failed: sum.failed + row.records_failed,
@@ -219,7 +194,7 @@ export default function HarvestDashboard() {
           </div>
           {harvests.loading && <Notice live>Cargando ejecuciones…</Notice>}
           {harvests.error && <Notice variant="error" live>{harvests.error}</Notice>}
-          {showHarvests && <HarvestExecutions rows={runs} onRefresh={harvests.refresh} busy={harvests.loading || Boolean(harvests.error)} />}
+          {showHarvests && <HarvestExecutions rows={runs} onRefresh={refreshHarvests}busy={harvests.loading || Boolean(harvests.error)} />}
           {showHarvests && harvests.data.total_pages > 1 && <div className="flex flex-wrap items-center gap-3">
             <Button variant="quiet" size="small" disabled={harvests.loading || page <= 1} onClick={() => changePage(page - 1)}>Anterior</Button>
             <label className="flex items-center gap-2 text-sm text-[#68707C]">
@@ -244,7 +219,7 @@ export default function HarvestDashboard() {
             </label>
             <Button variant="quiet" size="small" disabled={harvests.loading || page >= harvests.data.total_pages} onClick={() => changePage(page + 1)}>Siguiente</Button>
           </div>}
-          <Button href="/admin/cosecha/nueva" className="mt-auto w-[220px] self-start">Nueva cosecha</Button>
+          <Button href="/admin/cosecha/nueva" prefetch className="mt-auto w-[220px] self-start">Nueva cosecha</Button>
         </section>
         <section className="flex flex-col gap-3.5 rounded-xl border border-[#DCE0E5] bg-white p-5" aria-labelledby="schedules-title" aria-busy={upcomingSchedules.loading}>
           <div className="flex flex-wrap items-center justify-between gap-3">

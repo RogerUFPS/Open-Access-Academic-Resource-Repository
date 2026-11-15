@@ -1,6 +1,8 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
+import { useQuery } from "@tanstack/react-query";
+import { queryKeys } from "@/shared/query/queryKeys";
 import AdminTable from "@/shared/components/AdminTable";
 import Badge from "@/shared/components/Badge";
 import Button from "@/shared/components/Button";
@@ -28,31 +30,31 @@ const columns = [
 export default function HarvestJournals({ harvestId }) {
   const [page, setPage] = useState(1);
   const [pageInput, setPageInput] = useState("1");
-  const [revision, setRevision] = useState(0);
-  const [state, setState] = useState({ harvest: null, data: null, loading: true, error: "" });
 
-  useEffect(() => {
-    const controller = new AbortController();
-    async function load() {
-      try {
-        const [harvest, data] = await Promise.all([
-          getHarvest(harvestId, controller.signal),
-          getHarvestJournals(harvestId, page, controller.signal),
-        ]);
-        if (!controller.signal.aborted) setState({ harvest, data, loading: false, error: "" });
-      } catch (error) {
-        if (!controller.signal.aborted) setState((current) => ({ ...current, data: null, loading: false, error: error.message }));
-      }
-    }
-    load();
-    return () => controller.abort();
-  }, [harvestId, page, revision]);
+  // Página en caché por cosecha: al volver se muestra lo último visto y se
+  // revalida en segundo plano.
+  const journalsQuery = useQuery({
+    queryKey: queryKeys.harvests.journals(harvestId, page),
+    queryFn: async ({ signal }) => {
+      const [harvest, data] = await Promise.all([
+        getHarvest(harvestId, signal),
+        getHarvestJournals(harvestId, page, signal),
+      ]);
+      return { harvest, data };
+    },
+  });
+  const harvest = journalsQuery.data?.harvest ?? null;
+  const data = journalsQuery.data?.data ?? null;
+  // Solo hay aviso de carga cuando no existe nada en caché para esta página.
+  const loading = journalsQuery.isPending || (journalsQuery.isError && journalsQuery.isFetching);
+  const error = journalsQuery.isError && !journalsQuery.isFetching
+    ? journalsQuery.error?.message || "Error al cargar las revistas de la cosecha."
+    : "";
 
   function changePage(nextPage) {
     const safePage = clampPage(nextPage, totalPages);
     setPageInput(String(safePage));
     if (loading || safePage === page) return;
-    setState((current) => ({ ...current, data: null, loading: true, error: "" }));
     setPage(safePage);
   }
 
@@ -63,12 +65,11 @@ export default function HarvestJournals({ harvestId }) {
     else setPageInput(String(page));
   }
 
+  // La tabla conserva las filas mientras se recarga.
   function refresh() {
-    setState((current) => ({ ...current, data: null, loading: true, error: "" }));
-    setRevision((current) => current + 1);
+    journalsQuery.refetch();
   }
 
-  const { harvest, data, loading, error } = state;
   const totalItems = data?.total_items ?? data?.count ?? data?.results.length ?? 0;
   const pageSize = data?.page_size ?? HARVEST_JOURNALS_PAGE_SIZE;
   const totalPages = Math.max(1, data?.total_pages ?? Math.ceil(totalItems / pageSize));
@@ -79,7 +80,7 @@ export default function HarvestJournals({ harvestId }) {
     <div className="mx-auto flex w-full max-w-[1088px] flex-col gap-5 text-sm leading-[22px] text-[#171A1F]">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <h1 className="text-[26px] leading-[34px] font-bold tracking-[-0.3px] min-[541px]:text-[32px] min-[541px]:leading-10">Revistas de la cosecha #{harvestId}</h1>
-        <Button href="/admin/cosecha" variant="quiet">Volver a cosechas</Button>
+        <Button href="/admin/cosecha" prefetch variant="quiet">Volver a cosechas</Button>
       </div>
       {harvest && <p className="text-[#68707C]">{harvest.platform_name} · Inicio: {formatDate(harvest.started_at)}</p>}
       <p className="text-[#68707C]">Revistas nuevas creadas por esta ejecución. Las revistas actualizadas no se incluyen.</p>

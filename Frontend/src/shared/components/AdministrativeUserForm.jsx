@@ -91,7 +91,7 @@ export default function AdministrativeUserForm({ userId }) {
         <p role="status" className="rounded-lg bg-[#E8FAF0] p-4 text-sm text-[#0F8C45]">{editing ? `Se guardaron los cambios de ${createdUser.full_name || createdUser.email}.` : `Se creó la cuenta de ${createdUser.full_name || createdUser.email}. La contraseña provisional fue enviada a ${createdUser.email}.`}</p>
         {!editing && <p className="text-sm text-[#6B758A]">La cuenta no tiene permisos todavía. Deberá cambiar su contraseña al iniciar sesión por primera vez.</p>}
         <div className="flex flex-wrap gap-3">
-          <Button variant="outline" className={outline} href="/admin/usuarios">Volver a usuarios</Button>
+          <Button variant="outline" className={outline} href="/admin/usuarios" prefetch>Volver a usuarios</Button>
           {hasAccountPermission(viewer, "manage_permissions") && hasAccountPermission(viewer, "view") && <Button className={primary} href={`/admin/usuarios?vista=permisos&usuario=${encodeURIComponent(createdUser.id)}`}>Configurar permisos</Button>}
         </div>
       </div> : <form onSubmit={submit} className="mt-7 space-y-7" aria-busy={busy}>
@@ -115,7 +115,7 @@ export default function AdministrativeUserForm({ userId }) {
           <Button variant="outline" className={`${outline} mt-4`} href={`/admin/usuarios?vista=permisos&usuario=${encodeURIComponent(userId)}`}>Configurar permisos</Button>
         </div>}
         <div className="flex flex-wrap justify-end gap-3 pt-2">
-          <Button href="/admin/usuarios" variant="outline" className={outline}>Cancelar</Button>
+          <Button href="/admin/usuarios" prefetch variant="outline" className={outline}>Cancelar</Button>
           <Button type="submit" className={`${primary} min-w-40`} disabled={loading || busy || !canSubmit}>{busy ? editing ? "Guardando cambios…" : "Creando usuario…" : editing ? "Guardar cambios" : "Crear usuario"}</Button>
         </div>
       </form>}

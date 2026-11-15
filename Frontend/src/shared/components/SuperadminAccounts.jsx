@@ -104,7 +104,7 @@ export default function SuperadminAccounts() {
           <h1 className="text-[30px] leading-[41px] font-bold">Superadministración</h1>
           <p className="mt-3 max-w-2xl text-[15px] text-[#6B758A]">Crea cuentas de superadministrador de reemplazo y retira la tuya cuando otra cuenta ya esté lista.</p>
         </div>
-        <Button variant="outline" className={outlineStyle} href="/admin/usuarios">Volver a usuarios</Button>
+        <Button variant="outline" className={outlineStyle} href="/admin/usuarios" prefetch>Volver a usuarios</Button>
       </header>
 
       {loadError && <AccountFeedback error={loadError} />}
