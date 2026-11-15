@@ -2,12 +2,14 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import Button from "@/shared/components/Button";
 import FormField from "@/shared/components/FormField";
 import AccountFeedback from "@/shared/components/AccountFeedback";
 import { hasAccountPermission } from "@/shared/services/apiClient";
 import { useAccountsApi } from "@/shared/components/AccountsProvider";
 import { clampPage, sanitizePageValue } from "@/shared/utils/pagination";
+import { queryKeys } from "@/shared/query/queryKeys";
 
 const PAGE_SIZE = 10;
 const buttonStyle = "!border-[#7f1218] !text-[#7f1218]";
@@ -46,46 +48,39 @@ function DeactivateDialog({ user, onClose, onDeleted }) {
 export default function AdministrativeUsers() {
   const accountsApi = useAccountsApi();
   const router = useRouter();
-  const [users, setUsers] = useState([]);
-  const [viewer, setViewer] = useState(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(null);
-  const [sessionRequired, setSessionRequired] = useState(false);
-  const [refresh, setRefresh] = useState(0);
+  const queryClient = useQueryClient();
   const [search, setSearch] = useState("");
   const [status, setStatus] = useState("active");
   const [page, setPage] = useState(1);
   const [selected, setSelected] = useState(null);
   const [notice, setNotice] = useState("");
 
-  useEffect(() => {
-    const controller = new AbortController();
-    async function load() {
-      setLoading(true);
-      setError(null);
-      setSessionRequired(false);
-      setViewer(null);
-      let authenticated = false;
-      try {
-        const current = await accountsApi.me(controller.signal);
-        authenticated = true;
-        if (current.force_password_change) throw new Error("Debes cambiar tu contraseña provisional desde el inicio de sesión.");
-        setViewer(current);
-        if (!hasAccountPermission(current, "view")) throw new Error("Tu cuenta no tiene permiso para consultar usuarios administrativos.");
-        const data = await accountsApi.users(controller.signal);
-        if (!Array.isArray(data)) throw new Error("El servidor no devolvió un listado de usuarios válido.");
-        setUsers(data);
-      } catch (error) {
-        if (controller.signal.aborted) return;
-        setError(error);
-        setSessionRequired(!authenticated && [401, 403].includes(error.status));
-      } finally {
-        if (!controller.signal.aborted) setLoading(false);
-      }
-    }
-    load();
-    return () => controller.abort();
-  }, [accountsApi, refresh]);
+  // Lista en caché: al volver a esta pestaña se muestra lo último visto y se
+  // revalida en segundo plano.
+  const viewerQuery = useQuery({ queryKey: queryKeys.accounts.viewer, queryFn: ({ signal }) => accountsApi.me(signal) });
+  const passwordPending = Boolean(viewerQuery.data?.force_password_change);
+  const viewer = viewerQuery.data && !passwordPending ? viewerQuery.data : null;
+  const canView = hasAccountPermission(viewer, "view");
+  const usersQuery = useQuery({
+    queryKey: queryKeys.accounts.users,
+    queryFn: async ({ signal }) => {
+      const data = await accountsApi.users(signal);
+      if (!Array.isArray(data)) throw new Error("El servidor no devolvió un listado de usuarios válido.");
+      return data;
+    },
+    enabled: canView,
+  });
+  const users = usersQuery.data ?? [];
+  const retrying = (viewerQuery.isError && viewerQuery.isFetching) || (usersQuery.isError && usersQuery.isFetching);
+  // Solo hay indicador de carga cuando no existe nada en caché.
+  const loading = viewerQuery.isPending || (canView && usersQuery.isPending) || retrying;
+  const sessionRequired = viewerQuery.isError && [401, 403].includes(viewerQuery.error?.status);
+  const error = retrying ? null
+    : viewerQuery.error
+      ?? (passwordPending ? new Error("Debes cambiar tu contraseña provisional desde el inicio de sesión.") : null)
+      ?? (viewer && !canView ? new Error("Tu cuenta no tiene permiso para consultar usuarios administrativos.") : null)
+      ?? usersQuery.error;
+  const retry = () => queryClient.invalidateQueries({ queryKey: queryKeys.accounts.all });
 
   const term = search.trim().toLocaleLowerCase("es");
   const filtered = users.filter((user) =>
@@ -126,7 +121,7 @@ export default function AdministrativeUsers() {
         <FormField compact id="users-status" label="Estado" value={status} onChange={(event) => { setStatus(event.target.value); setPage(1); }} options={[{ value: "active", label: "Activos" }, { value: "inactive", label: "Inactivos" }, { value: "all", label: "Todos" }]} />
       </div>
       {notice && <p role="status" className="rounded-lg bg-[#E8FAF0] p-3 text-sm text-[#0F8C45]">{notice}</p>}
-      {error && <AccountFeedback error={error} sessionRequired={sessionRequired} retry={() => setRefresh((value) => value + 1)} />}
+      {error && <AccountFeedback error={error} sessionRequired={sessionRequired} retry={retry} />}
       <div className="min-h-[388px] rounded-[10px] bg-white px-4" aria-busy={loading}>
         <div className="overflow-x-auto">
           <table className="w-full min-w-[1100px] table-fixed text-left text-xs">
@@ -194,7 +189,8 @@ export default function AdministrativeUsers() {
       </div>
       <p className="text-xs text-[#6B758A]">Las altas, cambios y retiros de administrativos pueden consultarse en la bitácora de cambios.</p>
       {selected && <DeactivateDialog user={selected} onClose={() => setSelected(null)} onDeleted={(user) => {
-        setUsers((current) => current.map((item) => item.id === user.id ? { ...item, is_active: false } : item));
+        queryClient.setQueryData(queryKeys.accounts.users, (current) => current?.map((item) => item.id === user.id ? { ...item, is_active: false } : item));
+        queryClient.invalidateQueries({ queryKey: queryKeys.accounts.users });
         setSelected(null);
         setNotice(`La cuenta de ${user.full_name || user.email} fue desactivada.`);
         if (user.id === viewer.id) router.replace("/admin/login");

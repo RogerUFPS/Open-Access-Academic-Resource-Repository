@@ -8,6 +8,13 @@ const nextConfig = {
   // Django's API endpoints require their trailing slash, including POSTs.
   skipTrailingSlashRedirect: true,
   poweredByHeader: false,
+  experimental: {
+    // Las páginas del panel son cascarones de cliente: su respuesta del
+    // servidor no trae datos, así que se puede reutilizar en el navegador y
+    // volver a una pestaña ya visitada sin otro viaje. Los datos se revalidan
+    // aparte (src/shared/query).
+    staleTimes: { dynamic: 300, static: 300 },
+  },
   async headers() {
     // La CSP con nonce y HSTS se aplican por petición en src/proxy.js.
     return [{
