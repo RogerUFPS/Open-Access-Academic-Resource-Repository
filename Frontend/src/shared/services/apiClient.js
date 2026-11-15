@@ -1,18 +1,42 @@
 import { notifySessionExpired, shouldSkipSessionExpiredAlert } from "@/shared/utils/sessionExpiration";
+import { CSRF_COOKIE_NAME } from "@/shared/config/cookies";
 
 const isBrowser = typeof window !== "undefined";
 export const ACCOUNT_FORBIDDEN_EVENT = "library:account-forbidden";
+// Una operación crítica exige volver a iniciar sesión (y MFA) antes de repetirla.
+export const RECENT_AUTH_REQUIRED_EVENT = "library:recent-auth-required";
+export const RECENT_AUTH_REQUIRED_CODE = "recent_authentication_required";
 const API_BASE_URL = isBrowser
   ? process.env.NEXT_PUBLIC_API_URL
   : process.env.BACKEND_INTERNAL_URL || process.env.NEXT_PUBLIC_API_URL;
 
 /**
- * Read csrftoken from document.cookie (browser-only).
+ * Read the configured CSRF cookie from document.cookie (browser-only).
+ * The session cookie is HttpOnly and never readable here.
  */
 function getCsrfToken() {
   if (!isBrowser) return null;
-  const match = document.cookie.match(/(?:^|;\s*)csrftoken=([^;]*)/);
-  return match ? decodeURIComponent(match[1]) : null;
+  const prefix = `${CSRF_COOKIE_NAME}=`;
+  const entry = document.cookie.split(/;\s*/).find((cookie) => cookie.startsWith(prefix));
+  if (!entry) return null;
+  try {
+    return decodeURIComponent(entry.slice(prefix.length));
+  } catch {
+    return null;
+  }
+}
+
+/** Seconds from a `Retry-After` header expressed in seconds or as an HTTP date. */
+export function parseRetryAfter(value) {
+  if (value === null || value === undefined || value === "") return null;
+  const text = String(value).trim();
+  if (/^\d+$/.test(text)) return Number(text);
+  const date = Date.parse(text);
+  return Number.isNaN(date) ? null : Math.max(0, Math.ceil((date - Date.now()) / 1000));
+}
+
+export function isRecentAuthenticationRequired(error) {
+  return error?.status === 403 && error?.data?.code === RECENT_AUTH_REQUIRED_CODE;
 }
 
 /**
@@ -67,7 +91,12 @@ async function handleResponse(response, endpoint = "") {
   }
 
   if (!response.ok) {
-    if (response.status === 403 && isBrowser) {
+    const recentAuthRequired = response.status === 403 && data?.code === RECENT_AUTH_REQUIRED_CODE;
+    if (recentAuthRequired && isBrowser) {
+      // Not a missing permission: the account must sign in again. The
+      // mutation is never retried automatically.
+      window.dispatchEvent(new CustomEvent(RECENT_AUTH_REQUIRED_EVENT, { detail: { endpoint } }));
+    } else if (response.status === 403 && isBrowser) {
       // The backend answers 403 when the account still has to change its
       // password or complete MFA; the admin layout re-checks /auth/me/.
       window.dispatchEvent(new CustomEvent(ACCOUNT_FORBIDDEN_EVENT, { detail: { endpoint } }));
@@ -85,6 +114,8 @@ async function handleResponse(response, endpoint = "") {
     error.status = response.status;
     error.data = data;
     error.authExpired = authExpired;
+    error.recentAuthRequired = recentAuthRequired;
+    if (response.status === 429) error.retryAfter = parseRetryAfter(response.headers.get("retry-after"));
     throw error;
   }
 
@@ -265,8 +296,10 @@ async function accountsRequest(path, { method = "GET", body, signal } = {}, muta
   if (method !== "GET") {
     const result = await mutateAction(path, method, body);
     if (result.status === 204) return null;
+    const responseHeaders = { "Content-Type": "application/json" };
+    if (result.retryAfter !== null && result.retryAfter !== undefined) responseHeaders["Retry-After"] = String(result.retryAfter);
     return handleResponse(new Response(JSON.stringify(result.data), {
-      status: result.status, headers: { "Content-Type": "application/json" },
+      status: result.status, headers: responseHeaders,
     }), path);
   }
   if (body !== undefined) headers["Content-Type"] = "application/json";
@@ -297,8 +330,10 @@ export function pendingAccountStep(account) {
   const user = account.user ?? account;
   if (account.must_change_password || user.must_change_password || user.force_password_change) return "password";
   const isSuperadmin = Boolean(account.is_superadmin ?? user.is_superadmin);
+  const mfaRequired = Boolean(account.mfa_required ?? user.mfa_required) || isSuperadmin;
   const mfaSatisfied = account.mfa_satisfied ?? user.mfa_satisfied;
-  if (isSuperadmin && !mfaSatisfied) {
+  // Nunca se entra al panel mientras la sesión no haya satisfecho MFA.
+  if (mfaRequired && mfaSatisfied !== true) {
     const enrollment = account.mfa_enrollment_required ?? user.mfa_enrollment_required;
     return enrollment ? "mfa-enroll" : "mfa-challenge";
   }
@@ -311,7 +346,6 @@ const accountQueries = {
   me: (signal) => accountsRequest("auth/me/", { signal }),
   // Always asks the backend, even where `me` reuses the server-validated user.
   currentUser: (signal) => accountsRequest("auth/me/", { signal }),
-  mfaEnrollment: (signal) => accountsRequest("auth/mfa/enroll/", { signal }),
   users: (signal) => accountsRequest("users/", { signal }),
   archivedUsers: (signal) => accountsRequest("users/archived/", { signal }),
   user: (id, signal) => accountsRequest(`users/${encodeURIComponent(id)}/`, { signal }),
@@ -329,6 +363,8 @@ export function createAccountsApi(mutateAction, { me = accountQueries.me } = {})
     logout: () => mutate("auth/logout/", "POST", {}),
     changePassword: (body) => mutate("password/change/", "POST", body),
     forgotPassword: (body) => mutate("password/forgot/", "POST", body),
+    // Starts (or resumes) enrollment; the secret is shown only during this step.
+    startMfaEnrollment: () => mutate("auth/mfa/enroll/", "POST", {}),
     confirmMfaEnrollment: (code) => mutate("auth/mfa/enroll/confirm/", "POST", { code }),
     mfaChallenge: (code) => mutate("auth/mfa/challenge/", "POST", { code }),
     createSuperadmin: (email) => mutate("superadmin/accounts/", "POST", { email }),
