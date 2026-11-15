@@ -25,6 +25,14 @@ import { ACCOUNT_FORBIDDEN_EVENT, pendingAccountStep, RECENT_AUTH_REQUIRED_EVENT
 
 const ALERT_POLL_MS = 2 * 60 * 1000;
 
+// Activo si la ruta es la del ítem (o alguna de las que agrupa) o una subruta,
+// respetando el límite de segmento: "/admin/chats" no activa "/admin/chatsx".
+function isNavItemActive(pathname, item) {
+  return [item.href, ...(item.matches ?? [])].some(
+    (base) => pathname === base || pathname.startsWith(`${base}/`)
+  );
+}
+
 export default function AdminLayout({ children, userName = "Usuario" }) {
   return (
     <Suspense fallback={<div role="status" className="p-8">Cargando administración…</div>}>
@@ -131,7 +139,8 @@ function AdminLayoutContent({ children, userName }) {
       title: "DIRECTORIO",
       items: [
         { name: "Indicadores", href: "/admin/indicadores", icon: LayoutGrid },
-        { name: "Recursos", href: "/admin/bases-de-datos", icon: Book },
+        // Recursos agrupa las pestañas Bases de datos y Revistas.
+        { name: "Recursos", href: "/admin/bases-de-datos", icon: Book, matches: ["/admin/revistas"] },
         { name: "Cosecha", href: "/admin/cosecha", icon: RefreshCw },
       ]
     },
@@ -147,7 +156,7 @@ function AdminLayoutContent({ children, userName }) {
       title: "INTELIGENCIA",
       items: [
         { name: "Módulo de IA", href: "/admin/modulo-ia", icon: Cpu },
-        { name: "Clasificación", href: "/admin/areas-conocimiento", icon: Tag }, 
+        { name: "Clasificación", href: "/admin/areas-conocimiento", icon: Tag, matches: ["/admin/programas-academicos"] },
         { name: "Chats", href: "/admin/chats", icon: MessageSquare },
       ]
     }
@@ -208,8 +217,7 @@ function AdminLayoutContent({ children, userName }) {
                 </p>
                 {group.items.map((item) => {
                   const Icon = item.icon;
-                  // Manejo de estado activo
-                  const isActive = pathname.startsWith(item.href);
+                  const isActive = isNavItemActive(pathname, item);
 
                   return (
                     <Link
