@@ -203,14 +203,14 @@ export default function UserPermissions({ userId, initialUser, onDone }) {
         <div className="flex flex-wrap items-center justify-between gap-3">
           <Button variant="outline" className="!h-[42px] !border-[#7f1218] !text-[#7f1218]" disabled={!editable || busy || !editableRules.length} onClick={() => updateRules(editableRules, !allSelected)}>{allSelected ? "Quitar selección" : "Seleccionar todos"}</Button>
           <div className="flex gap-3">
-            {onDone ? <Button variant="outline" disabled={busy} onClick={onDone}>Volver a usuarios</Button> : <Button variant="outline" className="!h-[42px] !border-[#7f1218] !text-[#7f1218]" href="/admin/usuarios" prefetch>Cancelar</Button>}
+            {onDone ? <Button variant="outline" disabled={busy} onClick={onDone}>Volver a usuarios</Button> : <Button variant="outline" className="!h-[42px] !border-[#7f1218] !text-[#7f1218]" href="/admin/usuarios">Cancelar</Button>}
             <Button type="submit" className="!h-[42px] !border-[#7f1218] !bg-[#7f1218] hover:!bg-[#6a0f14]" disabled={!editable || busy || !rules.length}>{busy ? "Guardando…" : "Guardar permisos"}</Button>
           </div>
         </div>
         <p className="text-xs text-[#6B758A]">Los permisos heredados de presets se conservan. Activar una acción también habilita el acceso de lectura cuando corresponde.</p>
         {!editable && <p className="text-sm text-[#6B758A]">{user.is_superadmin ? "El superadministrador tiene todos los permisos; su acceso no se modifica desde esta vista." : "Tu cuenta puede consultar estos permisos, pero no tiene autorización para modificarlos."}</p>}
       </form>}
-      {!data && !loading && <Button href="/admin/usuarios" prefetch variant="outline">Volver a usuarios</Button>}
+      {!data && !loading && <Button href="/admin/usuarios" variant="outline">Volver a usuarios</Button>}
     </section>
   );
 }

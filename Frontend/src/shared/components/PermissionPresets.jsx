@@ -101,7 +101,7 @@ export default function PermissionPresets({ result }) {
   return <section className="space-y-3.5 text-[#1F242E]">
     <header className="flex flex-wrap items-start justify-between gap-4">
       <div><h1 className="text-[30px] leading-[41px] font-bold">Presets de permisos</h1><p className="mt-3 text-[15px] text-[#6B758A]">Crea y configura conjuntos de permisos para aplicarlos a usuarios administrativos.</p></div>
-      {can("create") && <Button href="/admin/usuarios?vista=crear-preset" prefetch className={`${primary} !h-[42px] min-w-40`}>Crear preset</Button>}
+      {can("create") && <Button href="/admin/usuarios?vista=crear-preset" className={`${primary} !h-[42px] min-w-40`}>Crear preset</Button>}
     </header>
     <div className="grid gap-3 rounded-[10px] bg-white px-3 py-2.5 sm:grid-cols-[1fr_260px]">
       <FormField compact id="presets-search" label="Buscar" type="search" placeholder="Nombre o identificador del preset" value={search} onChange={(event) => { setSearch(event.target.value); setPage(1); }} />
@@ -137,6 +137,6 @@ export default function PermissionPresets({ result }) {
     </div>
     <p className="text-xs text-[#6B758A]">Los cambios de un preset se usan al aplicarlo a un usuario. Revisa los permisos antes de guardar.</p>
     {selected && <DeletePresetDialog preset={selected} onClose={() => setSelected(null)} onDeleted={(preset) => { setSelected(null); setNotice(`El preset «${preset.name}» se eliminó correctamente.`); queryClient.invalidateQueries({ queryKey: queryKeys.accounts.presets }); }} />}
-    <Button variant="outline" className={outline} href="/admin/usuarios" prefetch>Volver a usuarios</Button>
+    <Button variant="outline" className={outline} href="/admin/usuarios">Volver a usuarios</Button>
   </section>;
 }

@@ -80,7 +80,7 @@ export default function HarvestJournals({ harvestId }) {
     <div className="mx-auto flex w-full max-w-[1088px] flex-col gap-5 text-sm leading-[22px] text-[#171A1F]">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <h1 className="text-[26px] leading-[34px] font-bold tracking-[-0.3px] min-[541px]:text-[32px] min-[541px]:leading-10">Revistas de la cosecha #{harvestId}</h1>
-        <Button href="/admin/cosecha" prefetch variant="quiet">Volver a cosechas</Button>
+        <Button href="/admin/cosecha" variant="quiet">Volver a cosechas</Button>
       </div>
       {harvest && <p className="text-[#68707C]">{harvest.platform_name} · Inicio: {formatDate(harvest.started_at)}</p>}
       <p className="text-[#68707C]">Revistas nuevas creadas por esta ejecución. Las revistas actualizadas no se incluyen.</p>

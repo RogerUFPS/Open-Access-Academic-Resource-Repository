@@ -219,7 +219,7 @@ export default function HarvestDashboard() {
             </label>
             <Button variant="quiet" size="small" disabled={harvests.loading || page >= harvests.data.total_pages} onClick={() => changePage(page + 1)}>Siguiente</Button>
           </div>}
-          <Button href="/admin/cosecha/nueva" prefetch className="mt-auto w-[220px] self-start">Nueva cosecha</Button>
+          <Button href="/admin/cosecha/nueva" className="mt-auto w-[220px] self-start">Nueva cosecha</Button>
         </section>
         <section className="flex flex-col gap-3.5 rounded-xl border border-[#DCE0E5] bg-white p-5" aria-labelledby="schedules-title" aria-busy={upcomingSchedules.loading}>
           <div className="flex flex-wrap items-center justify-between gap-3">

@@ -309,7 +309,7 @@ export default function JournalTable() {
 
       {/* Tabs */}
       {!showArchived && <div className="bg-[#EFEFEF]/60 p-1 rounded-xl inline-flex items-center gap-1 border border-gray-200/50">
-        <Link href="/admin/bases-de-datos" prefetch>
+        <Link href="/admin/bases-de-datos">
           <button className="text-gray-500 hover:text-gray-800 font-medium text-xs px-5 py-2 rounded-lg transition-all hover:bg-white/50">
             Bases de datos
           </button>

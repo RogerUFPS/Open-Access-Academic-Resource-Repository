@@ -346,7 +346,7 @@ export default function DatabaseTable() {
         <button className="bg-white text-[#7f1218] font-semibold text-xs px-5 py-2 rounded-lg shadow-2xs transition-all border border-gray-200/60">
           Bases de datos
         </button>
-        <Link href="/admin/revistas" prefetch>
+        <Link href="/admin/revistas">
           <button className="text-gray-500 hover:text-gray-800 font-medium text-xs px-5 py-2 rounded-lg transition-all hover:bg-white/50">
             Revistas
           </button>
