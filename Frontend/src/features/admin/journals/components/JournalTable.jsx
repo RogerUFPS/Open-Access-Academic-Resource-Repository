@@ -1,10 +1,12 @@
 "use client";
 
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect } from "react";
 import Link from "next/link";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { journalService } from "../services/journalService";
 import { clampPage, sanitizePageValue } from "@/shared/utils/pagination";
 import { capitalizeWords } from "@/lib/utils";
+import { queryKeys } from "@/shared/query/queryKeys";
 import DeleteModal from "@/features/admin/databases/components/DeleteModal";
 import PublishJournalModal from "./PublishJournalModal";
 import LicenseManagerModal from "./LicenseManagerModal";
@@ -50,14 +52,10 @@ function renderStatusBadge(journal) {
 }
 
 export default function JournalTable() {
-  const [journals, setJournals] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(null);
+  const queryClient = useQueryClient();
   const [actionSuccess, setActionSuccess] = useState(null);
 
   const [page, setPage] = useState(1);
-  const [totalPages, setTotalPages] = useState(1);
-  const [totalItems, setTotalItems] = useState(0);
   const [pageInput, setPageInput] = useState("1");
 
   const [searchInput, setSearchInput] = useState("");
@@ -85,62 +83,65 @@ export default function JournalTable() {
     return () => clearTimeout(handler);
   }, [searchInput]);
 
-  const fetchJournals = useCallback(async ({ silent = false } = {}) => {
-    if (!silent) {
-      setLoading(true);
-      setError(null);
-    }
-    try {
-      const baseParams = {};
-      if (debouncedSearch) baseParams.search = debouncedSearch;
-      if (pubDateFrom) baseParams.publication_date_from = pubDateFrom;
-
-      const params = { ...baseParams, page, page_size: PAGE_SIZE };
-      if (!showArchived && statusFilter === "active") params.active = true;
-      if (!showArchived && ["deactivated", "pending"].includes(statusFilter)) {
-        params.status = statusFilter;
-      }
-
-      const data = showArchived
-        ? await journalService.getArchivedJournals({ page })
+  // Lista en caché por combinación de filtros: al volver a esta pestaña se
+  // muestra lo último visto y se revalida en segundo plano.
+  const listParams = showArchived
+    ? { archived: true, page }
+    : {
+        ...(debouncedSearch && { search: debouncedSearch }),
+        ...(pubDateFrom && { publication_date_from: pubDateFrom }),
+        page,
+        page_size: PAGE_SIZE,
+        ...(statusFilter === "active" && { active: true }),
+        ...(["deactivated", "pending"].includes(statusFilter) && { status: statusFilter }),
+      };
+  const journalsQuery = useQuery({
+    queryKey: queryKeys.journals.list(listParams),
+    queryFn: async () => {
+      const { archived, ...params } = listParams;
+      const data = archived
+        ? await journalService.getArchivedJournals(params)
         : await journalService.getJournals(params);
 
-      if (Array.isArray(data)) {
-        setJournals(data);
-        setTotalItems(data.length);
-        setTotalPages(1);
-        setPageInput(String(clampPage(page, 1)));
-      } else if (data && Array.isArray(data.results)) {
-        const nextTotalItems = data.total_items ?? data.count ?? data.results.length;
-        const nextTotalPages = Math.max(
-          1,
-          data.total_pages ?? Math.ceil(nextTotalItems / (data.page_size ?? PAGE_SIZE))
-        );
-        const currentPage = clampPage(page, nextTotalPages);
-        setJournals(data.results);
-        setTotalItems(nextTotalItems);
-        setTotalPages(nextTotalPages);
-        setPageInput(String(currentPage));
-        if (currentPage !== page) setPage(currentPage);
-      } else {
-        setJournals([]);
-        setTotalItems(0);
-        setTotalPages(1);
+      if (Array.isArray(data)) return { items: data, totalItems: data.length, totalPages: 1 };
+      if (data && Array.isArray(data.results)) {
+        const totalItems = data.total_items ?? data.count ?? data.results.length;
+        return {
+          items: data.results,
+          totalItems,
+          totalPages: Math.max(1, data.total_pages ?? Math.ceil(totalItems / (data.page_size ?? PAGE_SIZE))),
+        };
       }
-    } catch (err) {
-      console.error("Error fetching journals:", err);
-      if (!silent) {
-        setError(err.message || "Error al cargar las revistas del servidor.");
-        setJournals([]);
-      }
-    } finally {
-      if (!silent) setLoading(false);
-    }
-  }, [page, debouncedSearch, pubDateFrom, statusFilter, showArchived]);
+      return { items: [], totalItems: 0, totalPages: 1 };
+    },
+  });
+
+  const journals = journalsQuery.data?.items ?? [];
+  const totalItems = journalsQuery.data?.totalItems ?? 0;
+  const totalPages = journalsQuery.data?.totalPages ?? 1;
+  // Solo hay spinner cuando no existe nada en caché para estos filtros.
+  const loading = journalsQuery.isPending || (journalsQuery.isError && journalsQuery.isFetching);
+  const error = journalsQuery.isError && !journalsQuery.isFetching
+    ? journalsQuery.error?.message || "Error al cargar las revistas del servidor."
+    : null;
 
   useEffect(() => {
-    fetchJournals();
-  }, [fetchJournals]);
+    if (journalsQuery.error) console.error("Error fetching journals:", journalsQuery.error);
+  }, [journalsQuery.error]);
+
+  // El campo de página sigue a la página real cuando cambian los datos; si la
+  // página quedó fuera de rango (p. ej. tras eliminar), vuelve a la última.
+  const pageSync = journalsQuery.data ? `${page}/${totalPages}` : null;
+  const [syncedPage, setSyncedPage] = useState(null);
+  if (pageSync && pageSync !== syncedPage) {
+    const currentPage = clampPage(page, totalPages);
+    setSyncedPage(pageSync);
+    setPageInput(String(currentPage));
+    if (currentPage !== page) setPage(currentPage);
+  }
+
+  // Resuelve cuando termina la recarga; la tabla conserva las filas mientras tanto.
+  const fetchJournals = () => queryClient.invalidateQueries({ queryKey: queryKeys.journals.all });
 
   const handlePageSubmit = () => {
     const result = sanitizePageValue(pageInput, totalPages);
@@ -164,7 +165,7 @@ export default function JournalTable() {
     try {
       await journalService.deactivateJournal(journal.id);
       showSuccess(`Revista "${journal.title}" desactivada.`);
-      await fetchJournals({ silent: true });
+      await fetchJournals();
     } catch (err) {
       alert(`Error al desactivar la revista: ${err.message}`);
     } finally {
@@ -185,7 +186,7 @@ export default function JournalTable() {
       showSuccess(
         `Revista "${journal.title}" restaurada correctamente. Queda en estado Pendiente para su posterior publicación.`
       );
-      await fetchJournals({ silent: true });
+      await fetchJournals();
     } catch (err) {
       alert(`Error al restaurar la revista: ${err.message}`);
     } finally {
@@ -308,7 +309,7 @@ export default function JournalTable() {
 
       {/* Tabs */}
       {!showArchived && <div className="bg-[#EFEFEF]/60 p-1 rounded-xl inline-flex items-center gap-1 border border-gray-200/50">
-        <Link href="/admin/bases-de-datos">
+        <Link href="/admin/bases-de-datos" prefetch>
           <button className="text-gray-500 hover:text-gray-800 font-medium text-xs px-5 py-2 rounded-lg transition-all hover:bg-white/50">
             Bases de datos
           </button>
@@ -615,7 +616,7 @@ export default function JournalTable() {
         }}
         onSuccess={(msg) => {
           showSuccess(msg);
-          fetchJournals({ silent: true });
+          fetchJournals();
         }}
       />
 

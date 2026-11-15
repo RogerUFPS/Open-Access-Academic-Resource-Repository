@@ -2,6 +2,7 @@ import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import AdminLayout from "@/shared/layouts/AdminLayout";
 import AccountsGateway from "@/shared/components/AccountsGateway";
+import QueryProvider from "@/shared/query/QueryProvider";
 import { apiClient, pendingAccountStep } from "@/shared/services/apiClient";
 import { getUserDisplayName } from "@/shared/services/userService";
 import { SESSION_COOKIE_NAME } from "@/shared/config/cookies";
@@ -26,5 +27,5 @@ export default async function AdminRouteLayout({ children }) {
   // Password changes and superadmin MFA are completed on the login screen.
   if (!user || pendingAccountStep(user)) redirect("/admin/login");
 
-  return <AccountsGateway initialUser={user}><AdminLayout userName={getUserDisplayName(user)}>{children}</AdminLayout></AccountsGateway>;
+  return <AccountsGateway initialUser={user}><QueryProvider><AdminLayout userName={getUserDisplayName(user)}>{children}</AdminLayout></QueryProvider></AccountsGateway>;
 }

@@ -1,13 +1,15 @@
 "use client";
 
-import React, { useState, useEffect, useCallback, useRef } from "react";
+import React, { useState, useEffect } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { platformService } from "../services/platformService";
 import { useToast } from "@/components/ui/use-toast";
 import { capitalizeWords } from "@/lib/utils";
 import { clampPage, sanitizePageValue } from "@/shared/utils/pagination";
 import { extractApiErrorText } from "@/shared/services/apiClient";
+import { queryKeys } from "@/shared/query/queryKeys";
 import DeleteModal from "./DeleteModal";
 import {
   Plus,
@@ -29,16 +31,12 @@ import {
 
 export default function DatabaseTable() {
   const router = useRouter();
-  const [platforms, setPlatforms] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(null);
+  const queryClient = useQueryClient();
   const [actionSuccess, setActionSuccess] = useState(null);
   const { toast } = useToast();
 
   // Pagination metadata
   const [page, setPage] = useState(1);
-  const [totalPages, setTotalPages] = useState(1);
-  const [totalItems, setTotalItems] = useState(0);
   const [pageInput, setPageInput] = useState("1");
 
   // Search input state with Debounce
@@ -51,7 +49,6 @@ export default function DatabaseTable() {
   const [accessTextFilter, setAccessTextFilter] = useState("");
   const [ordering, setOrdering] = useState("-updated_at");
   const [showArchived, setShowArchived] = useState(false);
-  const fetchRequestId = useRef(0);
 
   // Modals state
   const [deleteModalOpen, setDeleteModalOpen] = useState(false);
@@ -68,70 +65,65 @@ export default function DatabaseTable() {
     return () => clearTimeout(handler);
   }, [searchInput]);
 
-  // Fetch platforms from backend using debouncedSearch
-  const fetchPlatforms = useCallback(async () => {
-    const requestId = ++fetchRequestId.current;
-    setLoading(true);
-    setError(null);
-    try {
-      let data;
-      if (showArchived) {
-        data = await platformService.getArchivedPlatforms({
-          search: debouncedSearch,
-          page,
-          ordering,
-        });
-      } else {
-        const params = {
-          page,
-          ordering,
-        };
-        if (debouncedSearch) params.search = debouncedSearch;
-        if (statusFilter && statusFilter !== "all") params.status = statusFilter;
-        if (registrationFilter) params.requires_registration = registrationFilter;
-        if (accessTextFilter) params.has_access_text = accessTextFilter;
-
-        data = await platformService.getPlatforms(params);
-      }
+  // Lista en caché por combinación de filtros: al volver a esta pestaña se
+  // muestra lo último visto y se revalida en segundo plano.
+  const listParams = showArchived
+    ? { archived: true, search: debouncedSearch, page, ordering }
+    : {
+        page,
+        ordering,
+        ...(debouncedSearch && { search: debouncedSearch }),
+        ...(statusFilter && statusFilter !== "all" && { status: statusFilter }),
+        ...(registrationFilter && { requires_registration: registrationFilter }),
+        ...(accessTextFilter && { has_access_text: accessTextFilter }),
+      };
+  const platformsQuery = useQuery({
+    queryKey: queryKeys.platforms.list(listParams),
+    queryFn: async () => {
+      const { archived, ...params } = listParams;
+      const data = archived
+        ? await platformService.getArchivedPlatforms(params)
+        : await platformService.getPlatforms(params);
+      const isVisible = (platform) => archived ? platform.deleted_at : !platform.deleted_at;
 
       if (Array.isArray(data)) {
-        const visiblePlatforms = showArchived
-          ? data.filter((platform) => platform.deleted_at)
-          : data.filter((platform) => !platform.deleted_at);
-        if (requestId !== fetchRequestId.current) return;
-        setPlatforms(visiblePlatforms);
-        setTotalItems(visiblePlatforms.length);
-        setTotalPages(1);
-        setPageInput(String(clampPage(page, 1)));
-      } else if (data && Array.isArray(data.results)) {
-        const visiblePlatforms = showArchived
-          ? data.results.filter((platform) => platform.deleted_at)
-          : data.results.filter((platform) => !platform.deleted_at);
-        if (requestId !== fetchRequestId.current) return;
-        setPlatforms(visiblePlatforms);
-        setTotalItems(data.total_items || data.count || visiblePlatforms.length);
-        const nextTotalPages = data.total_pages || Math.ceil((data.total_items || data.results.length) / (data.page_size || 10)) || 1;
-        setTotalPages(nextTotalPages);
-        setPageInput(String(clampPage(page, nextTotalPages)));
-      } else {
-        if (requestId !== fetchRequestId.current) return;
-        setPlatforms([]);
-        setTotalItems(0);
-        setTotalPages(1);
+        const items = data.filter(isVisible);
+        return { items, totalItems: items.length, totalPages: 1 };
       }
-    } catch (err) {
-      if (requestId !== fetchRequestId.current) return;
-      console.error("Error fetching platforms:", err);
-      setError(err.message || "Error al cargar las plataformas del servidor.");
-      setPlatforms([]);
-    } finally {
-      if (requestId === fetchRequestId.current) setLoading(false);
-    }
-  }, [page, debouncedSearch, statusFilter, registrationFilter, accessTextFilter, ordering, showArchived]);
+      if (data && Array.isArray(data.results)) {
+        const items = data.results.filter(isVisible);
+        return {
+          items,
+          totalItems: data.total_items || data.count || items.length,
+          totalPages: data.total_pages || Math.ceil((data.total_items || data.results.length) / (data.page_size || 10)) || 1,
+        };
+      }
+      return { items: [], totalItems: 0, totalPages: 1 };
+    },
+  });
+
+  const platforms = platformsQuery.data?.items ?? [];
+  const totalItems = platformsQuery.data?.totalItems ?? 0;
+  const totalPages = platformsQuery.data?.totalPages ?? 1;
+  // Solo hay spinner cuando no existe nada en caché para estos filtros.
+  const loading = platformsQuery.isPending || (platformsQuery.isError && platformsQuery.isFetching);
+  const error = platformsQuery.isError && !platformsQuery.isFetching
+    ? platformsQuery.error?.message || "Error al cargar las plataformas del servidor."
+    : null;
 
   useEffect(() => {
-    fetchPlatforms();
-  }, [fetchPlatforms]);
+    if (platformsQuery.error) console.error("Error fetching platforms:", platformsQuery.error);
+  }, [platformsQuery.error]);
+
+  // El campo de página sigue a la página real cuando cambian los datos.
+  const pageSync = platformsQuery.data ? `${page}/${totalPages}` : null;
+  const [syncedPage, setSyncedPage] = useState(null);
+  if (pageSync && pageSync !== syncedPage) {
+    setSyncedPage(pageSync);
+    setPageInput(String(clampPage(page, totalPages)));
+  }
+
+  const fetchPlatforms = () => queryClient.invalidateQueries({ queryKey: queryKeys.platforms.all });
 
   const handlePageSubmit = () => {
     const result = sanitizePageValue(pageInput, totalPages);
@@ -232,7 +224,6 @@ export default function DatabaseTable() {
   };
 
   const toggleArchivedView = () => {
-    fetchRequestId.current += 1;
     setShowArchived((current) => !current);
     setPage(1);
     setPageInput("1");
@@ -355,7 +346,7 @@ export default function DatabaseTable() {
         <button className="bg-white text-[#7f1218] font-semibold text-xs px-5 py-2 rounded-lg shadow-2xs transition-all border border-gray-200/60">
           Bases de datos
         </button>
-        <Link href="/admin/revistas">
+        <Link href="/admin/revistas" prefetch>
           <button className="text-gray-500 hover:text-gray-800 font-medium text-xs px-5 py-2 rounded-lg transition-all hover:bg-white/50">
             Revistas
           </button>

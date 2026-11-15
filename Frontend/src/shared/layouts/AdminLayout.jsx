@@ -215,6 +215,10 @@ function AdminLayoutContent({ children, userName }) {
                     <Link
                       key={item.href}
                       href={item.href}
+                      // Las rutas del panel son dinámicas (el layout lee la
+                      // cookie de sesión), así que Next no las precarga por
+                      // defecto: sin esto cada clic espera al servidor.
+                      prefetch
                       onClick={() => setSidebarOpen(false)}
                       className={`flex items-center gap-3 px-4 py-2.5 rounded-xl text-sm font-medium transition-all relative ${
                         isActive
