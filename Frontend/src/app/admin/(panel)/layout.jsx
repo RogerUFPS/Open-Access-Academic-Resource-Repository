@@ -4,16 +4,17 @@ import AdminLayout from "@/shared/layouts/AdminLayout";
 import AccountsGateway from "@/shared/components/AccountsGateway";
 import { apiClient, pendingAccountStep } from "@/shared/services/apiClient";
 import { getUserDisplayName } from "@/shared/services/userService";
+import { SESSION_COOKIE_NAME } from "@/shared/config/cookies";
 
 export default async function AdminRouteLayout({ children }) {
   const store = await cookies();
-  const session = store.get("sessionid")?.value;
+  const session = store.get(SESSION_COOKIE_NAME)?.value;
   if (!session) redirect("/admin/login");
 
   let user;
   try {
     user = await apiClient.get("/api/accounts/auth/me/", {}, {
-      headers: { Cookie: `sessionid=${session}` },
+      headers: { Cookie: `${SESSION_COOKIE_NAME}=${session}` },
       cache: "no-store",
       signal: AbortSignal.timeout(60000),
       redirect: "error",

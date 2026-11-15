@@ -16,12 +16,13 @@ import {
   MessageSquare, 
   LogOut, 
   Menu, 
+  ShieldCheck,
   X 
 } from "lucide-react";
 import { getLinkAlertsPage } from "@/features/admin/harvesting/harvesting";
 import { CONFIRMED_FAILURES_QUERY } from "@/features/admin/harvesting/linkMonitoring";
 import LinkAlertsMenu from "@/features/admin/harvesting/components/LinkAlertsMenu";
-import { ACCOUNT_FORBIDDEN_EVENT, pendingAccountStep } from "@/shared/services/apiClient";
+import { ACCOUNT_FORBIDDEN_EVENT, pendingAccountStep, RECENT_AUTH_REQUIRED_EVENT } from "@/shared/services/apiClient";
 
 const ALERT_POLL_MS = 2 * 60 * 1000;
 
@@ -42,7 +43,16 @@ function AdminLayoutContent({ children, userName }) {
   const [sessionError, setSessionError] = useState("");
   const [alertCount, setAlertCount] = useState(0);
   const [alertsOpen, setAlertsOpen] = useState(false);
+  const [reauthOpen, setReauthOpen] = useState(false);
   const closeAlerts = useCallback(() => setAlertsOpen(false), []);
+
+  // A critical operation needs a fresh login (and MFA). The mutation is not
+  // retried: the user signs in again and repeats it consciously.
+  useEffect(() => {
+    const requireReauthentication = () => setReauthOpen(true);
+    window.addEventListener(RECENT_AUTH_REQUIRED_EVENT, requireReauthentication);
+    return () => window.removeEventListener(RECENT_AUTH_REQUIRED_EVENT, requireReauthentication);
+  }, []);
 
   // A 403 can mean the account must now change its password or complete MFA
   // (e.g. after a reset). Re-read /auth/me/ and send it to the pending step.
@@ -100,14 +110,15 @@ function AdminLayoutContent({ children, userName }) {
   // Cálculo dinámico de iniciales (De tu versión)
   const userInitials = userName.split(/\s+/).filter(Boolean).slice(0, 2).map((part) => part.charAt(0)).join("").toLocaleUpperCase("es");
 
-  async function signOut() {
+  async function signOut({ reason } = {}) {
     if (signingOut) return;
     setSigningOut(true);
     setSessionError("");
     try {
       await accountsApi.logout();
       setSidebarOpen(false);
-      router.replace("/admin/login");
+      setReauthOpen(false);
+      router.replace(reason ? `/admin/login?motivo=${encodeURIComponent(reason)}` : "/admin/login");
       router.refresh();
     } catch (error) {
       setSessionError(error.message);
@@ -131,6 +142,7 @@ function AdminLayoutContent({ children, userName }) {
         { name: "Bitácora", href: "/admin/bitacora", icon: Clock },
         // Los presets de permisos se gestionan desde Administrativos.
         { name: "Administrativos", href: "/admin/usuarios", icon: Users },
+        { name: "Mi sesión", href: "/admin/sesion", icon: ShieldCheck },
       ]
     },
     {
@@ -233,7 +245,7 @@ function AdminLayoutContent({ children, userName }) {
             <span>Alertas de enlaces</span>
             {alertCount > 0 && <span className="ml-auto rounded-full bg-[#F59E0B] px-2 py-0.5 text-xs font-bold text-[#321B00]">{alertCount > 99 ? "99+" : alertCount}</span>}
           </button>
-          <button type="button" onClick={signOut} disabled={signingOut} aria-label={`Cerrar sesión de ${userName}`} className="w-full text-left disabled:opacity-60">
+          <button type="button" onClick={() => signOut()} disabled={signingOut} aria-label={`Cerrar sesión de ${userName}`} className="w-full text-left disabled:opacity-60">
             <div className="flex items-center justify-between p-3 rounded-xl bg-white/10 hover:bg-white/15 transition-colors cursor-pointer group">
               <div className="min-w-0 flex items-center gap-3">
                 <div aria-hidden="true" className="w-9 h-9 rounded-full bg-[#EADDD7] text-[#7f1218] font-medium text-sm flex items-center justify-center shrink-0">
@@ -262,6 +274,23 @@ function AdminLayoutContent({ children, userName }) {
       )}
 
       <LinkAlertsMenu open={alertsOpen} onClose={closeAlerts} />
+
+      {reauthOpen && (
+        <div className="fixed inset-0 z-[90] flex items-center justify-center bg-[#1F242E]/60 px-4">
+          <div role="alertdialog" aria-modal="true" aria-labelledby="reauth-title" aria-describedby="reauth-description" className="w-full max-w-md rounded-xl border border-[#E5E7EB] bg-white p-6 shadow-2xl">
+            <h2 id="reauth-title" className="text-xl font-bold text-[#1F242E]">Vuelve a autenticarte</h2>
+            <p id="reauth-description" className="mt-2 text-sm leading-6 text-[#4B5563]">
+              Esta operación es crítica y requiere un inicio de sesión reciente. Cierra la sesión, vuelve a ingresar
+              {" "}(con verificación en dos pasos si aplica) y repite la operación. No se realizó ningún cambio.
+            </p>
+            {sessionError && <p role="alert" className="mt-3 text-sm text-red-700">{sessionError}</p>}
+            <div className="mt-5 flex flex-wrap justify-end gap-3">
+              <button type="button" onClick={() => setReauthOpen(false)} disabled={signingOut} className="rounded-md border border-gray-300 px-4 py-2 text-sm font-semibold text-gray-700 hover:bg-gray-50 disabled:opacity-60">Ahora no</button>
+              <button type="button" onClick={() => signOut({ reason: "reautenticacion" })} disabled={signingOut} className="rounded-md bg-[#7f1218] px-4 py-2 text-sm font-semibold text-white transition hover:bg-[#6a0f14] disabled:opacity-60">{signingOut ? "Cerrando sesión…" : "Cerrar sesión e iniciar de nuevo"}</button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Main Content Area */}
       <main className="flex-1 min-w-0 p-4 md:p-8 w-full max-w-7xl mx-auto">

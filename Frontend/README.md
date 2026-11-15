@@ -42,3 +42,10 @@ You can check out [the Next.js GitHub repository](https://github.com/vercel/next
 The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
 
 Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+
+## Seguridad de sesiones
+
+- Los nombres de las cookies de sesión y CSRF salen únicamente de `src/shared/config/cookies.js` (`NEXT_PUBLIC_SESSION_COOKIE_NAME`, `NEXT_PUBLIC_CSRF_COOKIE_NAME`). Deben coincidir con `SESSION_COOKIE_NAME`/`CSRF_COOKIE_NAME` del backend y pasarse como argumentos de construcción, porque se incorporan en `next build`. En producción HTTPS: `__Host-sessionid` y `__Host-csrftoken`, desplegados de forma coordinada con el backend.
+- `src/proxy.js` genera un nonce por petición y emite la `Content-Security-Policy` (scripts sólo con nonce y `strict-dynamic`). Todas las páginas se renderizan dinámicamente. `CSP_REPORT_ONLY=1` la emite en modo de sólo reporte para pruebas.
+- `SECURE_DEPLOYMENT=1` activa cookies `Secure`, HSTS y `upgrade-insecure-requests`. `TRUST_FORWARDED_PROTO=1` sólo si el balanceador de confianza reescribe `X-Forwarded-Proto`.
+- La sesión activa se consulta y revoca en `/admin/sesion`.

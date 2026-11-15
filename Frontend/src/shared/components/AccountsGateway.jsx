@@ -2,6 +2,7 @@ import "server-only";
 import { cookies, headers } from "next/headers";
 import AccountsProvider from "@/shared/components/AccountsProvider";
 import HarvestingProvider from "@/features/admin/harvesting/components/HarvestingProvider";
+import { CSRF_COOKIE_NAME, requiresSecureCookie, SESSION_COOKIE_NAME } from "@/shared/config/cookies";
 
 const API_URL = (
   process.env.BACKEND_INTERNAL_URL
@@ -13,7 +14,8 @@ const ALLOWED_ACCOUNT_MUTATIONS = [
   ["PATCH", /^presets\/\d+\/$/],
   ["DELETE", /^presets\/\d+\/$/],
   ["POST", /^auth\/(login|logout)\/$/],
-  ["POST", /^auth\/mfa\/(challenge|enroll\/confirm)\/$/],
+  ["POST", /^auth\/mfa\/(challenge|enroll|enroll\/confirm)\/$/],
+  ["DELETE", /^auth\/session\/$/],
   ["POST", /^superadmin\/(accounts|deactivate)\/$/],
   ["POST", /^password\/(change|forgot)\/$/],
   ["POST", /^users\/invite\/$/],
@@ -47,18 +49,42 @@ async function responseData(response) {
     : `El servidor devolvió una respuesta inesperada (${response.status}). Intenta nuevamente.` };
 }
 
+const COOKIE_NAMES = [SESSION_COOKIE_NAME, CSRF_COOKIE_NAME];
+
+function retryAfter(response) {
+  const value = response.headers.get("retry-after");
+  return value && /^\d+$/.test(value.trim()) ? Number(value.trim()) : null;
+}
+
+// Sólo se confía en X-Forwarded-Proto cuando el balanceador de confianza
+// sobrescribe el valor enviado por el cliente (TRUST_FORWARDED_PROTO=1).
+function isSecureRequest(incomingHeaders) {
+  if (process.env.SECURE_DEPLOYMENT === "1") return true;
+  if (process.env.TRUST_FORWARDED_PROTO === "1"
+    && incomingHeaders.get("x-forwarded-proto")?.split(",")[0].trim() === "https") return true;
+  // Next.js ya verificó que el Origin del navegador coincide con este host.
+  return incomingHeaders.get("origin")?.startsWith("https://") === true;
+}
+
 function transferCookies(response, store, jar, secure) {
   for (const raw of response.headers.getSetCookie()) {
     const [entry, ...attributes] = raw.split(";");
     const separator = entry.indexOf("=");
+    if (separator < 1) continue;
     const name = entry.slice(0, separator).trim();
-    if (!["sessionid", "csrftoken"].includes(name)) continue;
+    if (!COOKIE_NAMES.includes(name)) continue;
     const value = entry.slice(separator + 1);
-    const options = { path: "/", secure, sameSite: "lax", httpOnly: name === "sessionid" };
+    const options = {
+      path: "/",
+      secure: secure || requiresSecureCookie(name),
+      sameSite: "lax",
+      // La cookie de sesión nunca debe ser legible desde JavaScript.
+      httpOnly: name === SESSION_COOKIE_NAME,
+    };
     for (const attribute of attributes) {
       const [key, ...parts] = attribute.trim().split("=");
       const content = parts.join("=");
-      if (key.toLowerCase() === "httponly") options.httpOnly = true;
+      if (key.toLowerCase() === "httponly" && name === SESSION_COOKIE_NAME) options.httpOnly = true;
       if (key.toLowerCase() === "samesite" && content.toLowerCase() === "strict") options.sameSite = "strict";
       if (key.toLowerCase() === "max-age" && /^-?\d+$/.test(content)) options.maxAge = Number(content);
       if (key.toLowerCase() === "expires") {
@@ -68,6 +94,7 @@ function transferCookies(response, store, jar, secure) {
     }
     // The browser talks to Next.js, so cookies belong to the frontend host and
     // protocol, rather than the external API's Domain, Path or Secure settings.
+    // Domain is never copied: `__Host-` cookies must not carry one.
     store.set(name, value, options);
     jar.set(name, value);
   }
@@ -80,13 +107,12 @@ async function mutateBackend(path, method, body, timeoutMs = 90000) {
 
   const store = await cookies();
   const incomingHeaders = await headers();
-  const secure = incomingHeaders.get("x-forwarded-proto")?.split(",")[0].trim() === "https"
-    || incomingHeaders.get("origin")?.startsWith("https://") === true;
-  const jar = new Map(["sessionid", "csrftoken"].flatMap((name) => {
+  const secure = isSecureRequest(incomingHeaders);
+  const jar = new Map(COOKIE_NAMES.flatMap((name) => {
     const cookie = store.get(name);
     return cookie ? [[name, cookie.value]] : [];
   }));
-  if (!PUBLIC_MUTATIONS.includes(path) && !jar.get("sessionid")) {
+  if (!PUBLIC_MUTATIONS.includes(path) && !jar.get(SESSION_COOKIE_NAME)) {
     return { status: 401, data: { detail: "Inicia sesión para realizar esta operación." } };
   }
   const cookieHeader = () => [...jar].map(([name, value]) => `${name}=${value}`).join("; ");
@@ -104,13 +130,13 @@ async function mutateBackend(path, method, body, timeoutMs = 90000) {
       cache: "no-store", signal: AbortSignal.timeout(60000), redirect: "error",
     });
     transferCookies(csrf, store, jar, secure);
-    if (!csrf.ok) return { status: csrf.status, data: await responseData(csrf) };
-    if (!jar.get("csrftoken")) return { status: 502, data: { detail: "No se pudo obtener el token de seguridad del servidor." } };
+    if (!csrf.ok) return { status: csrf.status, data: await responseData(csrf), retryAfter: retryAfter(csrf) };
+    if (!jar.get(CSRF_COOKIE_NAME)) return { status: 502, data: { detail: "No se pudo obtener el token de seguridad del servidor." } };
 
     const response = await fetch(`${API_URL}${path}`, {
       method,
       headers: {
-        ...backendHeaders, Cookie: cookieHeader(), "X-CSRFToken": jar.get("csrftoken"),
+        ...backendHeaders, Cookie: cookieHeader(), "X-CSRFToken": jar.get(CSRF_COOKIE_NAME),
         ...(body === undefined ? {} : { "Content-Type": "application/json" }),
       },
       ...(body === undefined ? {} : { body: JSON.stringify(body) }),
@@ -124,7 +150,12 @@ async function mutateBackend(path, method, body, timeoutMs = 90000) {
       );
       console.error(`[accounts/users/invite] HTTP ${response.status}: ${safeData}`);
     }
-    return { status: response.status, data };
+    // Al revocar o cerrar la sesión se descarta también la copia local,
+    // aunque el backend no haya enviado la cookie de eliminación.
+    if (response.ok && (path === "/api/accounts/auth/session/" || path === "/api/accounts/auth/logout/")) {
+      store.delete({ name: SESSION_COOKIE_NAME, path: "/", secure: secure || requiresSecureCookie(SESSION_COOKIE_NAME) });
+    }
+    return { status: response.status, data, retryAfter: retryAfter(response) };
   } catch {
     return { status: 502, data: { detail: "No se pudo completar la solicitud al servidor. Comprueba el estado de la operación antes de repetirla." } };
   }

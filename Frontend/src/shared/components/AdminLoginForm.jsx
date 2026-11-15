@@ -8,7 +8,10 @@ import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle }
 import AccountFeedback from "@/shared/components/AccountFeedback";
 import LoginField from "@/shared/components/LoginField";
 import { MfaChallengeStep, MfaEnrollmentStep } from "@/shared/components/MfaSteps";
+import RateLimitNotice from "@/shared/components/RateLimitNotice";
 import { useAccountsApi } from "@/shared/components/AccountsProvider";
+import { useToast } from "@/components/ui/use-toast";
+import useRetryCountdown from "@/shared/hooks/useRetryCountdown";
 import { pendingAccountStep } from "@/shared/services/apiClient";
 
 const STEP_COPY = {
@@ -18,9 +21,17 @@ const STEP_COPY = {
   "mfa-challenge": ["Verificación en dos pasos", "Ingresa el código de 6 dígitos de tu aplicación autenticadora para continuar."],
 };
 
-export default function AdminLoginForm() {
+const REASON_NOTICES = {
+  reautenticacion: "Por seguridad, vuelve a iniciar sesión antes de realizar la operación crítica que intentabas. No se repitió automáticamente.",
+  "sesion-revocada": "La sesión fue revocada.",
+};
+const PREVIOUS_SESSION_NOTICE = "Se cerró tu sesión anterior porque iniciaste sesión desde otro lugar.";
+
+export default function AdminLoginForm({ reason = null }) {
   const accountsApi = useAccountsApi();
   const router = useRouter();
+  const { toast } = useToast();
+  const { remaining, limited, handleRateLimit } = useRetryCountdown();
   // "login" | "password" | "mfa-enroll" | "mfa-challenge"
   const [step, setStep] = useState("login");
   const [email, setEmail] = useState("");
@@ -29,7 +40,7 @@ export default function AdminLoginForm() {
   const [confirmation, setConfirmation] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
-  const [notice, setNotice] = useState("");
+  const [notice, setNotice] = useState(() => REASON_NOTICES[reason] ?? "");
 
   const enterApp = useCallback(() => {
     router.replace("/admin/usuarios");
@@ -83,7 +94,7 @@ export default function AdminLoginForm() {
 
   async function submit(event) {
     event.preventDefault();
-    if (busy) return;
+    if (busy || limited) return;
     setError(null);
     setNotice("");
     if (step === "password" && newPassword !== confirmation) {
@@ -102,9 +113,15 @@ export default function AdminLoginForm() {
       } else {
         const result = await accountsApi.login({ email: email.trim(), password });
         setPassword("");
+        if (result?.previous_session_terminated) {
+          // The toast outlives the navigation to the panel.
+          setNotice(PREVIOUS_SESSION_NOTICE);
+          toast({ title: "Sesión anterior cerrada", description: PREVIOUS_SESSION_NOTICE });
+        }
         advance(result);
       }
     } catch (error) {
+      if (handleRateLimit(error)) return;
       setError(error.status === 401 && step === "login" ? new Error("El correo o la contraseña son incorrectos.") : error);
     } finally {
       setBusy(false);
@@ -124,6 +141,7 @@ export default function AdminLoginForm() {
     {(step === "login" || step === "password") && <form onSubmit={submit} aria-busy={busy}>
       <CardContent className="space-y-5">
         {error && <AccountFeedback error={error} />}
+        <RateLimitNotice remaining={remaining} />
         <fieldset disabled={busy} className="space-y-5">
           {step === "login" && <LoginField id="login-email" label="Correo institucional" type="email" autoComplete="username" placeholder="usuario@ufps.edu.co" value={email} onChange={(event) => setEmail(event.target.value)} />}
           <LoginField id="login-password" label={step === "password" ? "Contraseña actual o provisional" : "Contraseña"} type="password" autoComplete="current-password" placeholder="••••••••••••" value={password} onChange={(event) => setPassword(event.target.value)} />
@@ -138,7 +156,7 @@ export default function AdminLoginForm() {
         <p className="pt-1 text-[13px] text-gray-500">{step === "password" ? "Usa al menos 12 caracteres. Evita claves comunes, solo numéricas o similares a tus datos personales." : "Usa tu correo institucional y la contraseña asignada."}</p>
       </CardContent>
       <CardFooter className="flex-col gap-4 pt-2 pb-4">
-        <Button type="submit" disabled={busy} className="h-12 w-full rounded-lg bg-[#7f1218] text-[15px] font-medium text-white transition-colors hover:bg-[#6a0f14]">{busy ? "Procesando…" : step === "password" ? "Guardar contraseña" : "Iniciar sesión"}</Button>
+        <Button type="submit" disabled={busy || limited} className="h-12 w-full rounded-lg bg-[#7f1218] text-[15px] font-medium text-white transition-colors hover:bg-[#6a0f14]">{busy ? "Procesando…" : step === "password" ? "Guardar contraseña" : "Iniciar sesión"}</Button>
         {step === "password" && <button type="button" onClick={signOut} disabled={busy} className="text-sm font-medium text-[#7f1218] hover:underline disabled:opacity-60">Cerrar sesión</button>}
       </CardFooter>
     </form>}
