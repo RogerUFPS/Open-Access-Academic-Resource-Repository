@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { QRCodeSVG } from "qrcode.react";
 import { Check, Copy } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -10,6 +10,9 @@ import LoginField from "@/shared/components/LoginField";
 import RateLimitNotice from "@/shared/components/RateLimitNotice";
 import { useAccountsApi } from "@/shared/components/AccountsProvider";
 import useRetryCountdown, { formatWait } from "@/shared/hooks/useRetryCountdown";
+
+// Detail sent by the backend when confirming after the enrollment window.
+const ENROLLMENT_EXPIRED = /expir/i;
 
 const primaryButton = "h-12 w-full rounded-lg bg-[#7f1218] text-[15px] font-medium text-white transition-colors hover:bg-[#6a0f14]";
 
@@ -34,15 +37,23 @@ function codeError(error) {
   return error;
 }
 
-/** Seconds left until the enrollment secret expires, ticking every second. */
-function useExpiry(expiresAt) {
-  const [now, setNow] = useState(() => Date.now());
+/**
+ * True once `deadline` has passed. The backend reuses a secret that is still
+ * valid and always answers the full `expires_in`, so `deadline` is only an
+ * upper bound of the real expiry: reaching it means the secret certainly
+ * expired, but the backend may reject it earlier.
+ */
+function usePassed(deadline) {
+  const [passed, setPassed] = useState(false);
   useEffect(() => {
-    if (!expiresAt) return undefined;
-    const timer = setInterval(() => setNow(Date.now()), 1000);
-    return () => clearInterval(timer);
-  }, [expiresAt]);
-  return expiresAt ? Math.max(0, Math.ceil((expiresAt - now) / 1000)) : null;
+    if (!deadline) return undefined;
+    const timer = setTimeout(() => setPassed(true), Math.max(0, deadline - Date.now()));
+    return () => {
+      clearTimeout(timer);
+      setPassed(false);
+    };
+  }, [deadline]);
+  return passed;
 }
 
 /**
@@ -62,29 +73,38 @@ export function MfaEnrollmentStep({ onCompleted, onStepChanged, onSignOut }) {
   const [error, setError] = useState(null);
   const [copied, setCopied] = useState(false);
   const { remaining, limited, handleRateLimit } = useRetryCountdown();
-  const secondsLeft = useExpiry(enrollment?.expiresAt);
-  const expired = secondsLeft === 0;
+  const [rejectedAsExpired, setRejectedAsExpired] = useState(false);
+  const deadlinePassed = usePassed(enrollment?.latestExpiry);
+  const expired = rejectedAsExpired || deadlinePassed;
+  // The POST that starts enrollment runs once per `reload` (mount or an
+  // explicit "generate a new key"), never because a dependency was recreated:
+  // each Server Action rotates cookies and re-renders the tree.
+  const startedFor = useRef(null);
+  const stepChanged = useRef(onStepChanged);
+  useEffect(() => { stepChanged.current = onStepChanged; }, [onStepChanged]);
 
   useEffect(() => {
-    let cancelled = false;
+    if (startedFor.current === reload) return;
+    startedFor.current = reload;
     accountsApi.startMfaEnrollment().then((data) => {
-      if (cancelled) return;
+      if (startedFor.current !== reload) return;
       const ttl = Number(data?.expires_in);
       setEnrollment({
         secret: data.secret,
         otpauthUri: data.otpauth_uri,
-        expiresAt: Number.isFinite(ttl) && ttl > 0 ? Date.now() + ttl * 1000 : null,
+        ttl: Number.isFinite(ttl) && ttl > 0 ? ttl : null,
+        latestExpiry: Number.isFinite(ttl) && ttl > 0 ? Date.now() + ttl * 1000 : null,
       });
     }).catch((error) => {
-      if (cancelled) return;
+      if (startedFor.current !== reload) return;
       // 403: password change pending; 409: MFA was already enabled.
-      if ([403, 409].includes(error.status)) onStepChanged();
+      if ([403, 409].includes(error.status)) stepChanged.current();
       else setLoadError(error);
     });
-    return () => { cancelled = true; };
-  }, [accountsApi, onStepChanged, reload]);
+  }, [accountsApi, reload]);
 
   function restartEnrollment() {
+    setRejectedAsExpired(false);
     setEnrollment(null);
     setLoadError(null);
     setError(null);
@@ -119,8 +139,13 @@ export function MfaEnrollmentStep({ onCompleted, onStepChanged, onSignOut }) {
         setCode("");
         return;
       }
-      setError(codeError(error));
       setCode("");
+      // Once the window closes, a new POST issues a new secret.
+      if (error.status === 400 && ENROLLMENT_EXPIRED.test(error.message)) {
+        setRejectedAsExpired(true);
+        return;
+      }
+      setError(codeError(error));
     } finally {
       setBusy(false);
     }
@@ -153,12 +178,15 @@ export function MfaEnrollmentStep({ onCompleted, onStepChanged, onSignOut }) {
           </div>
           <p className="text-[12px] text-gray-500">Tipo: basada en tiempo (TOTP), 6 dígitos, 30 segundos.</p>
         </div>
-        {secondsLeft !== null && (expired
+        {expired
           ? <div role="alert" className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
-            <p>Esta configuración expiró. Genera una clave nueva y vuelve a escanear el código QR.</p>
+            <p>Esta configuración expiró. Genera una clave nueva, elimina la anterior de tu aplicación autenticadora y vuelve a escanear el código QR.</p>
             <button type="button" onClick={restartEnrollment} className="mt-2 font-semibold underline">Generar una clave nueva</button>
           </div>
-          : <p role="timer" aria-live="off" className="text-[13px] text-gray-500">Esta clave expira en <span className="font-semibold tabular-nums">{formatWait(secondsLeft)}</span>. No la compartas ni la guardes fuera de tu aplicación autenticadora.</p>)}
+          : <p className="text-[13px] text-gray-500">
+            {enrollment.ttl ? <>La clave vence {formatWait(enrollment.ttl)} después de generarse; si retomaste una configuración anterior puede quedar menos tiempo. </> : null}
+            No la compartas ni la guardes fuera de tu aplicación autenticadora.
+          </p>}
         <fieldset disabled={busy}>
           <MfaCodeField id="mfa-enroll-code" value={code} onChange={setCode} />
         </fieldset>
