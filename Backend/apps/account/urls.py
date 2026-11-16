@@ -22,7 +22,6 @@ urlpatterns = [
     ),
     path("users/invite/", views.InviteView.as_view(), name="account-user-invite"),
     path("superadmin/accounts/", views.SuperadminAccountsView.as_view(), name="superadmin-accounts"),
-    path("superadmin/deactivate/", views.DeactivateSuperadminView.as_view(), name="superadmin-deactivate"),
     path(
         "users/<int:pk>/",
         views.UserDetailView.as_view(),

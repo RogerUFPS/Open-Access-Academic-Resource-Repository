@@ -46,7 +46,7 @@ class AuditActorIsolationTests(TestCase):
             email="admin@test.com",
             password="Contrasena-Fuerte-2026",
             full_name="Administrador Principal",
-            is_superadmin=True,
+            is_superadmin=False,
         )
         AuditLog.objects.all().delete()
 
@@ -316,7 +316,7 @@ class PublicEndpointAuditSuppressTests(TestCase):
             email="a@test.com",
             password="Contrasena-Fuerte-2026",
             full_name="Admin",
-            is_superadmin=True,
+            is_superadmin=False,
         )
         AuditLog.objects.all().delete()
 

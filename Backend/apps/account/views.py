@@ -135,10 +135,11 @@ class LoginView(APIView):
                 SessionStore(session_key=user.session_key).delete()
             login(request, user)
             initialize_session_security(request)
-            if user.is_superadmin:
+            if user.is_superadmin or user.pending_superadmin:
                 request.session["superadmin_mfa_satisfied"] = False
                 request.session["superadmin_mfa_enrollment_required"] = not user.mfa_enabled
-                audit_superadmin("login_password_accepted", actor=user, target=user)
+                if user.is_superadmin:
+                    audit_superadmin("login_password_accepted", actor=user, target=user)
             else:
                 request.session.pop("superadmin_mfa_satisfied", None)
             request.session.save()
@@ -164,9 +165,10 @@ class LoginView(APIView):
                      "mfa_enabled": user.mfa_enabled},
             "must_change_password": user.force_password_change,
             "is_superadmin": user.is_superadmin,
-            "mfa_required": user.is_superadmin,
-            "mfa_enrollment_required": bool(user.is_superadmin and not user.mfa_enabled),
-            "mfa_satisfied": bool(not user.is_superadmin or request.session.get("superadmin_mfa_satisfied")),
+            "mfa_required": user.is_superadmin or user.pending_superadmin,
+            "superadmin_handoff_pending": user.pending_superadmin,
+            "mfa_enrollment_required": bool((user.is_superadmin or user.pending_superadmin) and not user.mfa_enabled),
+            "mfa_satisfied": bool(not (user.is_superadmin or user.pending_superadmin) or request.session.get("superadmin_mfa_satisfied")),
             "previous_session_terminated": previous_session_terminated,
         })
 
@@ -186,7 +188,7 @@ class MFAChallengeView(APIView):
             )
             response["Retry-After"] = str(wait)
             return response
-        if not user.is_superadmin or not user.is_active or not user.mfa_enabled:
+        if not (user.is_superadmin or user.pending_superadmin) or not user.is_active or not user.mfa_enabled:
             if user.is_superadmin:
                 audit_superadmin("mfa_challenge_failed", target=user)
             return Response({"detail": "No se pudo verificar el código."}, status=400)
@@ -209,7 +211,7 @@ class MFAEnrollmentView(APIView):
 
     def post(self, request):
         user = request.user
-        if not user.is_superadmin or not user.is_active or user.force_password_change:
+        if not (user.is_superadmin or user.pending_superadmin) or not user.is_active or user.force_password_change:
             return Response({"detail": "Cambia la contraseña antes de configurar MFA."}, status=403)
         if user.mfa_enabled:
             return Response({"detail": "MFA ya está configurado."}, status=409)
@@ -238,7 +240,7 @@ class MFAEnrollmentConfirmView(APIView):
 
     def post(self, request):
         user = request.user
-        if (not user.is_superadmin or not user.is_active or user.force_password_change
+        if (not (user.is_superadmin or user.pending_superadmin) or not user.is_active or user.force_password_change
                 or user.mfa_enabled):
             return Response({"detail": "No se puede completar la inscripción MFA."}, status=403)
         started_at = request.session.get(MFA_ENROLLMENT_STARTED_AT)
@@ -263,8 +265,36 @@ class MFAEnrollmentConfirmView(APIView):
             audit_superadmin("mfa_enrollment_failed", actor=user, target=user)
             return Response({"detail": "Código MFA no válido."}, status=400)
         clear_failures(request, user.pk, "mfa")
-        user.mfa_enabled = True
-        user.save(update_fields=["mfa_enabled"])
+        if user.pending_superadmin:
+            promoted_id = user.pk
+            outgoing_id = user.created_by_id
+            try:
+                with transaction.atomic():
+                    candidate = User.all_objects.select_for_update().get(pk=promoted_id)
+                    outgoing = User.all_objects.select_for_update().filter(
+                        pk=outgoing_id, is_active=True, is_superadmin=True
+                    ).first()
+                    if (not candidate.pending_superadmin or not candidate.is_active
+                            or candidate.force_password_change or outgoing is None):
+                        return Response({"detail": "La transferencia superadmin ya no está disponible."}, status=409)
+                    invalidate_current_session(outgoing, SessionTermination.Reason.ACCOUNT_DISABLED)
+                    outgoing.is_active = False
+                    outgoing.save(update_fields=["is_active", "session_key"])
+                    candidate.pending_superadmin = False
+                    candidate.is_superadmin = True
+                    candidate.mfa_enabled = True
+                    candidate.updated_by = outgoing
+                    candidate.updated_at = timezone.now()
+                    candidate.save(update_fields=["pending_superadmin", "is_superadmin", "mfa_enabled", "updated_by", "updated_at"])
+                    audit_superadmin("superadmin_created", actor=outgoing, target=candidate)
+                    audit_superadmin("superadmin_deactivated", actor=candidate, target=outgoing)
+                    audit_superadmin("superadmin_handoff_completed", actor=outgoing, target=candidate)
+            except User.DoesNotExist:
+                return Response({"detail": "La transferencia superadmin ya no está disponible."}, status=409)
+            user = candidate
+        else:
+            user.mfa_enabled = True
+            user.save(update_fields=["mfa_enabled"])
         request.session["superadmin_mfa_satisfied"] = True
         request.session.pop("superadmin_mfa_enrollment_required", None)
         request.session.pop(MFA_ENROLLMENT_STARTED_AT, None)
@@ -290,13 +320,15 @@ class SuperadminAccountsView(APIView):
             return Response({"email": ["Introduce un correo válido."]}, status=400)
         if User.all_objects.filter(email__iexact=email).exists():
             return Response({"email": ["Ya existe una cuenta con este correo."]}, status=409)
+        if User.objects.filter(pending_superadmin=True, is_active=True).exists():
+            return Response({"detail": "Ya existe una transferencia superadmin pendiente."}, status=409)
         password = temporary_password()
         try:
             with transaction.atomic():
                 user = User.objects.create_user(
                     email=email,
                     password=password,
-                    is_superadmin=True,
+                    pending_superadmin=True,
                     force_password_change=True,
                     created_by=request.user,
                 )
@@ -309,34 +341,33 @@ class SuperadminAccountsView(APIView):
                 except EmailDeliveryError:
                     transaction.set_rollback(True)
                     return Response({"detail": "No se pudo entregar el correo de invitación."}, status=503)
-                audit_superadmin("superadmin_created", actor=request.user, target=user)
+                audit_superadmin("superadmin_invited", actor=request.user, target=user)
         except IntegrityError:
-            return Response({"email": ["Ya existe una cuenta con este correo."]}, status=409)
+            if User.all_objects.filter(email__iexact=email).exists():
+                return Response({"email": ["Ya existe una cuenta con este correo."]}, status=409)
+            return Response({"detail": "Ya existe una transferencia superadmin pendiente."}, status=409)
         return Response({"id": user.pk, "email": user.email,
+                         "pending_superadmin": True,
                          "force_password_change": True, "mfa_enrollment_required": True}, status=201)
 
-
-class DeactivateSuperadminView(APIView):
     @transaction.atomic
-    def post(self, request):
+    def delete(self, request):
         denied = recent_authentication_required(request)
         if denied:
             return denied
-        actor = User.objects.select_for_update().filter(pk=request.user.pk,
-                                                        is_active=True,
-                                                        is_superadmin=True).first()
-        if actor is None:
-            return Response({"detail": "La cuenta ya no está activa."}, status=403)
-        replacement_ready = User.objects.filter(is_superadmin=True, is_active=True,
-            mfa_enabled=True, force_password_change=False).exclude(pk=actor.pk).exists()
-        if not replacement_ready:
-            return Response({"detail": "Se requiere otra cuenta superadmin activa y con MFA configurado."}, status=409)
-        invalidate_current_session(actor, SessionTermination.Reason.ACCOUNT_DISABLED)
-        actor.is_active = False
-        actor.save(update_fields=["is_active", "session_key"])
-        audit_superadmin("superadmin_deactivated", actor=actor, target=actor)
-        logout(request)
-        return Response({"detail": "Cuenta desactivada."})
+        candidate = User.all_objects.select_for_update().filter(
+            pending_superadmin=True,
+            is_active=True,
+            created_by=request.user,
+        ).first()
+        if candidate is None:
+            return Response({"detail": "No hay una transferencia pendiente."}, status=404)
+        invalidate_current_session(candidate, SessionTermination.Reason.ACCOUNT_DISABLED)
+        candidate.is_active = False
+        candidate.pending_superadmin = False
+        candidate.save(update_fields=["is_active", "pending_superadmin", "session_key"])
+        audit_superadmin("superadmin_handoff_cancelled", actor=request.user, target=candidate)
+        return Response(status=status.HTTP_204_NO_CONTENT)
 
 
 class LogoutView(APIView):
@@ -385,12 +416,15 @@ class MeView(APIView):
         return Response({**UserSerializer(user).data,
                          "is_superadmin": user.is_superadmin,
                          "mfa_enabled": user.mfa_enabled,
-                         "mfa_required": user.is_superadmin,
-                         "mfa_satisfied": bool(not user.is_superadmin or request.session.get("superadmin_mfa_satisfied")),
-                         "mfa_enrollment_required": bool(user.is_superadmin and not user.mfa_enabled),
+                         "mfa_required": user.is_superadmin or user.pending_superadmin,
+                         "superadmin_handoff_pending": user.pending_superadmin,
+                         "mfa_satisfied": bool(not (user.is_superadmin or user.pending_superadmin) or request.session.get("superadmin_mfa_satisfied")),
+                         "mfa_enrollment_required": bool((user.is_superadmin or user.pending_superadmin) and not user.mfa_enabled),
                          "must_change_password": user.force_password_change})
 
     def patch(self, request):
+        if request.user.pending_superadmin:
+            return Response({"detail": "Completa la incorporación superadmin antes de editar el perfil."}, status=403)
         if request.user.force_password_change:
             return Response(
                 {"detail": "Debes cambiar tu contraseña antes de continuar."},

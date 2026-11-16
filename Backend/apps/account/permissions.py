@@ -200,13 +200,28 @@ class ApplicationPermission(BasePermission):
                 }
             return True
 
-        if path in {"/api/accounts/superadmin/accounts/", "/api/accounts/superadmin/deactivate/"}:
+        if path == "/api/accounts/superadmin/accounts/":
             return bool(
                 request.user and request.user.is_authenticated
                 and request.user.is_active and request.user.is_superadmin
                 and not request.user.force_password_change
                 and request.session.get("superadmin_mfa_satisfied")
             )
+
+        if request.user and request.user.is_authenticated and request.user.pending_superadmin:
+            if path == "/api/accounts/auth/me/":
+                return request.method == "GET"
+            if path == "/api/accounts/password/change/":
+                return True
+            if path in {
+                "/api/accounts/auth/logout/",
+                "/api/accounts/auth/session/",
+                "/api/accounts/auth/mfa/challenge/",
+                "/api/accounts/auth/mfa/enroll/",
+                "/api/accounts/auth/mfa/enroll/confirm/",
+            }:
+                return True
+            return False
 
         segments = [part for part in path.strip("/").split("/") if part]
         if len(segments) < 2 or segments[0] != "api":
