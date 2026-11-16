@@ -5,6 +5,7 @@
 const LABELS = {
   audit: "Auditoría", catalog: "Catálogo", journals: "Revistas",
   platforms: "Plataformas", harvesting: "Cosecha", accounts: "Cuentas",
+  indicators: "Indicadores",
   logs: "Registros de auditoría", institutions: "Instituciones", languages: "Idiomas",
   countries: "Países", "material-types": "Tipos de material", editorials: "Editoriales",
   "knowledge-areas": "Áreas de conocimiento", "academic-programs": "Programas académicos",
