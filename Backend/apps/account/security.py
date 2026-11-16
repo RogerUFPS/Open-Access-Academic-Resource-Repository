@@ -26,6 +26,12 @@ def _secret(user):
     return decrypt_api_key(user.mfa_secret)
 
 
+def _totp_key(secret):
+    # RFC 6238 / authenticator apps use the Base32-decoded bytes as the HMAC key.
+    normalized = secret.replace(" ", "").upper()
+    return base64.b32decode(normalized + "=" * (-len(normalized) % 8))
+
+
 def totp_code(secret, at=None):
     counter = int((time.time() if at is None else at) // 30)
     normalized_secret = secret.strip().upper()

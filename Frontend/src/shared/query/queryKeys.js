@@ -1,0 +1,26 @@
+// Claves de caché por recurso. Invalidar la raíz (`queryKeys.platforms.all`)
+// revalida todas las listas de ese recurso, sea cual sea su filtro o página.
+export const queryKeys = {
+  platforms: {
+    all: ["platforms"],
+    list: (params) => ["platforms", "list", params],
+  },
+  journals: {
+    all: ["journals"],
+    list: (params) => ["journals", "list", params],
+  },
+  harvests: {
+    all: ["harvests"],
+    lists: ["harvests", "list"],
+    list: (page) => ["harvests", "list", page],
+    journals: (harvestId, page) => ["harvests", "journals", harvestId, page],
+    schedules: ["harvests", "schedules"],
+    sourceCount: ["harvests", "source-count"],
+  },
+  accounts: {
+    all: ["accounts"],
+    viewer: ["accounts", "viewer"],
+    users: ["accounts", "users"],
+    presets: ["accounts", "presets"],
+  },
+};
