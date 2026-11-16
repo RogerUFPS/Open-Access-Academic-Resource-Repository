@@ -98,7 +98,10 @@ export function MfaEnrollmentStep({ onCompleted, onStepChanged, onSignOut }) {
     }).catch((error) => {
       if (startedFor.current !== reload) return;
       // 403: password change pending; 409: MFA was already enabled.
-      if ([403, 409].includes(error.status)) stepChanged.current();
+      if ([401, 403, 409].includes(error.status)) {
+        setLoadError(error);
+        stepChanged.current();
+      }
       else setLoadError(error);
     });
   }, [accountsApi, reload]);
@@ -131,7 +134,9 @@ export function MfaEnrollmentStep({ onCompleted, onStepChanged, onSignOut }) {
       await accountsApi.confirmMfaEnrollment(code);
       await onCompleted();
     } catch (error) {
-      if (error.status === 403) {
+      if ([401, 403, 409].includes(error.status)) {
+        setError(error);
+        setCode("");
         await onStepChanged();
         return;
       }
@@ -215,7 +220,9 @@ export function MfaChallengeStep({ onCompleted, onStepChanged, onSignOut }) {
       await accountsApi.mfaChallenge(code);
       await onCompleted();
     } catch (error) {
-      if (error.status === 403) {
+      if ([401, 403, 409].includes(error.status)) {
+        setError(error);
+        setCode("");
         await onStepChanged();
         return;
       }
@@ -233,7 +240,7 @@ export function MfaChallengeStep({ onCompleted, onStepChanged, onSignOut }) {
       <fieldset disabled={busy}>
         <MfaCodeField id="mfa-challenge-code" value={code} onChange={setCode} autoFocus />
       </fieldset>
-      <p className="text-[13px] text-gray-500">Si perdiste acceso a tu aplicación autenticadora, contacta a otro superadministrador.</p>
+      <p className="text-[13px] text-gray-500">Si perdiste acceso a tu aplicación autenticadora, solicita ayuda al responsable técnico del repositorio.</p>
     </CardContent>
     <CardFooter className="flex-col gap-4 pt-2 pb-4">
       <Button type="submit" disabled={busy || limited || code.length !== 6} className={primaryButton}>{busy ? "Verificando…" : "Verificar"}</Button>

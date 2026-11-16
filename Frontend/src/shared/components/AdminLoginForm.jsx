@@ -15,6 +15,7 @@ import useRetryCountdown from "@/shared/hooks/useRetryCountdown";
 import { pendingAccountStep } from "@/shared/services/apiClient";
 
 const STEP_COPY = {
+  handoff: ["Reemplazo pendiente", "Tu cuenta aún no tiene acceso a la aplicación. Actualiza el estado para comprobar si se completó el reemplazo."],
   login: ["Iniciar sesión", "Ingresa con las credenciales administrativas asignadas por la biblioteca."],
   password: ["Cambiar contraseña", "Cambia tu contraseña provisional antes de continuar con la administración."],
   "mfa-enroll": ["Configurar verificación en dos pasos", "Las cuentas de superadministrador requieren una aplicación autenticadora para iniciar sesión."],
@@ -37,7 +38,7 @@ export default function AdminLoginForm({ reason = null }) {
   const router = useRouter();
   const { toast } = useToast();
   const { remaining, limited, handleRateLimit } = useRetryCountdown();
-  // "login" | "password" | "mfa-enroll" | "mfa-challenge"
+  // Onboarding steps are selected from the current session security flags.
   const [step, setStep] = useState("login");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -61,11 +62,15 @@ export default function AdminLoginForm({ reason = null }) {
 
   // Re-reads /auth/me/ after each password or MFA step, as the backend expects.
   const refreshStep = useCallback(async () => {
+    setError(null);
     try {
       advance(await accountsApi.currentUser());
     } catch (error) {
-      setStep("login");
-      if (error.status !== 401) setError(error);
+      if (error.status === 401) {
+        setStep("login");
+        setPassword("");
+        setNotice("Tu sesión ya no está disponible. Vuelve a iniciar sesión.");
+      } else setError(error);
     }
   }, [accountsApi, advance]);
 
@@ -139,13 +144,17 @@ export default function AdminLoginForm({ reason = null }) {
     <CardHeader className="space-y-3 pb-6">
       <CardTitle className="text-3xl font-bold tracking-tight text-gray-900">{title}</CardTitle>
       <CardDescription className="text-base text-gray-500">{description}</CardDescription>
+      {error && <AccountFeedback error={error} />}
       {notice && <p role="status" className="rounded-lg border border-green-200 bg-green-50 px-3 py-2 text-sm text-green-900">{notice}</p>}
     </CardHeader>
+    {step === "handoff" && <CardFooter className="flex-col gap-4">
+      <Button type="button" onClick={refreshStep}>Actualizar estado</Button>
+      <button type="button" onClick={signOut} disabled={busy} className="text-sm text-[#7f1218]">Cerrar sesión</button>
+    </CardFooter>}
     {step === "mfa-enroll" && <MfaEnrollmentStep onCompleted={refreshStep} onStepChanged={refreshStep} onSignOut={signOut} />}
     {step === "mfa-challenge" && <MfaChallengeStep onCompleted={refreshStep} onStepChanged={refreshStep} onSignOut={signOut} />}
     {(step === "login" || step === "password") && <form onSubmit={submit} aria-busy={busy}>
       <CardContent className="space-y-5">
-        {error && <AccountFeedback error={error} />}
         <RateLimitNotice remaining={remaining} />
         <fieldset disabled={busy} className="space-y-5">
           {step === "login" && <LoginField id="login-email" label="Correo institucional" type="email" autoComplete="username" placeholder="usuario@ufps.edu.co" value={email} onChange={(event) => setEmail(event.target.value)} />}
