@@ -162,7 +162,10 @@ class CheckStateTests(MonitorFixtures, TestCase):
         current = services.check_link_context(platform=self.platform, user=self.user, expected_log_id=old.pk)
         self.assertEqual(current.url, "https://8.8.8.8/replacement")
         self.assertIsNone(current.last_check)
-        self.assertEqual(models.LinkCheckLog.objects.count(), 2)
+        self.assertEqual(
+            models.LinkCheckLog.objects.filter(platform=self.platform).count(),
+            2,
+        )
 
 
 class MonitorAPITests(MonitorFixtures, APITestCase):

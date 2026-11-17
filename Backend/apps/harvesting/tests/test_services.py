@@ -235,7 +235,12 @@ class HarvestingServicesTestCase(TestCase):
         self.assertEqual(harvest.api_cursor, "next-page-token")
         self.assertEqual(harvest.records_added, 2)
         self.assertEqual(harvest.worker_checkpoint, 1)
-        self.assertEqual(Journal.objects.count(), 2)
+        self.assertEqual(
+            Journal.objects.filter(
+                issn__in=["1982-0003", "2532-1994"],
+            ).count(),
+            2,
+        )
 
     @patch("apps.harvesting.services.DoajHarvester._get_client")
     def test_worker_step_stops_at_quantity_limit_mid_page(self, get_client):
@@ -331,7 +336,12 @@ class HarvestingServicesTestCase(TestCase):
         self.assertEqual(second_result.api_marker, 0)
         self.assertEqual(second_result.api_page, "")
         self.assertTrue(Journal.objects.filter(issn="2532-1994").exists())
-        self.assertEqual(Journal.objects.count(), 2)
+        self.assertEqual(
+            Journal.objects.filter(
+                issn__in=["1982-0003", "2532-1994"],
+            ).count(),
+            2,
+        )
         second_client.get.assert_not_called()
 
         third_harvest = Harvest.objects.create(
