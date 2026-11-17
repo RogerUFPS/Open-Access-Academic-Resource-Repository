@@ -100,6 +100,10 @@ services:
     env_file: ./Frontend/.env
     environment:
       BACKEND_INTERNAL_URL: ${BACKEND_INTERNAL_URL:-http://backend:8000}
+      # El frontend se ejecuta en modo producción incluso en Docker local.
+      # Autoriza el origen público de RustFS para que la CSP no bloquee las
+      # imágenes que el backend devuelve como http://localhost:9000/...
+      CSP_IMG_SRC: ${CSP_IMG_SRC:-http://localhost:9000}
     ports:
       - "127.0.0.1:3000:3000"
 
