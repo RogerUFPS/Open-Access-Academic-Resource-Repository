@@ -20,6 +20,7 @@ INSTALLED_APPS = [
     "apps.journal",
     "apps.harvesting",
     "apps.scheduler",
+    "apps.agent",
     "auditlog",
     "apps.audit",
 ]
