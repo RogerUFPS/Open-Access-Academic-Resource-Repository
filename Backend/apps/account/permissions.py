@@ -72,6 +72,9 @@ PERMISSION_MATRIX = {
         "presets": {action: True for action in ("view", "create", "update", "delete")},
         "permissions": {"view": True},
     },
+    "indicators": {
+        "indicators": {"view": True},
+    },
 }
 
 APP_PREFIXES = {
@@ -81,6 +84,7 @@ APP_PREFIXES = {
     "harvesting": "harvesting",
     "audit": "audit",
     "accounts": "accounts",
+    "indicators": "indicators",
 }
 
 PUBLIC_ACCOUNT_PATHS = {
@@ -263,6 +267,8 @@ class ApplicationPermission(BasePermission):
 
     @staticmethod
     def _resource(app, tail):
+        if app == "indicators":
+            return "indicators"
         if app in {"journals", "audit"}:
             return "journals" if app == "journals" else (tail[0] if tail else "logs")
         if app == "platforms":
