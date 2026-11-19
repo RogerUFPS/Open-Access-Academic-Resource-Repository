@@ -1,19 +1,31 @@
-Launch the dockerfile with the next command:
+# Agente de Biblioteca
 
-`docker run -d -p 11434:11434 --name ollama-custom ollama-custom`
+Servicio FastAPI preparado exclusivamente para desplegarse como imagen en
+RunPod. La imagen no contiene vLLM, pesos, CUDA ni mecanismos de ejecución de
+modelos locales: enruta cada consulta a uno de tres endpoints vLLM remotos.
 
-How to ask something to a model:
+## Documentación
 
-`docker exec -it <container_name> ollama run <modelo> "Message"`
+- [API](./docs/api.md): endpoints, autenticación y ejemplos.
+- [RunPod](./docs/runpod.md): construcción y configuración del despliegue.
+- [Arquitectura](./docs/architecture.md): capas y decisiones técnicas.
+- [SKILL](./SKILL.md): comportamiento del agente y contratos de herramientas.
 
-Stop a model when you want to change it:
+## Estructura
 
-`docker exec -it <container_name> ollama stop <model>`
+- `config/models.json`: registro versionado de Qwen, GLM y Llama.
+- `src/biblioteca_agent/`: API, orquestación, RAG y adaptadores.
+- `scripts/`: herramientas deterministas del catálogo y YAKE.
+- `resources/`: prompt, datos RAG aprobados y snapshot de demostración.
+- `Dockerfile`: única imagen desplegable del agente.
 
-Idea of the proccess:
+No existe `docker-compose.yml` ni servidor de inferencia local. Las URL y API
+keys de RunPod se inyectan como secretos; nunca se guardan en el registro.
 
-1. Check knowledges areas and academic programs via API.
-2. Detect language and keywords that are related to those knowledge areas and academic programs.
-3. Check public platforms and journals that has those knowledge areas and academic programs via API.
-4. Check the ValidSintaxis of the platform via API.
-5. Generate 3 search strings with the titles of the journals, knowledge areas and academic program based on the top platforms that has most quantity of information related.
+## Validación en CI
+
+Las pruebas no requieren GPU ni vLLM:
+
+```bash
+python -m unittest discover -s tests -v
+```

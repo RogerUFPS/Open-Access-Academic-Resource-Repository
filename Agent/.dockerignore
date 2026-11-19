@@ -1,0 +1,12 @@
+**/__pycache__/
+*.py[cod]
+.pytest_cache/
+data/
+.env
+docs/
+references/
+SKILL.md
+README.md
+query_agent.sh
+docker-compose.yml
+tests/

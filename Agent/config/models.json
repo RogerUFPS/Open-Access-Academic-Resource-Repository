@@ -1,0 +1,50 @@
+{
+  "schema_version": 1,
+  "default_model": "qwen",
+  "models": [
+    {
+      "name": "qwen",
+      "aliases": ["qwen3:8b", "biblioteca-qwen3-8b"],
+      "checkpoint": "Qwen/Qwen3-8B",
+      "served_model": "biblioteca-qwen3-8b",
+      "base_url_env": "QWEN_VLLM_BASE_URL",
+      "api_key_env": "QWEN_VLLM_API_KEY",
+      "deployment": {
+        "enable_auto_tool_choice": true,
+        "tool_call_parser": "hermes"
+      },
+      "request_options": {
+        "chat_template_kwargs": {
+          "enable_thinking": false
+        }
+      }
+    },
+    {
+      "name": "glm",
+      "aliases": ["glm4:9b", "biblioteca-glm4-9b"],
+      "checkpoint": "THUDM/glm-4-9b-chat-hf",
+      "served_model": "biblioteca-glm4-9b",
+      "base_url_env": "GLM_VLLM_BASE_URL",
+      "api_key_env": "GLM_VLLM_API_KEY",
+      "deployment": {
+        "enable_auto_tool_choice": true,
+        "tool_call_parser": "hermes"
+      },
+      "request_options": {}
+    },
+    {
+      "name": "llama",
+      "aliases": ["llama3.1:8b", "biblioteca-llama3.1-8b"],
+      "checkpoint": "meta-llama/Meta-Llama-3.1-8B-Instruct",
+      "served_model": "biblioteca-llama3.1-8b",
+      "base_url_env": "LLAMA_VLLM_BASE_URL",
+      "api_key_env": "LLAMA_VLLM_API_KEY",
+      "deployment": {
+        "enable_auto_tool_choice": true,
+        "tool_call_parser": "llama3_json",
+        "chat_template": "examples/tool_chat_template_llama3.1_json.jinja"
+      },
+      "request_options": {}
+    }
+  ]
+}
