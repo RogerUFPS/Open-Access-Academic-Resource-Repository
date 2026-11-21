@@ -4,3 +4,4 @@ Backend/.agent.env
 !**/.env.example
 ./docker-compose.dev.yml
 ./Agent_N/
+./guia_implementacion_chat.md
