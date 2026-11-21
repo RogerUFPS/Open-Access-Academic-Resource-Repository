@@ -20,7 +20,8 @@ from apps.journal.models import Journal, License, SharedJournalLicense
 from apps.journal.services import create_journal
 from apps.platforms.models import Platform
 from . import models
-from .selection import filter_key, openalex_filter, doaj_matches
+from .selection import filter_key, openalex_filter, openalex_matches, doaj_matches, resolve_filters
+from rest_framework.exceptions import ValidationError as SelectionValidationError
 
 logger = logging.getLogger(__name__)
 OAI_NAMESPACE = "http://www.openarchives.org/OAI/2.0/"
@@ -42,6 +43,13 @@ class RetryableHarvestError(RuntimeError):
 
 class HarvestLimitExceeded(RuntimeError):
     pass
+
+
+def _ensure_selection_snapshot(harvest):
+    if harvest.selection_filters and not harvest.resolved_filters:
+        harvest.resolved_filters = resolve_filters(harvest.selection_filters)
+        harvest.filter_key = filter_key(harvest.resolved_filters)
+        harvest.save(update_fields=["resolved_filters", "filter_key"])
 
 
 HARVEST_JOURNAL_QUANTITY_CONSTRAINT = "harvest_journal_quantity_limit"
@@ -223,6 +231,7 @@ class OpenAlexHarvester:
             harvest = models.Harvest.objects.select_for_update().get(pk=self.harvest.pk)
             if harvest.state != models.Harvest.State.PENDING:
                 return harvest
+            _ensure_selection_snapshot(harvest)
             harvest.state = models.Harvest.State.RUNNING
             if harvest.started_at is None:
                 harvest.started_at = timezone.now()
@@ -231,7 +240,7 @@ class OpenAlexHarvester:
         platform = harvest.platform
 
         # Recuperar o establecer cursor
-        cursor = harvest.api_cursor or get_latest_cursor_for_platform(platform, harvest.selection_filters)
+        cursor = harvest.api_cursor or get_latest_cursor_for_platform(platform, harvest.resolved_filters)
         if not cursor or not cursor.strip():
             cursor = "*"
         harvest.api_cursor = cursor
@@ -282,7 +291,7 @@ class OpenAlexHarvester:
                     page_size = min(page_size, remaining)
 
                 params = {
-                    "filter": openalex_filter(harvest.selection_filters),
+                    "filter": openalex_filter(harvest.resolved_filters),
                     "cursor": cursor,
                     "per-page": page_size,
                 }
@@ -421,6 +430,10 @@ class OpenAlexHarvester:
         if _quantity_limit_reached(harvest):
             harvest.state = models.Harvest.State.COMPLETED
             return False
+
+        if not openalex_matches(harvest.resolved_filters, item):
+            harvest.records_skipped += 1
+            return True
 
         # Obtener ISSN preferencial (issn_l o primer ISSN de la lista)
         issn_l = item.get("issn_l")
@@ -792,6 +805,7 @@ class DoajHarvester:
             harvest = models.Harvest.objects.select_for_update().get(pk=self.harvest.pk)
             if harvest.state != models.Harvest.State.PENDING:
                 return harvest
+            _ensure_selection_snapshot(harvest)
             harvest.state = models.Harvest.State.RUNNING
             if harvest.started_at is None:
                 harvest.started_at = timezone.now()
@@ -1148,7 +1162,7 @@ def _doaj_payload(harvester, record):
 
 
 def _worker_openalex_step(harvest: models.Harvest, user: User) -> None:
-    selection_query = openalex_filter(harvest.selection_filters)
+    selection_query = openalex_filter(harvest.resolved_filters)
     harvester = OpenAlexHarvester(harvest, user=user)
     if not harvest.api_page:
         client = harvester._get_client()
@@ -1169,7 +1183,9 @@ def _worker_openalex_step(harvest: models.Harvest, user: User) -> None:
     results = data.get("results", [])
     if harvest.api_marker < len(results):
         item = results[harvest.api_marker]
-        if not _import_unless_unchanged(harvest, item.get("id"), _openalex_payload(item), lambda: harvester._process_single_source(item)):
+        if not openalex_matches(harvest.resolved_filters, item):
+            harvest.records_skipped += 1
+        elif not _import_unless_unchanged(harvest, item.get("id"), _openalex_payload(item), lambda: harvester._process_single_source(item)):
             return
         harvest.api_marker += 1
     if harvest.api_marker >= len(results):
@@ -1316,6 +1332,7 @@ def process_harvest_worker_step(
 
         started = time.monotonic()
         try:
+            _ensure_selection_snapshot(harvest)
             user = harvest.created_by or User.all_objects.get(code=0)
             if harvest.source_exhausted:
                 harvest.state = models.Harvest.State.COMPLETED
@@ -1364,6 +1381,8 @@ def process_harvest_worker_step(
                     "started_at",
                     "finished_at",
                     "error_message",
+                    "resolved_filters",
+                    "filter_key",
                     "source_exhausted",
                     "api_cursor",
                     "api_marker",
@@ -1434,6 +1453,12 @@ def run_scheduled_harvests(now=None) -> list[models.Harvest]:
             event.state = models.ScheduleEvent.State.RUNNING
             event.started_at = now
             event.save(update_fields=["state", "started_at"])
+            selection_error = None
+            try:
+                resolved = resolve_filters(schedule.selection_filters)
+            except SelectionValidationError as exc:
+                resolved = {}
+                selection_error = f"Selección de catálogo inválida: {exc.detail}"
             for platform in schedule.platforms.all():
                 platform = Platform.objects.select_for_update().get(pk=platform.pk)
                 active_harvest = models.Harvest.objects.filter(
@@ -1449,23 +1474,24 @@ def run_scheduled_harvests(now=None) -> list[models.Harvest]:
                     platform=platform,
                     schedule=schedule,
                     event=event,
-                    **get_latest_harvest_progress(platform, schedule.selection_filters),
+                    **(get_latest_harvest_progress(platform, resolved) if not selection_error else {}),
                     selection_filters=schedule.selection_filters,
-                    filter_key=filter_key(schedule.selection_filters),
+                    resolved_filters=resolved,
+                    filter_key=filter_key(resolved if not selection_error else {"invalid_selection": schedule.selection_filters}),
                     max_quantity=schedule.max_quantity,
                     stop_after_minutes=schedule.stop_after_minutes,
                     created_by=schedule.created_by,
                     state=(
                         models.Harvest.State.FAILED
-                        if active_harvest or not platform.is_harvestable
+                        if selection_error or active_harvest or not platform.is_harvestable
                         else models.Harvest.State.PENDING
                     ),
                     finished_at=(
                         timezone.now()
-                        if active_harvest or not platform.is_harvestable
+                        if selection_error or active_harvest or not platform.is_harvestable
                         else None
                     ),
-                    error_message=(
+                    error_message=selection_error or (
                         f"La plataforma ya tiene una cosecha activa (#{active_harvest.pk})."
                         if active_harvest
                         else (
