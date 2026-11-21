@@ -419,10 +419,11 @@ class HarvestingViewsTestCase(APITestCase):
     def test_filter_options_contract(self):
         response = self.client.get("/api/harvesting/schedules/filter-options/")
         self.assertEqual(response.status_code, status.HTTP_200_OK)
-        self.assertEqual(set(response.data["openalex"]), {"country_code"})
-        self.assertEqual(response.data["country_catalog"], {
-            "endpoint": "/api/catalog/countries/", "value_field": "abbreviation", "label_field": "name",
-        })
+        self.assertEqual(set(response.data["openalex"]), {"country"})
+        self.assertEqual(response.data["openalex"]["country"]["catalog_endpoint"], "/api/catalog/countries/")
+        self.assertEqual(response.data["openalex"]["country"]["value_field"], "id")
+        self.assertEqual(response.data["doaj"]["publisher"]["catalog_endpoint"], "/api/catalog/editorials/")
+        self.assertEqual(response.data["doaj"]["language"]["catalog_endpoint"], "/api/catalog/languages/")
         self.assertIn("subject", response.data["doaj"])
         self.assertEqual(response.data["combination"], "AND")
 
@@ -462,7 +463,7 @@ class HarvestingViewsTestCase(APITestCase):
             self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
             self.assertIn("selection_filters", response.data)
 
-    def test_country_catalog_abbreviation_can_be_used_as_selection(self):
+    def test_country_catalog_id_can_be_used_as_selection(self):
         from apps.catalog.models import Country
         country = Country.objects.create(name="País del selector de cosecha", abbreviation="QZ", created_by=self.user)
         response = self.client.get("/api/catalog/countries/", {"search": country.name, "ordering": "name", "page_size": 100})
@@ -471,7 +472,26 @@ class HarvestingViewsTestCase(APITestCase):
         response = self.client.post("/api/harvesting/schedules/", {
             "platforms": [self.platform.pk], "max_quantity": 10,
             "start_date": timezone.now().isoformat(),
-            "selection_filters": {"country_code": listed_country["abbreviation"]},
+            "selection_filters": {"country": listed_country["id"]},
         }, format="json")
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
-        self.assertEqual(response.data["selection_filters"], {"country_code": "QZ"})
+        self.assertEqual(response.data["selection_filters"], {"country": country.pk})
+
+    def test_doaj_uses_ids_listed_by_editorial_and_language_endpoints(self):
+        from apps.catalog.models import Editorial, Language
+        editorial = Editorial.objects.create(name="Editorial para selector HTTP", created_by=self.user)
+        language = Language.objects.get(abbreviation="es")
+        platform = Platform.objects.create(name="DOAJ Catalog Views", base_api_url="https://doaj.org/oai", is_harvestable=True, created_by=self.user)
+        selected = {}
+        for field, endpoint, entry in (("publisher", "editorials", editorial), ("language", "languages", language)):
+            response = self.client.get(f"/api/catalog/{endpoint}/", {"search": entry.name})
+            self.assertEqual(response.status_code, status.HTTP_200_OK)
+            selected[field] = next(row["id"] for row in response.data["results"] if row["id"] == entry.pk)
+        payload = {"platforms": [platform.pk], "max_quantity": 10, "start_date": timezone.now().isoformat(), "selection_filters": selected}
+        response = self.client.post("/api/harvesting/schedules/", payload, format="json")
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(response.data["selection_filters"], selected)
+        Editorial.objects.filter(pk=editorial.pk).update(deleted_at=timezone.now())
+        response = self.client.post("/api/harvesting/schedules/", payload, format="json")
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("publisher", response.data["selection_filters"])

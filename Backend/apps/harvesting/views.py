@@ -147,22 +147,13 @@ class ScheduleViewSet(AuditableViewSet):
     @extend_schema(responses={200: inline_serializer(name="HarvestFilterOptions", fields={
         "openalex": drf_serializers.JSONField(),
         "doaj": drf_serializers.JSONField(),
-        "country_catalog": drf_serializers.JSONField(),
         "combination": drf_serializers.CharField(),
         "max_quantity_counts": drf_serializers.CharField(),
     })}, tags=["Cosecha - Programaciones"])
     @action(detail=False, methods=["get"], url_path="filter-options")
     def filter_options(self, request):
-        return Response({
-            "openalex": {"country_code": "ISO 3166-1 alpha-2"},
-            "doaj": {"title": "contains", "publisher": "contains", "subject": "contains", "language": "exact"},
-            "country_catalog": {
-                "endpoint": "/api/catalog/countries/",
-                "value_field": "abbreviation",
-                "label_field": "name",
-            },
-            "combination": "AND", "max_quantity_counts": "scanned records including skipped",
-        })
+        from .selection import filter_options
+        return Response(filter_options())
 
     @extend_schema(
         summary="Procesar cosechas programadas vencidas",

@@ -111,6 +111,7 @@ class HarvestRunRequest(models.Model):
 class Harvest(AuditableModel):
 
     selection_filters = models.JSONField(default=dict, blank=True)
+    resolved_filters = models.JSONField(default=dict, blank=True)
     filter_key = models.CharField(max_length=64, default="", blank=True)
     source_exhausted = models.BooleanField(default=False)
     records_skipped = models.PositiveIntegerField(default=0)
