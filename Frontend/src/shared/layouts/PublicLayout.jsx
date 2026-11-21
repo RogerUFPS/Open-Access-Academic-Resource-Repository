@@ -3,6 +3,7 @@ import Link from "next/link";
 import { Source_Sans_3 } from "next/font/google";
 import { Suspense } from "react";
 import PublicNavigation from "@/shared/layouts/PublicNavigation";
+import PublicChatWidget from "@/features/public/agent/PublicChatWidget";
 
 const sourceSans = Source_Sans_3({
   subsets: ["latin"],
@@ -71,6 +72,7 @@ export default function PublicLayout({ children }) {
           </Link>
         </div>
       </footer>
+      <PublicChatWidget />
     </div>
   );
 }

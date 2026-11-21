@@ -43,6 +43,11 @@ const ALLOWED_HARVEST_MUTATIONS = [
   ["POST", /^\/api\/platforms\/check-failed-links\/$/],
 ];
 
+const ALLOWED_AGENT_MUTATIONS = [
+  ["POST", /^\/api\/agent\/models\/switch\/$/],
+  ["POST", /^\/api\/agent\/models\/cancel\/$/],
+];
+
 async function responseData(response) {
   if (response.status === 204) return null;
   if (response.headers.get("content-type")?.includes("application/json")) {
@@ -179,4 +184,11 @@ export async function mutateHarvest(path, method, body) {
   // check-links de una plataforma es síncrono y puede comprobar muchas URLs.
   const longRunning = path === "/api/harvesting/schedules/run-due/" || path.endsWith("/resume/") || /^\/api\/platforms\/\d+\/check-links\/$/.test(path);
   return mutateBackend(path, method, body, longRunning ? null : 90000);
+}
+
+export async function mutateAgent(path, method, body) {
+  if (typeof path !== "string" || !ALLOWED_AGENT_MUTATIONS.some(([verb, pattern]) => verb === method && pattern.test(path))) {
+    return { status: 400, data: { detail: "La operación del módulo de IA solicitada no es válida." } };
+  }
+  return mutateBackend(path, method, body, 90000);
 }

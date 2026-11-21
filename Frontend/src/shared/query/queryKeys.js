@@ -23,4 +23,13 @@ export const queryKeys = {
     users: ["accounts", "users"],
     presets: ["accounts", "presets"],
   },
+  agent: {
+    all: ["agent"],
+    models: ["agent", "models"],
+    conversations: ["agent", "conversations"],
+    conversationList: (params) => ["agent", "conversations", "list", params],
+    conversationDetail: (id, page) => ["agent", "conversations", "detail", id, page],
+    analyticsTopics: (params) => ["agent", "analytics", "topics", params],
+    analyticsQueries: (params) => ["agent", "analytics", "queries", params],
+  },
 };
