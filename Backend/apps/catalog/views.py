@@ -1,18 +1,39 @@
-from apps.core.viewsets import AuditableViewSet, get_acting_user
-
-from . import models, serializers
+from django.db.models import Prefetch
+from drf_spectacular.utils import (
+    OpenApiParameter,
+    OpenApiTypes,
+    extend_schema,
+    extend_schema_view,
+)
 from rest_framework.decorators import action
-from rest_framework.response import Response
 from rest_framework.exceptions import ValidationError
-from drf_spectacular.utils import OpenApiParameter, OpenApiTypes, extend_schema, extend_schema_view
+from rest_framework.response import Response
+
+from apps.core.viewsets import AuditableViewSet, get_acting_user
 from apps.journal import models as journal_models
 from apps.platforms import models as platform_models
+
+from . import models, serializers
 
 
 IN_USE_MESSAGE = (
     "No se puede eliminar el registro porque está siendo utilizado por otros "
     "registros vigentes."
 )
+
+
+def with_active_area_links(queryset):
+    return queryset.prefetch_related(
+        Prefetch(
+            "knowledge_area_links",
+            queryset=(
+                models.SharedAcademicProgramKnowledgeArea.objects
+                .filter(knowledge_area__deleted_at__isnull=True)
+                .select_related("knowledge_area")
+            ),
+            to_attr="_active_area_links",
+        )
+    )
 
 
 class ProtectedCatalogViewSet(AuditableViewSet):
@@ -241,6 +262,7 @@ class KnowledgeAreaViewSet(ProtectedCatalogViewSet):
         queryset = models.AcademicProgram.objects.filter(
             knowledge_area_links__knowledge_area=area,
         )
+        queryset = with_active_area_links(queryset)
         queryset = self.filter_queryset(queryset)
         page = self.paginate_queryset(queryset)
         serializer = serializers.AcademicProgramSerializer(
@@ -255,7 +277,7 @@ class KnowledgeAreaViewSet(ProtectedCatalogViewSet):
 class AcademicProgramViewSet(ProtectedCatalogViewSet):
     platform_through = platform_models.SharedPlatformAcademicProgram
     platform_relation_field = "academic_program"
-    queryset = models.AcademicProgram.objects.all()
+    queryset = with_active_area_links(models.AcademicProgram.objects.all())
     serializer_class = serializers.AcademicProgramSerializer
     search_fields = ["name"]
     ordering_fields = ["name", "created_at"]

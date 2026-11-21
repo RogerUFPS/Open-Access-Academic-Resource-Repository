@@ -125,10 +125,13 @@ class AcademicProgramSerializer(ArchivedNameMixin, serializers.ModelSerializer):
 
     def to_representation(self, instance):
         representation = super().to_representation(instance)
-        representation["knowledge_areas"] = list(
-            instance.knowledge_area_links.filter(
+        links = getattr(instance, "_active_area_links", None)
+        if links is None:
+            links = instance.knowledge_area_links.filter(
                 knowledge_area__deleted_at__isnull=True,
-            ).values_list("knowledge_area_id", flat=True)
+            )
+        representation["knowledge_areas"] = list(
+            link.knowledge_area_id for link in links
         )
         return representation
 

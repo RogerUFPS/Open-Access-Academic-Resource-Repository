@@ -323,20 +323,24 @@ export function hasAccountPermission(user, action) {
 
 /**
  * Next onboarding step for the signed-in account, based only on its own
- * /auth/me/ or login flags: "password", "mfa-enroll", "mfa-challenge" or null.
+ * /auth/me/ or login flags: "password", "mfa-enroll", "mfa-challenge", "handoff" or null.
  */
 export function pendingAccountStep(account) {
   if (!account) return null;
   const user = account.user ?? account;
   if (account.must_change_password || user.must_change_password || user.force_password_change) return "password";
   const isSuperadmin = Boolean(account.is_superadmin ?? user.is_superadmin);
-  const mfaRequired = Boolean(account.mfa_required ?? user.mfa_required) || isSuperadmin;
+  const handoffPending = Boolean(account.superadmin_handoff_pending ?? user.superadmin_handoff_pending);
+  const enrollment = account.mfa_enrollment_required ?? user.mfa_enrollment_required;
+  if (enrollment) return "mfa-enroll";
+  const mfaRequired = Boolean(account.mfa_required ?? user.mfa_required) || isSuperadmin || handoffPending;
   const mfaSatisfied = account.mfa_satisfied ?? user.mfa_satisfied;
   // Nunca se entra al panel mientras la sesión no haya satisfecho MFA.
   if (mfaRequired && mfaSatisfied !== true) {
-    const enrollment = account.mfa_enrollment_required ?? user.mfa_enrollment_required;
-    return enrollment ? "mfa-enroll" : "mfa-challenge";
+    return "mfa-challenge";
   }
+  // A pending successor never enters the panel, even with a verified session.
+  if (handoffPending) return "handoff";
   return null;
 }
 
@@ -368,7 +372,7 @@ export function createAccountsApi(mutateAction, { me = accountQueries.me } = {})
     confirmMfaEnrollment: (code) => mutate("auth/mfa/enroll/confirm/", "POST", { code }),
     mfaChallenge: (code) => mutate("auth/mfa/challenge/", "POST", { code }),
     createSuperadmin: (email) => mutate("superadmin/accounts/", "POST", { email }),
-    deactivateSuperadmin: () => mutate("superadmin/deactivate/", "POST", {}),
+    cancelSuperadminHandoff: () => mutate("superadmin/accounts/", "DELETE", {}),
     invite: (body) => mutate("users/invite/", "POST", body),
     updateUser: (id, body) => mutate(`users/${encodeURIComponent(id)}/`, "PATCH", body),
     deactivate: (id) => mutate(`users/${encodeURIComponent(id)}/`, "DELETE"),
