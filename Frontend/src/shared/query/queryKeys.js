@@ -19,6 +19,8 @@ export const queryKeys = {
     platforms: ["harvests", "platforms"],
     filterOptions: ["harvests", "filter-options"],
     countries: (endpoint) => ["harvests", "countries", endpoint],
+    languages: ["harvests", "languages"],
+    editorials: (search) => ["harvests", "editorials", search],
   },
   accounts: {
     all: ["accounts"],

@@ -87,3 +87,10 @@ test("run-due forwards the idempotency key to the server action", async () => {
   await api.pauseHarvest(7);
   assert.equal(calls[1].length, 3);
 });
+
+test("language filter is sent lowercase and catalog labels are capitalized", async () => {
+  const { catalogLabel } = await import("../src/features/admin/harvesting/harvesting.js");
+  assert.deepEqual(buildSelectionFilters("doaj", { language: "ES", publisher: " universidad " }, options), { publisher: "universidad", language: "es" });
+  assert.equal(catalogLabel("argentina"), "Argentina");
+  assert.equal(formatSelectionFilters({ country_code: "ar" }, new Map([["AR", "argentina"]])), "País: Argentina");
+});

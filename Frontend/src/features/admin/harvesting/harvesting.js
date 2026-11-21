@@ -274,6 +274,31 @@ export async function getHarvestCountries(endpoint = "/api/catalog/countries/", 
 }
 
 /**
+ * Catálogo Language completo. El backend asocia dc:language de DOAJ con
+ * `abbreviation` (sin distinguir mayúsculas), así que es el valor del filtro.
+ */
+export async function getHarvestLanguages(signal) {
+  const languages = await listAll("/api/catalog/languages/", { ordering: "name" }, signal);
+  return languages
+    .filter((language) => /^[A-Za-z]{2,10}$/.test(String(language.abbreviation ?? "").trim()))
+    // La base ordena «Árabe» después de la «Z»; se ordena con reglas del español.
+    .sort((a, b) => String(a.name).localeCompare(String(b.name), "es", { sensitivity: "base" }));
+}
+
+export const EDITORIAL_SUGGESTIONS_SIZE = 20;
+
+/**
+ * Sugerencias del catálogo Editorial para el filtro `publisher` de DOAJ
+ * (búsqueda remota: el catálogo crece con cada cosecha).
+ */
+export async function searchHarvestEditorials(search, signal) {
+  const page = await list("/api/catalog/editorials/", {
+    search: String(search ?? "").trim(), ordering: "name", page: 1, page_size: EDITORIAL_SUGGESTIONS_SIZE,
+  }, signal);
+  return page.results.filter((editorial) => typeof editorial.name === "string" && editorial.name.trim());
+}
+
+/**
  * Proveedor del conector según la configuración de la plataforma (mismo
  * criterio que el backend), nunca según su ID numérico.
  */
@@ -313,6 +338,8 @@ export function buildSelectionFilters(provider, values, options) {
     if (field === "country_code") {
       if (!COUNTRY_CODE_PATTERN.test(value)) throw new Error("País: selecciona un país del catálogo con código ISO de dos letras.");
       selection.country_code = value.toUpperCase();
+    } else if (field === "language") {
+      selection.language = value.toLowerCase();
     } else {
       selection[field] = value;
     }
@@ -331,12 +358,18 @@ export function selectionValuesFrom(filters) {
   return values;
 }
 
+/** Nombre de catálogo con mayúscula inicial (el catálogo guarda «argentina»). */
+export function catalogLabel(name) {
+  const text = String(name ?? "").trim();
+  return text ? `${text.charAt(0).toLocaleUpperCase("es")}${text.slice(1)}` : text;
+}
+
 /** Texto legible de una selección; `{}` o vacío es el recorrido global. */
 export function formatSelectionFilters(filters, countryNames) {
   if (!filters || typeof filters !== "object" || !Object.keys(filters).length) return "Recorrido global";
   return Object.entries(filters).map(([field, value]) => {
     if (!(field in SELECTION_LABELS)) return `${field}: ${String(value)} (filtro retirado)`;
-    const shown = field === "country_code" ? countryNames?.get(String(value).toUpperCase()) || String(value).toUpperCase() : String(value);
+    const shown = field === "country_code" ? catalogLabel(countryNames?.get(String(value).toUpperCase())) || String(value).toUpperCase() : String(value);
     return `${SELECTION_LABELS[field]}: ${shown}`;
   }).join(" · ");
 }
