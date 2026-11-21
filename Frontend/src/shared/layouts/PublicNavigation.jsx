@@ -8,6 +8,7 @@ const links = [
   { href: "/", label: "Inicio" },
   { href: "/directorio?tipo=bases", label: "Bases de datos", tipo: "bases" },
   { href: "/directorio?tipo=revistas", label: "Revistas", tipo: "revistas" },
+  { href: "/asistente", label: "Asistente IA" },
 ];
 
 export default function PublicNavigation() {
@@ -38,7 +39,9 @@ export default function PublicNavigation() {
           {links.map(({ href, label, tipo }) => {
             const isActive = tipo
               ? pathname === "/directorio" && searchParams.get("tipo") === tipo
-              : pathname === "/";
+              : href === "/"
+                ? pathname === "/"
+                : pathname === href || pathname.startsWith(`${href}/`);
 
             return (
               <li key={href}>
