@@ -1,31 +1,21 @@
 # Agente de Biblioteca
 
-Servicio FastAPI preparado exclusivamente para desplegarse como imagen en
-RunPod. La imagen no contiene vLLM, pesos, CUDA ni mecanismos de ejecución de
-modelos locales: enruta cada consulta a uno de tres endpoints vLLM remotos.
+Servicio FastAPI con clasificación vLLM, herramientas Python, YAKE y RAG SQLite
+FTS5. El mismo código corre en Docker local y Modal. La entrada pública es el
+Backend: conserva chats anónimos, permisos, estadísticas y modelo activo, y
+envía un snapshot inmutable del catálogo real.
 
-## Documentación
+- [Despliegue Modal y local](docs/despliegue_modal_y_local.md).
+- [API privada](docs/api.md).
+- [Arquitectura](docs/architecture.md).
+- [SKILL](SKILL.md).
+- Guía pública: `../guia_implementacion_chat.md` en el repo de Biblioteca.
 
-- [API](./docs/api.md): endpoints, autenticación y ejemplos.
-- [RunPod](./docs/runpod.md): construcción y configuración del despliegue.
-- [Arquitectura](./docs/architecture.md): capas y decisiones técnicas.
-- [SKILL](./SKILL.md): comportamiento del agente y contratos de herramientas.
-
-## Estructura
-
-- `config/models.json`: registro versionado de Qwen, GLM y Llama.
-- `src/biblioteca_agent/`: API, orquestación, RAG y adaptadores.
-- `scripts/`: herramientas deterministas del catálogo y YAKE.
-- `resources/`: prompt, datos RAG aprobados y snapshot de demostración.
-- `Dockerfile`: única imagen desplegable del agente.
-
-No existe `docker-compose.yml` ni servidor de inferencia local. Las URL y API
-keys de RunPod se inyectan como secretos; nunca se guardan en el registro.
-
-## Validación en CI
-
-Las pruebas no requieren GPU ni vLLM:
+Pruebas automatizadas sin GPU:
 
 ```bash
-python -m unittest discover -s tests -v
+docker compose --profile test run --build --rm --no-deps tests
 ```
+
+Se mantienen las pruebas de regresión; se retiraron clientes shell y reportes
+manuales antiguos. No se eliminan pesos ni secretos.

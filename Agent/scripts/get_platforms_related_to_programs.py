@@ -16,6 +16,7 @@ def handler(args):
     result = []
     for platform in data["plataformas"]:
         counts = []
+        unique_journals = set()
         journals = [item for item in data["revistas"] if platform["id"] in item.get("plataformas", [])]
         for program_id in requested:
             count = sum(
@@ -25,8 +26,12 @@ def handler(args):
             )
             if count:
                 counts.append({"programa_id": program_id, "cantidad_revistas": count})
+                unique_journals.update(journal["id"] for journal in journals
+                    if program_id in journal.get("programas", [])
+                    and journal_matches(journal, filters, data["filtros"]))
         if counts:
-            result.append({"plataforma_id": platform["id"], "nombre": platform["nombre"], "programas": counts})
+            result.append({"plataforma_id": platform["id"], "nombre": platform["nombre"],
+                "cantidad_revistas_total": len(unique_journals), "programas": counts})
     return {"plataformas": result}
 
 

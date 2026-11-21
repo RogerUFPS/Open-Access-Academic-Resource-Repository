@@ -131,7 +131,10 @@ def journal_matches(journal: dict[str, Any], filters: dict[str, Any], catalog: l
             start, end = (int(part) for part in value.split("-", 1))
             if start > end:
                 raise ValueError(f"El rango del filtro {filter_id} está invertido.")
-            year = int(journal["fecha_publicacion"][:4])
+            published = journal.get("fecha_publicacion")
+            if not published:
+                return False
+            year = int(published[:4])
             if year < start or year > min(end, date.today().year):
                 return False
     return True

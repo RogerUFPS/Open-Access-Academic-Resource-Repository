@@ -9,6 +9,7 @@ import sys
 from typing import Any
 
 from .config import PROJECT_ROOT, SCRIPTS_DIR, settings
+from .request_context import catalog_path
 
 
 SCRIPT_NAMES = (
@@ -27,6 +28,8 @@ ALLOWED_SCRIPTS = {name: SCRIPTS_DIR / f"{name}.py" for name in SCRIPT_NAMES}
 
 
 def run_script(script_name: str, script_args: dict[str, Any]) -> dict[str, Any]:
+    if not isinstance(script_name, str):
+        return {"error": "script_name debe ser una cadena."}
     normalized_name = script_name.removeprefix("scripts/").removesuffix(".py")
     path = ALLOWED_SCRIPTS.get(normalized_name)
     if path is None:
@@ -47,21 +50,24 @@ def run_script(script_name: str, script_args: dict[str, Any]) -> dict[str, Any]:
         value = os.environ.get(name)
         if value:
             environment[name] = value
-    process = subprocess.run(
-        [sys.executable, str(path), "--json", json.dumps(script_args, ensure_ascii=False)],
-        cwd=PROJECT_ROOT,
-        text=True,
-        capture_output=True,
-        timeout=settings.script_timeout_seconds,
-        check=False,
-        env=environment,
-    )
+    if catalog_path.get() is not None:
+        environment["AGENT_CATALOG_SNAPSHOT"] = str(catalog_path.get())
+    try:
+        process = subprocess.run(
+            [sys.executable, str(path), "--json", json.dumps(script_args, ensure_ascii=False)],
+            cwd=PROJECT_ROOT, text=True, capture_output=True,
+            timeout=settings.script_timeout_seconds, check=False, env=environment,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return {"error": "El script no pudo completar su ejecución."}
     if len(process.stdout) > 1_000_000:
         return {"error": "La salida del script excedió el límite permitido."}
     try:
         output = json.loads(process.stdout)
     except json.JSONDecodeError:
         return {"error": "El script no devolvió JSON válido."}
+    if not isinstance(output, dict):
+        return {"error": "El script debe devolver un objeto JSON."}
     if process.returncode not in (0, 2) and "error" not in output:
         return {"error": "El script terminó de forma inesperada."}
     return output
@@ -90,13 +96,16 @@ RAG_TOOL = {
     "type": "function",
     "function": {
         "name": "rag_search",
-        "description": "Recupera ejemplos revisados; no reemplaza los catálogos activos.",
+        "description": (
+            "Recupera el único ejemplo revisado más cercano. Sirve para comparar intención; "
+            "sus temas y filtros pertenecen al ejemplo y nunca se copian a la solicitud actual."
+        ),
         "parameters": {
             "type": "object",
             "required": ["query"],
             "properties": {
                 "query": {"type": "string"},
-                "limit": {"type": "integer", "minimum": 1, "maximum": 10, "default": 3},
+                "limit": {"type": "integer", "enum": [1], "default": 1},
             },
         },
     },

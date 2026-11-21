@@ -29,7 +29,9 @@ ids siempre provienen del snapshot activo; una lista vacía es válida.
   - Devuelve `programa_id`, `nombre`, `areas_coincidentes` y `cantidad_areas_coincidentes`.
 - `scripts/get_platforms_related_to_programs.py`
   - Entrada: `{"programas":[12,31],"filtros":{"1":["es","en"],"3":"2020-2025"}}`
-  - Devuelve plataformas y, por programa, `cantidad_revistas` después de aplicar filtros.
+  - Devuelve plataformas, `cantidad_revistas_total` (revistas distintas entre todos los programas)
+    y, por programa, `cantidad_revistas` después de aplicar filtros. No sumes conteos
+    por programa como si fueran revistas distintas.
 - `scripts/get_platform_journal_title_unified.py`
   - Recibe `plataformas`, `programas` y `filtros`.
   - Devuelve `textos_unificados` con `plataforma_id` y `texto`.

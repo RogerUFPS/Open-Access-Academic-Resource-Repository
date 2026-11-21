@@ -1,0 +1,2 @@
+# Herramienta local de despliegue; no se instala en el contenedor del agente.
+modal==1.6.4

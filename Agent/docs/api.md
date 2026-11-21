@@ -1,99 +1,66 @@
-# API del agente
+# API privada del agente
 
-Defina una URL del endpoint desplegado para los ejemplos:
+El navegador consume el Backend, nunca este servicio. Local: puerto 8001.
+Las rutas /v1/* requieren X-API-Key si AGENT_API_KEY está configurada.
+Modal exige además Modal-Key y Modal-Secret, solo conocidos por el Backend.
 
-```bash
-export AGENT_API_URL='https://ENDPOINT_AGENT'
-export AGENT_API_KEY='una-clave-larga'
-```
+## Catálogo inmutable
 
-Todas las rutas `/v1/*` requieren `X-API-Key` cuando `AGENT_API_KEY` está
-configurada. `/ping`, `/health` y `/ready` son rutas operativas.
+1. GET /v1/catalog/snapshots/{digest} informa available.
+2. Si falta: POST /v1/catalog/snapshots recibe {"digest":"sha256","snapshot":{...}}.
+3. El digest es SHA-256 del JSON UTF-8 canónico: ensure_ascii=False,
+   sort_keys=True, separators=(",",":"). Se verifica antes de escribir.
+4. La consulta incluye catalog_digest; un digest inexistente devuelve 409,
+   nunca datos de ejemplo. Límite de carga: 50 MB.
 
-## Salud
+El Backend reutiliza su snapshot público cacheado y ETag. Solo transfiere el
+catálogo cuando falta en el worker; no necesita túnel hacia PostgreSQL local.
+Cada petición y todos sus scripts leen la misma versión inmutable.
 
-```bash
-curl -sS "$AGENT_API_URL/ping"
-curl -sS "$AGENT_API_URL/health"
-curl -sS "$AGENT_API_URL/ready"
-```
+GET /v1/catalog/summary y POST /v1/catalog/refresh operan sobre el catálogo
+configurado por entorno, no sobre el último snapshot de una conversación.
 
-- `GET /ping`: confirma que el proceso HTTP responde.
-- `GET /health`: informa concurrencia y cantidad de documentos RAG.
-- `GET /ready`: verifica que los tres endpoints tengan URL y secreto. No hace
-  una inferencia ni provoca tres cold starts.
+## Inferencia
 
-## Modelos configurados
-
-```bash
-curl -sS "$AGENT_API_URL/v1/models" -H "X-API-Key: $AGENT_API_KEY"
-```
-
-Devuelve los modelos del registro, alias, checkpoint informativo, nombre servido
-y si sus secretos están configurados. Los nombres aceptados como `model_name`
-son `qwen`, `glm`, `llama` y los alias declarados en `config/models.json`.
-
-## Consultar
-
-```bash
-curl -sS -X POST "$AGENT_API_URL/v1/query" \
-  -H 'Content-Type: application/json' \
-  -H "X-API-Key: $AGENT_API_KEY" \
-  -d '{
-    "prompt": "Artículos sobre inteligencia artificial aplicada a educación",
-    "model_name": "qwen"
-  }'
-```
-
-`model_name` es opcional y usa `qwen` por defecto. La solicitud es síncrona y
-stateless. Cada réplica admite `AGENT_MAX_CONCURRENCY` consultas activas; cuando
-se satura responde `429` con `Retry-After` en vez de mantener una cola local.
-Una configuración faltante del modelo elegido devuelve `503`.
-
-La respuesta exitosa cumple el contrato de la skill:
+POST /v1/query:
 
 ```json
 {
-  "estado": "ok",
-  "mensaje": null,
-  "programas_seleccionados": [],
-  "busquedas": [],
-  "filtros_no_aplicados": []
+  "prompt": "Revistas de inteligencia artificial para ingeniería de sistemas",
+  "model_name": "qwen",
+  "previous_prompt": "",
+  "previous_topic": "",
+  "catalog_digest": "<sha256 de 64 caracteres>",
+  "return_analysis": true
 }
 ```
 
-## Catálogo
+Es síncrona y puede incluir arranque en frío. model_name debe coincidir con
+esta réplica: no cambia pesos. previous_prompt permite continuar una consulta;
+previous_topic conserva su tema validado al modificar únicamente filtros.
 
-- `GET /v1/catalog/summary`: resume el snapshot activo.
-- `POST /v1/catalog/refresh`: invalida la caché HTTP del snapshot.
+Con return_analysis retorna respuesta, analisis, modelo y catalog_digest.
+El Backend valida IDs y solo publica respuesta. Sin esa opción devuelve el
+contrato bibliográfico directamente: estado, mensaje, programas_seleccionados,
+busquedas, filtros_no_aplicados. Estado puede ser ok, fuera_de_tema,
+informacion_insuficiente o error_sistema. Un ok requiere programas/búsquedas
+no vacíos y mensaje=null.
 
-No existen endpoints `load` o `unload`. Cada modelo vive en su propio endpoint
-vLLM y RunPod administra sus workers; seleccionar un modelo consiste en enrutar
-la solicitud, no intercambiar pesos dentro del contenedor del agente.
+Cada programa: id, nombre, puntuacion, razon. Cada búsqueda: plataforma_id,
+plataforma, cadena, justificacion. Cada filtro no aplicado: plataforma_id,
+plataforma, filtro.
 
-## Cliente incluido
+## Drenaje y diagnóstico
 
-```bash
-AGENT_API_URL="$AGENT_API_URL" AGENT_API_KEY="$AGENT_API_KEY" \
-  ./query_agent.sh --model llama \
-  'Investigaciones sobre bases de datos distribuidas'
-```
+- GET /v1/control/status: accepting_requests e inflight.
+- POST /v1/control/drain: cierra admisión sin interrumpir consultas.
+- POST /v1/control/resume: reabre admisión.
+- GET /v1/models: identidad del modelo.
+- GET /health y /ping: liveness.
+- GET /ready: configuración vLLM, no prueba completa de inferencia.
+- GET /health/details: diagnóstico del proceso.
 
-El cliente reintenta respuestas `429` y errores temporales. Use
-`AGENT_RETRIES` para cambiar el máximo.
-
-## Variables
-
-| Variable | Uso |
-| --- | --- |
-| `AGENT_API_KEY` | Autenticación de clientes. |
-| `PORT`, `PORT_HEALTH` | Puerto HTTP y de salud; ambos deben valer `8000`. |
-| `HEALTH_CHECK_PATH` | Ruta de salud de RunPod; use `/ping`. |
-| `AGENT_MODEL_REGISTRY` | Ruta del registro; por defecto `/app/config/models.json`. |
-| `QWEN_VLLM_BASE_URL`, `QWEN_VLLM_API_KEY` | Endpoint Qwen. |
-| `GLM_VLLM_BASE_URL`, `GLM_VLLM_API_KEY` | Endpoint GLM. |
-| `LLAMA_VLLM_BASE_URL`, `LLAMA_VLLM_API_KEY` | Endpoint Llama. |
-| `VLLM_MAX_TOKENS` | Máximo por ronda del tool loop. |
-| `VLLM_REQUEST_TIMEOUT_SECONDS` | Timeout hacia cada endpoint remoto. |
-| `AGENT_BACKEND_SNAPSHOT_URL` | Catálogo HTTPS de solo lectura. |
-| `AGENT_CATALOG_SNAPSHOT` | Fixture incluido mientras no se integra el Backend. |
+El contador incluye consultas admitidas esperando el semáforo. El Backend
+confirma inflight=0 antes de cambiar. Drenaje devuelve 503 y saturación 429.
+Un proceso API por réplica y una réplica Modal por modelo: no aumentar workers
+o max_containers sin coordinación distribuida de estos contadores.

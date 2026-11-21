@@ -113,6 +113,15 @@ class RagTests(unittest.TestCase):
             self.assertEqual(store.count(), 12)
             self.assertEqual(store.search("bases de datos distribuidas")[0]["id"], "rag-002-sistemas-bases-datos")
 
+    def test_examples_do_not_infer_unrequested_filters(self):
+        documents = {
+            item["id"]: item
+            for item in read_jsonl(ROOT / "resources" / "rag_examples.approved.jsonl")
+        }
+        self.assertEqual(documents["rag-006-ia-sistemas"]["respuesta"]["filtros"], {})
+        self.assertEqual(documents["rag-007-tecnologia-ambigua"]["respuesta"]["filtros"], {})
+        self.assertNotIn("1", documents["rag-003-educacion-tecnologia"]["respuesta"]["filtros"])
+
     def test_invalid_batch_does_not_replace_existing_documents(self):
         with tempfile.TemporaryDirectory() as directory:
             store = RagStore(Path(directory) / "rag.sqlite3")
@@ -148,7 +157,12 @@ class ResponseContractTests(unittest.TestCase):
         valid = {
             "estado": "ok",
             "mensaje": None,
-            "programas_seleccionados": [],
+            "programas_seleccionados": [{
+                "id": 12,
+                "nombre": "Ingeniería de Sistemas",
+                "puntuacion": 0.8,
+                "razon": "Coincide con inteligencia artificial y educación.",
+            }],
             "busquedas": [{
                 "plataforma_id": 3,
                 "plataforma": "Ejemplo",
@@ -162,57 +176,78 @@ class ResponseContractTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             AgentRuntime.parse_final(json.dumps(valid))
 
+    def test_final_response_rejects_empty_success(self):
+        from biblioteca_agent.runtime import AgentRuntime
+
+        empty_success = {
+            "estado": "ok",
+            "mensaje": None,
+            "programas_seleccionados": [],
+            "busquedas": [],
+            "filtros_no_aplicados": [],
+        }
+        with self.assertRaises(ValueError):
+            AgentRuntime.parse_final(json.dumps(empty_success))
+
 
 class ModelConfigurationTests(unittest.TestCase):
-    def test_requests_only_accept_versioned_registry(self):
-        from biblioteca_agent.contracts import QueryRequest, model_registry
+    def test_requests_only_accept_model_served_by_replica(self):
+        from biblioteca_agent.contracts import QueryRequest
 
         self.assertEqual(
             QueryRequest(prompt="buscar sobre educación").model_name,
             "qwen",
         )
         self.assertEqual(
-            {model.name for model in model_registry.definitions},
-            {"qwen", "glm", "llama"},
-        )
-        self.assertEqual(
             QueryRequest(
-                prompt="buscar sobre educación", model_name="llama3.1:8b"
+                prompt="buscar sobre educación", model_name="qwen3:8b"
             ).model_name,
-            "llama3.1:8b",
+            "qwen3:8b",
         )
         with self.assertRaises(ValueError):
-            QueryRequest(prompt="buscar sobre educación", model_name="modelo:no-configurado")
+            QueryRequest(prompt="buscar sobre educación", model_name="llama")
 
-    def test_registry_never_exposes_endpoint_or_secret_values(self):
-        from biblioteca_agent.contracts import model_registry
+    def test_model_status_never_exposes_endpoint_or_secret_values(self):
+        from biblioteca_agent.model import model
 
-        with patch.dict(os.environ, {
-            "QWEN_VLLM_BASE_URL": "https://private.example/v1",
-            "QWEN_VLLM_API_KEY": "secret-value",
-        }, clear=False):
-            serialized = json.dumps(model_registry.status())
+        serialized = json.dumps(model.status())
         self.assertNotIn("private.example", serialized)
         self.assertNotIn("secret-value", serialized)
 
+    def test_replica_exposes_exactly_one_model(self):
+        from biblioteca_agent.model import model
+
+        self.assertEqual(model.name, "qwen")
+        self.assertEqual(model.public_names[0], "qwen")
+
 
 class VllmAdapterTests(unittest.IsolatedAsyncioTestCase):
-    async def test_openai_tool_call_id_is_preserved_in_next_round(self):
+    async def test_classifier_uses_forced_structured_tool(self):
         from biblioteca_agent.contracts import QueryRequest
         from biblioteca_agent.runtime import AgentRuntime
 
         tool_call = SimpleNamespace(
             id="call-rag-1",
             function=SimpleNamespace(
-                name="rag_search",
-                arguments=json.dumps({"query": "educacion", "limit": 1}),
+                name="classify_intent",
+                arguments=json.dumps({"tipo": "buscar_literatura", "tema": "educacion", "idioma": "es", "filtros": []}),
             ),
         )
         valid_result = {
             "estado": "ok",
             "mensaje": None,
-            "programas_seleccionados": [],
-            "busquedas": [],
+            "programas_seleccionados": [{
+                "id": 12,
+                "nombre": "Ingeniería de Sistemas",
+                "puntuacion": 0.8,
+                "razon": "Coincide con el tema solicitado.",
+            }],
+            "busquedas": [{
+                "plataforma_id": 3,
+                "plataforma": "Scopus",
+                "cadena": "educacion AND tecnologia",
+                "justificacion": "Cubre el programa y admite el operador AND.",
+            }],
             "filtros_no_aplicados": [],
         }
         create = AsyncMock(side_effect=[
@@ -233,14 +268,12 @@ class VllmAdapterTests(unittest.IsolatedAsyncioTestCase):
         runtime.rag = SimpleNamespace(search=lambda _query, _limit: [{"id": "rag-1"}])
         runtime.runtime_prompt = "Prompt de prueba"
 
-        result = await runtime.run(QueryRequest(prompt="buscar sobre educación"))
+        result = await runtime.classify("buscar sobre educación", {"filtros": []})
 
-        self.assertEqual(result["estado"], "ok")
+        self.assertEqual(result.tipo, "buscar_literatura")
         self.assertEqual(create.await_args_list[0].kwargs["model"], "biblioteca-qwen3-8b")
-        second_messages = create.await_args_list[1].kwargs["messages"]
-        tool_messages = [item for item in second_messages if item["role"] == "tool"]
-        self.assertEqual(len(tool_messages), 1)
-        self.assertEqual(tool_messages[0]["tool_call_id"], "call-rag-1")
+        self.assertEqual(create.await_count, 1)
+        self.assertEqual(create.await_args.kwargs["tool_choice"]["function"]["name"], "classify_intent")
 
 
 class ConcurrencyTests(unittest.IsolatedAsyncioTestCase):
@@ -263,6 +296,11 @@ class ConcurrencyTests(unittest.IsolatedAsyncioTestCase):
 
 
 class CatalogApiTests(unittest.IsolatedAsyncioTestCase):
+    async def test_health_is_dependency_free(self):
+        from biblioteca_agent.api import health
+
+        self.assertEqual(await health(), {"status": "healthy"})
+
     async def test_catalog_summary_reports_active_source(self):
         from biblioteca_agent.api import catalog_summary
 

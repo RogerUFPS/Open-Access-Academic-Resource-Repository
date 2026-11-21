@@ -12,6 +12,14 @@ Flujo: consulta → intención → programas → plataformas → términos → c
 
 # Antes de responder
 
+## Ejecución del servicio
+
+El runtime ejecuta obligatoriamente las herramientas, valida sus contratos y
+construye la respuesta final. El modelo recibe la sección de intención de esta
+skill y el prompt de clasificación; devuelve una intención estructurada mediante
+`classify_intent`, no decide qué scripts omitir ni redacta el JSON público.
+Las etapas posteriores son deterministas y usan únicamente datos de herramientas.
+
 1. Lee [los contratos de herramientas](./references/tool-contracts.md) antes de
    invocar scripts o interpretar sus resultados.
 2. Lee [el contrato de respuesta](./references/response-contract.md) antes de
@@ -27,7 +35,9 @@ Flujo: consulta → intención → programas → plataformas → términos → c
    `{"1":["es","en"],"3":"2020-2025"}`.
 4. Si una herramienta devuelve un error o contrato inválido, corrige los
    argumentos y reintenta una vez. Si vuelve a fallar, devuelve `error_sistema`.
-5. Una lista vacía es válida. `null` significa desconocido, no `false`.
+5. Una lista vacía de herramienta es válida. En la respuesta final,
+   `estado=ok` requiere al menos un programa y una búsqueda. `null` significa
+   desconocido, no `false`.
 6. El RAG orienta intención y similitud; nunca crea ids, relaciones, filtros o
    capacidades del catálogo.
 7. Responde exclusivamente con el JSON final requerido.
@@ -43,8 +53,9 @@ Flujo: consulta → intención → programas → plataformas → términos → c
 5. Clasifica como `buscar_literatura` o `fuera_de_tema`.
 6. Identifica programas y áreas explícitas, implícitas o ambiguas solo con ids
    existentes en el catálogo.
-7. Valida filtros. Las listas usan valores permitidos y los años `AAAA-AAAA`.
-   Si no se menciona idioma, usa el detectado solo si el catálogo lo permite.
+7. Valida únicamente filtros pedidos explícitamente en el prompt actual. Las
+   listas usan valores permitidos y los años `AAAA-AAAA`. El idioma detectado
+   sirve para interpretar el texto, pero no se convierte en filtro por defecto.
 
 Si la consulta está fuera de tema, responde `fuera_de_tema` y termina.
 
@@ -63,29 +74,31 @@ Si la consulta está fuera de tema, responde `fuera_de_tema` y termina.
    todos los pesos. Redondea a cuatro decimales.
 6. Desempata por cantidad de áreas coincidentes y luego por menor id. Conserva tres.
 
-Para `similitud_tema`, usa 1 si un ejemplo RAG vincula directamente tema y
-programa, 0.5 si la relación es parcial y 0 sin evidencia. Sin ejemplos, usa
-coincidencias normalizadas del tema, programa y áreas.
+Para `similitud_tema`, usa 1 si el tema contiene el nombre normalizado de un
+área coincidente del catálogo y 0 en otro caso. Los ejemplos RAG no contienen
+relaciones ni ids de programas y por tanto no prueban esa relación.
 
 ## 3. Selección de plataformas
 
 1. Consulta plataformas relacionadas con programas y filtros.
 2. Obtén su sintaxis y descarta plataformas no configuradas.
-3. Calcula cobertura de revistas:
+3. Calcula cobertura de revistas distintas, sin sumar duplicados entre programas:
 
    `revistas = log(1 + total) / log(1 + max_total)`
 
    Si `max_total` es cero, usa cero.
 4. Calcula `sintaxis` solo con capacidades modeladas y necesarias: operadores,
    paréntesis y plantillas explícitas. No penalices capacidades `null`.
+   Es la proporción de filtros solicitados representables; sin filtros vale 1,
+   porque una cadena temática simple no requiere operadores ni campos.
 5. Calcula `puntuacion = 0.6 * sintaxis + 0.4 * revistas`, desempata por mayor
    total de revistas y conserva tres.
 
 ## 4. Términos y cadenas
 
 1. Obtén títulos unificados y ejecuta YAKE una vez por plataforma.
-2. Parte de términos cuyo origen sea `prompt`. Un término de plataforma solo
-   puede enriquecer un grupo compatible.
+2. Conserva íntegro el tema normalizado. YAKE obtiene evidencia terminológica
+   por plataforma; no autoriza introducir temas ajenos ni descartar conceptos.
 3. Usa máximo cuatro grupos y seis variantes por grupo.
 4. Usa `OR` entre variantes solo si está soportado y paréntesis cuando sean
    necesarios. Usa `AND` entre conceptos solo si está soportado.
