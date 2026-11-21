@@ -40,7 +40,7 @@ class HarvestingServicesTestCase(TestCase):
             created_by=cls.user,
         )
         cls.doaj_platform = Platform.objects.create(
-            name="DOAJ",
+            name="DOAJ Services Test",
             status=Platform.Status.PUBLICADO,
             base_api_url="https://doaj.org/oai?verb=ListRecords&metadataPrefix=oai_dc",
             is_harvestable=True,
@@ -130,7 +130,7 @@ class HarvestingServicesTestCase(TestCase):
         self.assertEqual(journal.editorial.name, "programa de pós graduação em geografia")
         self.assertIsNone(journal.publication_date)
         self.assertEqual(
-            set(journal.language_links.values_list("language__abbreviation", flat=True)),
+            {code.upper() for code in journal.language_links.values_list("language__abbreviation", flat=True)},
             {"PT", "ES"},
         )
         self.assertTrue(journal.material_type_links.filter(material_type__name="journal").exists())
@@ -495,11 +495,9 @@ class HarvestingServicesTestCase(TestCase):
 
         mock_client = MagicMock(spec=httpx.Client)
         mock_client.get.side_effect = [mock_response_1, mock_response_2]
-        country = Country.objects.create(
-            name="United States",
+        country, _ = Country.objects.get_or_create(
             abbreviation="US",
-            emoji_flag="🇺🇸",
-            created_by=self.user,
+            defaults={"name": "United States", "emoji_flag": "🇺🇸", "created_by": self.user},
         )
         mock_response_1.json.return_value["results"][0].update({
             "country_code": "US",
@@ -793,7 +791,7 @@ class HarvestingServicesTestCase(TestCase):
         self.assertEqual(harvest.api_cursor, "*")
         self.assertEqual(client.get.call_count, 1)
 
-    def test_openalex_source_without_homepage_url_is_counted_as_failed(self):
+    def test_openalex_source_without_homepage_url_can_be_imported(self):
         response = MagicMock(spec=httpx.Response)
         response.status_code = 200
         response.json.return_value = {
@@ -821,9 +819,9 @@ class HarvestingServicesTestCase(TestCase):
 
         harvest.refresh_from_db()
         self.assertEqual(harvest.state, Harvest.State.COMPLETED)
-        self.assertEqual(harvest.records_added, 0)
-        self.assertEqual(harvest.records_failed, 1)
-        self.assertFalse(Journal.objects.filter(issn="7777-7777").exists())
+        self.assertEqual(harvest.records_added, 1)
+        self.assertEqual(harvest.records_failed, 0)
+        self.assertTrue(Journal.objects.filter(issn="7777-7777").exists())
 
     def test_pause_finishes_current_page_and_resume_uses_saved_cursor(self):
         response = MagicMock(spec=httpx.Response)

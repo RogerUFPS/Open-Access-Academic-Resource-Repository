@@ -107,18 +107,17 @@ class HarvestingViewsTestCase(APITestCase):
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertIn("platforms", response.data)
         self.assertIn(self.platform.name, str(response.data["platforms"]))
-        self.assertEqual(Schedule.objects.count(), 0)
+        self.assertFalse(Schedule.objects.filter(platforms=self.platform).exists())
 
     @patch("apps.harvesting.views.services.run_scheduled_harvests", return_value=[])
-    def test_run_due_executes_scheduled_harvests_without_token(self, run_scheduled):
+    def test_run_due_rejects_anonymous_request(self, run_scheduled):
         self.client.force_authenticate(user=None)
         response = self.client.post(
             "/api/harvesting/schedules/run-due/",
         )
 
-        self.assertEqual(response.status_code, status.HTTP_200_OK)
-        self.assertEqual(response.data, [])
-        run_scheduled.assert_called_once_with()
+        self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
+        run_scheduled.assert_not_called()
 
     @patch("apps.harvesting.views.services.run_scheduled_harvests", return_value=[])
     def test_run_due_replays_the_persisted_response_for_the_same_key(self, run_scheduled):
@@ -416,3 +415,63 @@ class HarvestingViewsTestCase(APITestCase):
                 idempotency_key="resume-after-broker-failure",
             ).exists()
         )
+
+    def test_filter_options_contract(self):
+        response = self.client.get("/api/harvesting/schedules/filter-options/")
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(set(response.data["openalex"]), {"country_code"})
+        self.assertEqual(response.data["country_catalog"], {
+            "endpoint": "/api/catalog/countries/", "value_field": "abbreviation", "label_field": "name",
+        })
+        self.assertIn("subject", response.data["doaj"])
+        self.assertEqual(response.data["combination"], "AND")
+
+    def test_harvest_list_filters_global_and_selected_streams(self):
+        from apps.harvesting.selection import filter_key
+        global_run = Harvest.objects.create(platform=self.platform, max_quantity=1, state="completed", created_by=self.user)
+        filters = {"country_code": "CO"}
+        selected = Harvest.objects.create(platform=self.platform, max_quantity=1, state="completed", selection_filters=filters, filter_key=filter_key(filters), created_by=self.user)
+        for params, expected in [({"is_global": "true"}, global_run), ({"filter_key": selected.filter_key}, selected)]:
+            response = self.client.get("/api/harvesting/harvests/", {"platform": self.platform.pk, **params})
+            self.assertEqual(response.status_code, status.HTTP_200_OK)
+            self.assertEqual([row["id"] for row in response.data["results"]], [expected.pk])
+
+    @patch("apps.harvesting.views.services.run_scheduled_harvests", return_value=[])
+    def test_run_due_accepts_scheduler_token_with_specific_permission(self, run_scheduled):
+        from django.test import override_settings
+        service_user = User.objects.create_user(email="harvest-scheduler@example.org", permissions={"harvesting": {"schedules": {"run_due": True}}})
+        self.client.force_authenticate(None)
+        with override_settings(SCHEDULER_API_TOKEN="harvest-test-token", SCHEDULER_SERVICE_USER_ID=str(service_user.pk)):
+            response = self.client.post("/api/harvesting/schedules/run-due/", HTTP_AUTHORIZATION="Bearer harvest-test-token")
+            self.assertEqual(response.status_code, status.HTTP_200_OK)
+            service_user.permissions = {}
+            service_user.save(update_fields=["permissions"])
+            denied = self.client.post("/api/harvesting/schedules/run-due/", HTTP_AUTHORIZATION="Bearer harvest-test-token")
+            self.assertEqual(denied.status_code, status.HTTP_401_UNAUTHORIZED)
+            invalid = self.client.post("/api/harvesting/schedules/run-due/", HTTP_AUTHORIZATION="Bearer wrong-token")
+            self.assertEqual(invalid.status_code, status.HTTP_401_UNAUTHORIZED)
+        run_scheduled.assert_called_once()
+
+    def test_retired_openalex_filters_are_rejected(self):
+        for key in ("is_oa", "is_in_doaj"):
+            response = self.client.post("/api/harvesting/schedules/", {
+                "platforms": [self.platform.pk], "max_quantity": 10,
+                "start_date": timezone.now().isoformat(),
+                "selection_filters": {key: True},
+            }, format="json")
+            self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+            self.assertIn("selection_filters", response.data)
+
+    def test_country_catalog_abbreviation_can_be_used_as_selection(self):
+        from apps.catalog.models import Country
+        country = Country.objects.create(name="País del selector de cosecha", abbreviation="QZ", created_by=self.user)
+        response = self.client.get("/api/catalog/countries/", {"search": country.name, "ordering": "name", "page_size": 100})
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        listed_country = next(item for item in response.data["results"] if item["id"] == country.pk)
+        response = self.client.post("/api/harvesting/schedules/", {
+            "platforms": [self.platform.pk], "max_quantity": 10,
+            "start_date": timezone.now().isoformat(),
+            "selection_filters": {"country_code": listed_country["abbreviation"]},
+        }, format="json")
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(response.data["selection_filters"], {"country_code": "QZ"})

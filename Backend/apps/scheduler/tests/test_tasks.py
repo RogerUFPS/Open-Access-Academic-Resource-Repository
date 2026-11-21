@@ -120,3 +120,11 @@ class BeatScheduleTests(SimpleTestCase):
                 next_run = app.now() + crontab.remaining_estimate(app.now())
                 zone = getattr(next_run.tzinfo, "zone", None) or next_run.tzinfo.key
                 self.assertEqual(zone, "UTC")
+
+class SchedulerHarvestTokenTests(SimpleTestCase):
+    @override_settings(SCHEDULER_API_TOKEN="", SCHEDULER_API_URL="http://backend:8000")
+    def test_missing_token_fails_without_anonymous_request(self):
+        with patch("apps.scheduler.tasks.httpx.post") as post:
+            with self.assertRaisesRegex(RuntimeError, "SCHEDULER_API_TOKEN is required"):
+                dispatch_http_job.run("harvesting_due")
+        post.assert_not_called()

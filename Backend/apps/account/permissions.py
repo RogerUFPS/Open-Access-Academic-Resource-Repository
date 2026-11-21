@@ -166,11 +166,6 @@ class ApplicationPermission(BasePermission):
         path = request.path_info.rstrip("/") + "/"
         if path in PUBLIC_ACCOUNT_PATHS:
             return True
-        if (
-            path == "/api/harvesting/schedules/run-due/"
-            and request.method == "POST"
-        ):
-            return True
         if path == "/api/accounts/auth/me/":
             return bool(
                 request.user

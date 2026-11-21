@@ -30,7 +30,7 @@ def dispatch_http_job(self, job):
     scheduler_token = settings.SCHEDULER_API_TOKEN.strip()
     if scheduler_token:
         headers["Authorization"] = f"Bearer {scheduler_token}"
-    elif job != "harvesting_due":
+    else:
         raise RuntimeError(f"SCHEDULER_API_TOKEN is required for scheduler job {job}.")
     timeout = httpx.Timeout(connect=3, read=60, write=5, pool=5)
 

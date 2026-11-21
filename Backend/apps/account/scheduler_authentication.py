@@ -11,6 +11,7 @@ class SchedulerTokenAuthentication(BaseAuthentication):
     """Authenticate scheduler calls as a configured, least-privilege user."""
 
     keyword = b"bearer"
+    required_permission = ("platforms", "platforms", "check_link")
 
     def authenticate(self, request):
         parts = get_authorization_header(request).split()
@@ -34,17 +35,22 @@ class SchedulerTokenAuthentication(BaseAuthentication):
         except User.DoesNotExist:
             raise AuthenticationFailed("Scheduler service account is unavailable.")
 
+        app, resource, operation = self.required_permission
         permission = (
             user.effective_permissions()
-            .get("platforms", {})
-            .get("platforms", {})
-            .get("check_link", False)
+            .get(app, {})
+            .get(resource, {})
+            .get(operation, False)
         )
         if user.is_superadmin or not permission:
             raise AuthenticationFailed(
-                "Scheduler service account must have check_link access."
+                f"Scheduler service account must have {operation} access."
             )
         return user, "scheduler"
 
     def authenticate_header(self, request):
         return "Bearer"
+
+
+class HarvestSchedulerTokenAuthentication(SchedulerTokenAuthentication):
+    required_permission = ("harvesting", "schedules", "run_due")
