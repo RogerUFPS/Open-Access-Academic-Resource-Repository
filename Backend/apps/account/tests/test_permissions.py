@@ -82,8 +82,8 @@ class ApplicationPermissionTests(SimpleTestCase):
             self.allowed("post", "/api/accounts/users/7/restore/", user=user)
         )
 
-    def test_run_due_is_public_only_for_its_post_route(self):
-        self.assertTrue(
+    def test_run_due_requires_authentication(self):
+        self.assertFalse(
             self.allowed("post", "/api/harvesting/schedules/run-due/")
         )
         self.assertFalse(

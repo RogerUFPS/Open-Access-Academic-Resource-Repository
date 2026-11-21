@@ -15,13 +15,13 @@ from drf_spectacular.utils import (
 from rest_framework import serializers as drf_serializers
 from rest_framework.decorators import (
     action,
-    permission_classes,
 )
-from rest_framework.permissions import AllowAny
 from rest_framework import status, viewsets
 from rest_framework.response import Response
 
 from apps.core.viewsets import AuditableViewSet, get_acting_user
+from apps.account.authentication import CookieSessionAuthentication
+from apps.account.scheduler_authentication import HarvestSchedulerTokenAuthentication
 from apps.journal.models import Journal
 from apps.journal.serializers import JournalSerializer
 from apps.journal.views import with_admin_relations, with_platform_urls
@@ -144,6 +144,26 @@ class ScheduleViewSet(AuditableViewSet):
     ordering_fields = ["created_at", "start_date"]
     ordering = ["-created_at"]
 
+    @extend_schema(responses={200: inline_serializer(name="HarvestFilterOptions", fields={
+        "openalex": drf_serializers.JSONField(),
+        "doaj": drf_serializers.JSONField(),
+        "country_catalog": drf_serializers.JSONField(),
+        "combination": drf_serializers.CharField(),
+        "max_quantity_counts": drf_serializers.CharField(),
+    })}, tags=["Cosecha - Programaciones"])
+    @action(detail=False, methods=["get"], url_path="filter-options")
+    def filter_options(self, request):
+        return Response({
+            "openalex": {"country_code": "ISO 3166-1 alpha-2"},
+            "doaj": {"title": "contains", "publisher": "contains", "subject": "contains", "language": "exact"},
+            "country_catalog": {
+                "endpoint": "/api/catalog/countries/",
+                "value_field": "abbreviation",
+                "label_field": "name",
+            },
+            "combination": "AND", "max_quantity_counts": "scanned records including skipped",
+        })
+
     @extend_schema(
         summary="Procesar cosechas programadas vencidas",
         description=(
@@ -167,8 +187,9 @@ class ScheduleViewSet(AuditableViewSet):
         },
         tags=["Cosecha - Programaciones"],
     )
-    @action(detail=False, methods=["post"], url_path="run-due",authentication_classes=[],
-    permission_classes=[AllowAny])
+    @action(detail=False, methods=["post"], url_path="run-due", authentication_classes=[
+        HarvestSchedulerTokenAuthentication, CookieSessionAuthentication,
+    ])
     def run_due(self, request):
         idempotency_key = request.headers.get("Idempotency-Key", "").strip() or None
         if idempotency_key and len(idempotency_key) > 255:
@@ -207,7 +228,7 @@ class ScheduleViewSet(AuditableViewSet):
             _release_harvest_request(request_record, token)
             logger.exception("No se pudieron encolar las cosechas vencidas.")
             return Response(
-                {"detail": f"No se pudieron encolar las cosechas: {exc}"},
+                {"detail": "No se pudieron encolar las cosechas."},
                 status=status.HTTP_503_SERVICE_UNAVAILABLE,
             )
         response_status = status.HTTP_202_ACCEPTED if harvests else status.HTTP_200_OK
@@ -424,7 +445,7 @@ class HarvestViewSet(viewsets.ReadOnlyModelViewSet):
                         return Response(response_body, status=status.HTTP_202_ACCEPTED)
             return Response(
                 {
-                    "detail": f"Error al encolar la cosecha: {exc}",
+                    "detail": "Error al encolar la cosecha.",
                     "harvest": serializers.HarvestSerializer(harvest).data,
                 },
                 status=status.HTTP_503_SERVICE_UNAVAILABLE,

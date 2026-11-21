@@ -1,3 +1,5 @@
+import hashlib
+import json
 import logging
 import time
 import calendar
@@ -18,11 +20,20 @@ from apps.journal.models import Journal, License, SharedJournalLicense
 from apps.journal.services import create_journal
 from apps.platforms.models import Platform
 from . import models
+from .selection import filter_key, openalex_filter, doaj_matches
 
 logger = logging.getLogger(__name__)
 OAI_NAMESPACE = "http://www.openarchives.org/OAI/2.0/"
 DC_NAMESPACE = "http://purl.org/dc/elements/1.1/"
 ISSN_PATTERN = re.compile(r"^\s*(\d{4})-?(\d{3}[\dXx])\s*$")
+
+
+def _validate_openalex_endpoint(url):
+    parsed = urlsplit(url)
+    if (parsed.scheme != "https" or parsed.hostname != "api.openalex.org"
+            or parsed.username or parsed.password or parsed.port not in (None, 443)
+            or parsed.path not in ("", "/") or parsed.query or parsed.fragment):
+        raise ValueError("OpenAlex requiere https://api.openalex.org sin parámetros.")
 
 
 class RetryableHarvestError(RuntimeError):
@@ -54,9 +65,10 @@ def _harvest_processed_count(harvest: models.Harvest) -> int:
         harvest.records_added
         + harvest.records_updated
         + harvest.records_failed
+        + harvest.records_skipped
     )
     if _is_doaj_platform(harvest.platform):
-        persisted_total = _harvest_journal_count(harvest) + harvest.records_failed
+        persisted_total = _harvest_journal_count(harvest) + harvest.records_failed + harvest.records_skipped
         return max(counter_total, persisted_total)
     return counter_total
 
@@ -78,7 +90,7 @@ def _check_harvest_limit_after_write(harvest: models.Harvest) -> None:
         raise HarvestLimitExceeded("harvest exceeded max_quantity after write")
 
 
-def get_latest_cursor_for_platform(platform: Platform) -> str:
+def get_latest_cursor_for_platform(platform: Platform, selection_filters=None) -> str:
     """
     Obtiene el api_cursor más reciente de cosechas previas de la plataforma.
     Prioriza cosechas que ya hayan avanzado con un cursor real devuelto por la API (distinto de '*').
@@ -86,7 +98,7 @@ def get_latest_cursor_for_platform(platform: Platform) -> str:
     """
     latest = (
         models.Harvest.objects
-        .filter(platform=platform)
+        .filter(platform=platform, filter_key=filter_key(selection_filters or {}))
         .exclude(api_cursor="")
         .exclude(api_cursor="*")
         .exclude(api_cursor__isnull=True)
@@ -106,23 +118,16 @@ def _is_doaj_platform(platform: Platform) -> bool:
     )
 
 
-def get_latest_harvest_progress(platform: Platform) -> dict[str, Any]:
-    """Return the provider-specific continuation data for a new scheduled Harvest."""
-    if not _is_doaj_platform(platform):
-        return {"api_cursor": get_latest_cursor_for_platform(platform)}
-
-    latest = (
-        models.Harvest.objects.filter(platform=platform)
-        .order_by("-created_at")
-        .first()
-    )
+def get_latest_harvest_progress(platform: Platform, selection_filters=None) -> dict[str, Any]:
+    """Each normalized selection owns its continuation; empty selection is global."""
+    latest = models.Harvest.objects.filter(
+        platform=platform, filter_key=filter_key(selection_filters or {}),
+    ).exclude(state=models.Harvest.State.PENDING).order_by("-created_at", "-pk").first()
     if latest is None:
-        return {"api_cursor": "", "api_marker": 0, "api_page": ""}
-    return {
-        "api_cursor": latest.api_cursor,
-        "api_marker": latest.api_marker,
-        "api_page": latest.api_page,
-    }
+        return {"api_cursor": "" if _is_doaj_platform(platform) else "*"}
+    return {name: getattr(latest, name) for name in (
+        "api_cursor", "api_marker", "api_page", "source_exhausted",
+    )}
 
 
 def _source_has_apc(item: dict[str, Any]) -> bool | None:
@@ -195,6 +200,7 @@ class OpenAlexHarvester:
             )
         if api_key:
             headers["Authorization"] = f"Bearer {api_key}"
+        _validate_openalex_endpoint(self.harvest.platform.base_api_url or self.DEFAULT_BASE_URL)
         return httpx.Client(
             headers=headers,
             timeout=30.0,
@@ -210,6 +216,9 @@ class OpenAlexHarvester:
                 "no está habilitada para cosecha (is_harvestable=false)."
             )
 
+        if self._custom_client is None:
+            return _execute_checkpointed_harvest(self.harvest.pk)
+
         with transaction.atomic():
             harvest = models.Harvest.objects.select_for_update().get(pk=self.harvest.pk)
             if harvest.state != models.Harvest.State.PENDING:
@@ -222,7 +231,7 @@ class OpenAlexHarvester:
         platform = harvest.platform
 
         # Recuperar o establecer cursor
-        cursor = harvest.api_cursor or get_latest_cursor_for_platform(platform)
+        cursor = harvest.api_cursor or get_latest_cursor_for_platform(platform, harvest.selection_filters)
         if not cursor or not cursor.strip():
             cursor = "*"
         harvest.api_cursor = cursor
@@ -252,6 +261,7 @@ class OpenAlexHarvester:
                     harvest.records_added
                     + harvest.records_updated
                     + harvest.records_failed
+                    + harvest.records_skipped
                 )
                 if harvest.max_quantity and total_processed >= harvest.max_quantity:
                     logger.info("Límite de cantidad alcanzado en cosecha #%s (%s)", harvest.pk, total_processed)
@@ -272,7 +282,7 @@ class OpenAlexHarvester:
                     page_size = min(page_size, remaining)
 
                 params = {
-                    "filter": "type:journal",
+                    "filter": openalex_filter(harvest.selection_filters),
                     "cursor": cursor,
                     "per-page": page_size,
                 }
@@ -299,6 +309,7 @@ class OpenAlexHarvester:
                         harvest.records_added
                         + harvest.records_updated
                         + harvest.records_failed
+                        + harvest.records_skipped
                     )
                     if harvest.max_quantity and current_processed >= harvest.max_quantity:
                         page_complete = False
@@ -325,6 +336,7 @@ class OpenAlexHarvester:
                         "records_added",
                         "records_updated",
                         "records_failed",
+                        "records_skipped",
                     ]
                 )
 
@@ -351,6 +363,7 @@ class OpenAlexHarvester:
                         "records_added",
                         "records_updated",
                         "records_failed",
+                        "records_skipped",
                         "elapsed_seconds",
                     ]
                 )
@@ -367,6 +380,7 @@ class OpenAlexHarvester:
                         "records_added",
                         "records_updated",
                         "records_failed",
+                        "records_skipped",
                         "elapsed_seconds",
                     ]
                 )
@@ -386,6 +400,7 @@ class OpenAlexHarvester:
                     "records_added",
                     "records_updated",
                     "records_failed",
+                    "records_skipped",
                     "elapsed_seconds",
                 ]
             )
@@ -522,12 +537,15 @@ class DoajHarvester:
     def _get_endpoint(self) -> str:
         configured_url = self.harvest.platform.base_api_url or self.DEFAULT_OAI_URL
         parsed_url = urlsplit(configured_url)
-        if not parsed_url.scheme or not parsed_url.netloc:
+        if (parsed_url.scheme != "https" or parsed_url.hostname != "doaj.org"
+                or parsed_url.username or parsed_url.password or parsed_url.port not in (None, 443)):
             raise ValueError("La URL OAI-PMH configurada para DOAJ no es válida.")
         return urlunsplit((parsed_url.scheme, parsed_url.netloc, parsed_url.path, "", ""))
 
     @staticmethod
     def _records_and_token(xml_payload: str):
+        if "<!DOCTYPE" in xml_payload.upper() or "<!ENTITY" in xml_payload.upper():
+            raise RuntimeError("DOAJ devolvió XML con declaraciones no permitidas.")
         try:
             root = ElementTree.fromstring(xml_payload)
         except ElementTree.ParseError as exc:
@@ -539,6 +557,8 @@ class DoajHarvester:
         error = root.find(f"{{{OAI_NAMESPACE}}}error")
         if error is not None:
             code = error.get("code", "unknown")
+            if code == "noRecordsMatch":
+                return [], ""
             detail = (error.text or "").strip()
             raise RuntimeError(f"Error OAI-PMH de DOAJ ({code}): {detail}")
 
@@ -657,6 +677,9 @@ class DoajHarvester:
         if _quantity_limit_reached(harvest):
             harvest.state = models.Harvest.State.COMPLETED
             return False
+        if not doaj_matches(self, record):
+            harvest.records_skipped += 1
+            return True
         header = record.find(f"{{{OAI_NAMESPACE}}}header")
         if header is None or header.get("status") == "deleted":
             harvest.records_failed += 1
@@ -752,6 +775,18 @@ class DoajHarvester:
                 f"La plataforma '{self.harvest.platform.name}' "
                 "no está habilitada para cosecha (is_harvestable=false)."
             )
+
+        if self._custom_client is None:
+            try:
+                self._get_endpoint()
+            except ValueError as exc:
+                models.Harvest.objects.filter(pk=self.harvest.pk).update(
+                    state=models.Harvest.State.FAILED,
+                    error_message=str(exc),
+                    finished_at=timezone.now(),
+                )
+                raise
+            return _execute_checkpointed_harvest(self.harvest.pk)
 
         with transaction.atomic():
             harvest = models.Harvest.objects.select_for_update().get(pk=self.harvest.pk)
@@ -861,6 +896,7 @@ class DoajHarvester:
                                 "records_added",
                                 "records_updated",
                                 "records_failed",
+                                "records_skipped",
                             ]
                         )
                     total_processed = _harvest_processed_count(harvest)
@@ -880,6 +916,7 @@ class DoajHarvester:
                     harvest.records_added
                     + harvest.records_updated
                     + harvest.records_failed
+                    + harvest.records_skipped
                 )
                 if not next_token or (
                     harvest.max_quantity and total_processed >= harvest.max_quantity
@@ -907,6 +944,7 @@ class DoajHarvester:
                         "records_added",
                         "records_updated",
                         "records_failed",
+                        "records_skipped",
                     ]
                 )
         except Exception as exc:
@@ -956,6 +994,15 @@ def get_harvester_for_platform(
         f"No existe un motor de recolección configurado para la plataforma '{harvest.platform.name}'. "
         "Actualmente se encuentran implementados los proveedores OpenAlex y DOAJ."
     )
+
+
+def _execute_checkpointed_harvest(harvest_id):
+    """Synchronous entry points use exactly the same atomic checkpoints as Celery."""
+    while True:
+        harvest = models.Harvest.objects.get(pk=harvest_id)
+        result = process_harvest_worker_step(harvest_id, harvest.worker_checkpoint)
+        if not result["has_more"]:
+            return models.Harvest.objects.get(pk=harvest_id)
 
 
 def execute_harvest(harvest_id: int, **kwargs) -> models.Harvest:
@@ -1062,42 +1109,76 @@ def _finish_schedule_event(harvest: models.Harvest) -> None:
     event.save(update_fields=["state", "finished_at", "error_message"])
 
 
-def _worker_openalex_step(harvest: models.Harvest, user: User) -> None:
-    harvester = OpenAlexHarvester(harvest, user=user, batch_size=1)
-    client = harvester._get_client()
-    try:
-        base_url = (harvest.platform.base_api_url or harvester.DEFAULT_BASE_URL).rstrip("/")
-        response = client.get(
-            f"{base_url}/sources",
-            params={
-                "filter": "type:journal",
-                "cursor": harvest.api_cursor or "*",
-                "per-page": 1,
-            },
+def _import_unless_unchanged(harvest, identifier, payload, process):
+    fingerprint = hashlib.sha256(payload.encode()).hexdigest()
+    previous = models.HarvestSourceRecord.objects.filter(
+        platform=harvest.platform, identifier=identifier,
+    ).first() if identifier and len(identifier) <= 512 else None
+    if previous and previous.fingerprint == fingerprint:
+        harvest.records_skipped += 1
+        return True
+    failed = harvest.records_failed
+    result = process()
+    if result and harvest.records_failed == failed and identifier and len(identifier) <= 512:
+        models.HarvestSourceRecord.objects.update_or_create(
+            platform=harvest.platform, identifier=identifier,
+            defaults={"fingerprint": fingerprint},
         )
-        if response.status_code != 200:
-            error_type = (
-                RetryableHarvestError
-                if response.status_code == 429 or response.status_code >= 500
-                else RuntimeError
-            )
-            raise error_type(
-                f"OpenAlex API respondió con código {response.status_code}: "
-                f"{response.text[:200]}"
-            )
-        data = response.json()
-        results = data.get("results", [])
-        if not results:
-            harvest.state = models.Harvest.State.COMPLETED
+    return result
+
+
+def _openalex_payload(item):
+    """Fingerprint imported metadata, excluding volatile citation statistics."""
+    return json.dumps({
+        "issn": item.get("issn_l") or (item.get("issn") or [None])[0],
+        "title": item.get("display_name"),
+        "url": item.get("homepage_url"),
+        "image": item.get("image_url") or item.get("image_thumbnail_url"),
+        "editorial": item.get("host_organization_name") or item.get("publisher"),
+        "country": item.get("country_code"),
+        "is_oa": item.get("is_oa"),
+        "has_apc": _source_has_apc(item),
+    }, sort_keys=True)
+
+
+def _doaj_payload(harvester, record):
+    return json.dumps({field: harvester._dc_values(record, field) for field in (
+        "identifier", "title", "relation", "publisher", "language", "type", "rights",
+    )}, sort_keys=True)
+
+
+def _worker_openalex_step(harvest: models.Harvest, user: User) -> None:
+    selection_query = openalex_filter(harvest.selection_filters)
+    harvester = OpenAlexHarvester(harvest, user=user)
+    if not harvest.api_page:
+        client = harvester._get_client()
+        try:
+            base_url = (harvest.platform.base_api_url or harvester.DEFAULT_BASE_URL).rstrip("/")
+            response = client.get(f"{base_url}/sources", params={
+                "filter": selection_query,
+                "cursor": harvest.api_cursor or "*", "per-page": 100,
+            })
+            if response.status_code != 200:
+                error = RetryableHarvestError if response.status_code == 429 or response.status_code >= 500 else RuntimeError
+                raise error(f"OpenAlex respondió con código {response.status_code}.")
+            harvest.api_page = json.dumps(response.json())
+            harvest.api_marker = 0
+        finally:
+            client.close()
+    data = json.loads(harvest.api_page)
+    results = data.get("results", [])
+    if harvest.api_marker < len(results):
+        item = results[harvest.api_marker]
+        if not _import_unless_unchanged(harvest, item.get("id"), _openalex_payload(item), lambda: harvester._process_single_source(item)):
             return
-        if not harvester._process_single_source(results[0]):
-            harvest.state = models.Harvest.State.COMPLETED
-            return
+        harvest.api_marker += 1
+    if harvest.api_marker >= len(results):
         harvest.api_cursor = data.get("meta", {}).get("next_cursor") or ""
+        harvest.api_page = ""
+        harvest.api_marker = 0
         if not harvest.api_cursor:
+            harvest.source_exhausted = True
             harvest.state = models.Harvest.State.COMPLETED
-    finally:
-        client.close()
 
 
 def _worker_doaj_step(harvest: models.Harvest, user: User) -> None:
@@ -1115,6 +1196,7 @@ def _worker_doaj_step(harvest: models.Harvest, user: User) -> None:
                 harvest.records_added
                 + harvest.records_updated
                 + harvest.records_failed
+                + harvest.records_skipped
             )
             if harvest.max_quantity and total_processed >= harvest.max_quantity:
                 harvest.state = models.Harvest.State.COMPLETED
@@ -1157,7 +1239,14 @@ def _worker_doaj_step(harvest: models.Harvest, user: User) -> None:
             if quantity_reached or time_reached:
                 harvest.state = models.Harvest.State.COMPLETED
             else:
-                if harvester._process_record(records[harvest.api_marker]):
+                record = records[harvest.api_marker]
+                if not doaj_matches(harvester, record):
+                    harvest.records_skipped += 1
+                    processed = True
+                else:
+                    identifier = record.findtext(f"{{{OAI_NAMESPACE}}}header/{{{OAI_NAMESPACE}}}identifier")
+                    processed = _import_unless_unchanged(harvest, identifier, _doaj_payload(harvester, record), lambda: harvester._process_record(record))
+                if processed:
                     harvest.api_marker += 1
                 else:
                     harvest.state = models.Harvest.State.COMPLETED
@@ -1168,6 +1257,8 @@ def _worker_doaj_step(harvest: models.Harvest, user: User) -> None:
             harvest.api_marker = 0
             harvest.api_page = ""
 
+        if page_complete and not next_token:
+            harvest.source_exhausted = True
         total_processed = _harvest_processed_count(harvest)
         if (
             (page_complete and not next_token)
@@ -1226,7 +1317,9 @@ def process_harvest_worker_step(
         started = time.monotonic()
         try:
             user = harvest.created_by or User.all_objects.get(code=0)
-            if _is_doaj_platform(harvest.platform):
+            if harvest.source_exhausted:
+                harvest.state = models.Harvest.State.COMPLETED
+            elif _is_doaj_platform(harvest.platform):
                 _worker_doaj_step(harvest, user)
             elif (
                 "openalex" in (harvest.platform.name or "").lower()
@@ -1271,12 +1364,14 @@ def process_harvest_worker_step(
                     "started_at",
                     "finished_at",
                     "error_message",
+                    "source_exhausted",
                     "api_cursor",
                     "api_marker",
                     "api_page",
                     "records_added",
                     "records_updated",
                     "records_failed",
+                    "records_skipped",
                     "elapsed_seconds",
                     "worker_elapsed_milliseconds",
                     "worker_checkpoint",
@@ -1354,7 +1449,9 @@ def run_scheduled_harvests(now=None) -> list[models.Harvest]:
                     platform=platform,
                     schedule=schedule,
                     event=event,
-                    **get_latest_harvest_progress(platform),
+                    **get_latest_harvest_progress(platform, schedule.selection_filters),
+                    selection_filters=schedule.selection_filters,
+                    filter_key=filter_key(schedule.selection_filters),
                     max_quantity=schedule.max_quantity,
                     stop_after_minutes=schedule.stop_after_minutes,
                     created_by=schedule.created_by,

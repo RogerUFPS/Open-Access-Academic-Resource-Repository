@@ -110,6 +110,7 @@ services:
               "--schedule=/tmp/celerybeat-schedule"]
 
   agent-worker:
+    # Consultas al agente por HTTP, tanto en Modal como en despliegue local.
     <<: *service
     image: harvest-backend
     pull_policy: never
@@ -123,6 +124,7 @@ services:
               "--queues=agent", "--concurrency=4", "--hostname=agent@%h"]
 
   agent-control:
+    # Cambio seguro entre endpoints del agente, locales o de Modal.
     <<: *service
     image: harvest-backend
     pull_policy: never
