@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import Button from "@/shared/components/Button";
 import Notice from "@/shared/components/Notice";
-import { getScheduleHarvests, IMMEDIATE_HARVEST_ENABLED, runDueErrorMessage, runDueFeedback, SCHEDULE_HARVESTS_PAGE_SIZE } from "@/features/admin/harvesting/harvesting";
+import { getScheduleHarvests, IMMEDIATE_HARVEST_ENABLED, runDueErrorMessage, runDueFeedback, runDueKey, SCHEDULE_HARVESTS_PAGE_SIZE, shouldReuseRunDueKey } from "@/features/admin/harvesting/harvesting";
 import { isMissingPage, readPage } from "@/shared/utils/pagination";
 import HarvestExecutions from "./HarvestExecutions";
 import { useHarvestingApi } from "./HarvestingProvider";
@@ -18,6 +18,7 @@ export default function HarvestScheduleRuns({ scheduleId, revision, busy }) {
   const [executing, setExecuting] = useState(false);
   const [executionFeedback, setExecutionFeedback] = useState(null);
   const requestPending = useRef(false);
+  const runDueKeyRef = useRef(null);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -62,8 +63,11 @@ export default function HarvestScheduleRuns({ scheduleId, revision, busy }) {
     setExecuting(true);
     setExecutionFeedback(null);
     try {
-      setExecutionFeedback(runDueFeedback(await runDueSchedules()));
+      runDueKeyRef.current = runDueKey(runDueKeyRef.current);
+      setExecutionFeedback(runDueFeedback(await runDueSchedules(runDueKeyRef.current)));
+      runDueKeyRef.current = null;
     } catch (error) {
+      if (!shouldReuseRunDueKey(error)) runDueKeyRef.current = null;
       setExecutionFeedback({ variant: "error", message: runDueErrorMessage(error) });
     } finally {
       requestPending.current = false;

@@ -13,7 +13,8 @@ registerHooks({
 });
 const {
   buildSchedule, buildSelectionFilters, canRunDueSchedules, formatSelectionFilters, harvestProvider,
-  hasRetiredSelectionFilters, runDueErrorMessage, runDueFeedback, selectionValuesFrom,
+  createHarvestingApi, hasRetiredSelectionFilters, runDueErrorMessage, runDueFeedback, runDueKey,
+  selectionValuesFrom, shouldReuseRunDueKey,
 } = await import("../src/features/admin/harvesting/harvesting.js");
 
 const options = {
@@ -67,4 +68,22 @@ test("run-due permission and responses", () => {
   assert.match(runDueFeedback({ status: 202 }).message, /no significa que hayan terminado/);
   assert.match(runDueFeedback({ status: 200 }).message, /no hubiera nuevas/);
   assert.match(runDueErrorMessage({ status: 425, message: "Demasiado pronto.", retryAfter: 30 }), /30 segundos/);
+});
+
+test("run-due idempotency key is kept only while the outcome is uncertain", () => {
+  const key = runDueKey(null);
+  assert.match(key, /^ui-run-due:[0-9a-f-]{36}$/);
+  assert.equal(runDueKey(key), key);
+  assert.notEqual(runDueKey(null), key);
+  for (const status of [undefined, 408, 425, 429, 500, 502, 503]) assert.equal(shouldReuseRunDueKey({ status }), true, String(status));
+  for (const status of [400, 401, 403, 409]) assert.equal(shouldReuseRunDueKey({ status }), false, String(status));
+});
+
+test("run-due forwards the idempotency key to the server action", async () => {
+  const calls = [];
+  const api = createHarvestingApi(async (...args) => { calls.push(args); return { status: 202, data: [] }; });
+  assert.deepEqual(await api.runDueSchedules("ui-run-due:abc"), { status: 202 });
+  assert.deepEqual(calls[0], ["/api/harvesting/schedules/run-due/", "POST", undefined, "ui-run-due:abc"]);
+  await api.pauseHarvest(7);
+  assert.equal(calls[1].length, 3);
 });

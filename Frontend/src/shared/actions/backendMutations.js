@@ -43,6 +43,10 @@ const ALLOWED_HARVEST_MUTATIONS = [
   ["POST", /^\/api\/platforms\/check-failed-links\/$/],
 ];
 
+const RUN_DUE_PATH = "/api/harvesting/schedules/run-due/";
+// Idempotency-Key solo se reenvía a run-due y con un formato acotado.
+const IDEMPOTENCY_KEY_PATTERN = /^[A-Za-z0-9:_-]{1,255}$/;
+
 const ALLOWED_AGENT_MUTATIONS = [
   ["POST", /^\/api\/agent\/models\/switch\/$/],
   ["POST", /^\/api\/agent\/models\/cancel\/$/],
@@ -109,7 +113,7 @@ function transferCookies(response, store, jar, secure) {
   }
 }
 
-async function mutateBackend(path, method, body, timeoutMs = 90000) {
+async function mutateBackend(path, method, body, timeoutMs = 90000, extraHeaders = {}) {
   if (body !== undefined && (!body || typeof body !== "object" || Array.isArray(body))) {
     return { status: 400, data: { detail: "Los datos de la solicitud no son válidos." } };
   }
@@ -145,7 +149,7 @@ async function mutateBackend(path, method, body, timeoutMs = 90000) {
     const response = await fetch(`${API_URL}${path}`, {
       method,
       headers: {
-        ...backendHeaders, Cookie: cookieHeader(), "X-CSRFToken": jar.get(CSRF_COOKIE_NAME),
+        ...backendHeaders, ...extraHeaders, Cookie: cookieHeader(), "X-CSRFToken": jar.get(CSRF_COOKIE_NAME),
         ...(body === undefined ? {} : { "Content-Type": "application/json" }),
       },
       ...(body === undefined ? {} : { body: JSON.stringify(body) }),
@@ -177,13 +181,16 @@ export async function mutateAccount(path, method, body) {
   return mutateBackend(`/api/accounts/${path}`, method, body);
 }
 
-export async function mutateHarvest(path, method, body) {
+export async function mutateHarvest(path, method, body, idempotencyKey) {
   if (typeof path !== "string" || !ALLOWED_HARVEST_MUTATIONS.some(([verb, pattern]) => verb === method && pattern.test(path))) {
     return { status: 400, data: { detail: "La operación de cosecha solicitada no es válida." } };
   }
+  if (idempotencyKey !== undefined && (path !== RUN_DUE_PATH || typeof idempotencyKey !== "string" || !IDEMPOTENCY_KEY_PATTERN.test(idempotencyKey))) {
+    return { status: 400, data: { detail: "La clave de idempotencia no es válida." } };
+  }
   // check-links de una plataforma es síncrono y puede comprobar muchas URLs.
-  const longRunning = path === "/api/harvesting/schedules/run-due/" || path.endsWith("/resume/") || /^\/api\/platforms\/\d+\/check-links\/$/.test(path);
-  return mutateBackend(path, method, body, longRunning ? null : 90000);
+  const longRunning = path === RUN_DUE_PATH || path.endsWith("/resume/") || /^\/api\/platforms\/\d+\/check-links\/$/.test(path);
+  return mutateBackend(path, method, body, longRunning ? null : 90000, idempotencyKey ? { "Idempotency-Key": idempotencyKey } : {});
 }
 
 export async function mutateAgent(path, method, body) {

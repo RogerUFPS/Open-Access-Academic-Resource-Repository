@@ -8,7 +8,7 @@ import Button from "@/shared/components/Button";
 import FormField from "@/shared/components/FormField";
 import MetricCard from "@/shared/components/MetricCard";
 import Notice from "@/shared/components/Notice";
-import { buildSelectionFilters, canRunDueSchedules, canUpdateSchedules, formatDate, formatSelectionFilters, getHarvestFilterOptions, getHarvests, getHarvestSourceCount, getPlatforms, getUpcomingSchedules, harvestProvider, hasRetiredSelectionFilters, runDueErrorMessage, runDueFeedback, selectionValuesFrom } from "@/features/admin/harvesting/harvesting";
+import { buildSelectionFilters, canRunDueSchedules, canUpdateSchedules, formatDate, formatSelectionFilters, getHarvestFilterOptions, getHarvests, getHarvestSourceCount, getPlatforms, getUpcomingSchedules, harvestProvider, hasRetiredSelectionFilters, runDueErrorMessage, runDueFeedback, runDueKey, selectionValuesFrom, shouldReuseRunDueKey } from "@/features/admin/harvesting/harvesting";
 import { useAccountsApi } from "@/shared/components/AccountsProvider";
 import HarvestExecutions from "./HarvestExecutions";
 import HarvestSelectionFields, { useHarvestCountries } from "./HarvestSelectionFields";
@@ -71,6 +71,7 @@ export default function HarvestDashboard() {
   const [editSaving, setEditSaving] = useState(false);
   const [editError, setEditError] = useState("");
   const requestPending = useRef(false);
+  const runDueKeyRef = useRef(null);
 
   const viewer = useQuery({ queryKey: queryKeys.accounts.viewer, queryFn: ({ signal }) => accountsApi.me(signal) });
   const canRunDue = canRunDueSchedules(viewer.data);
@@ -114,8 +115,11 @@ export default function HarvestDashboard() {
     setExecuting(true);
     setExecutionFeedback(null);
     try {
-      setExecutionFeedback(runDueFeedback(await runDueSchedules()));
+      runDueKeyRef.current = runDueKey(runDueKeyRef.current);
+      setExecutionFeedback(runDueFeedback(await runDueSchedules(runDueKeyRef.current)));
+      runDueKeyRef.current = null;
     } catch (error) {
+      if (!shouldReuseRunDueKey(error)) runDueKeyRef.current = null;
       setExecutionFeedback({ variant: "error", message: runDueErrorMessage(error) });
     } finally {
       requestPending.current = false;

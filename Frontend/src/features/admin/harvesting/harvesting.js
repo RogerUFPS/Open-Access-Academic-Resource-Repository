@@ -79,11 +79,13 @@ function errorMessage(payload, status) {
   return `La API respondió con un error (${status}). Intenta nuevamente.`;
 }
 
-async function request(path, { method = "GET", body, signal, timeoutMs = 30000, expectJson = true } = {}, mutateAction) {
+async function request(path, { method = "GET", body, signal, timeoutMs = 30000, expectJson = true, idempotencyKey } = {}, mutateAction) {
   // Session cookies belong to Next.js. Reads use its proxy; mutations use the
   // Server Action that forwards the session and obtains the backend CSRF token.
   if (method !== "GET") {
-    const { status, data, retryAfter } = await mutateAction(path, method, body);
+    const { status, data, retryAfter } = await (idempotencyKey === undefined
+      ? mutateAction(path, method, body)
+      : mutateAction(path, method, body, idempotencyKey));
     if (status < 200 || status >= 300) {
       const message = errorMessage(data, status);
       if (status === 401 && !shouldSkipSessionExpiredAlert(path)) {
@@ -410,10 +412,30 @@ function prepareImmediateSchedule(schedule, mutateAction) {
   }, mutateAction);
 }
 
-function runDueSchedules(mutateAction) {
+function runDueSchedules(idempotencyKey, mutateAction) {
   // Accept successful responses without a body; execution state comes from GET /harvests/.
   // 202 confirma un despacho; 200 puede indicar que no había nuevas ejecuciones.
-  return request("/api/harvesting/schedules/run-due/", { method: "POST", expectJson: false }, mutateAction);
+  return request("/api/harvesting/schedules/run-due/", { method: "POST", expectJson: false, idempotencyKey }, mutateAction);
+}
+
+/**
+ * Clave de idempotencia de run-due: se reutiliza mientras el último intento
+ * tuvo un resultado incierto, para que el reintento reciba la respuesta
+ * original del backend en lugar de un 200 vacío.
+ */
+export function runDueKey(previousKey) {
+  return previousKey || `ui-run-due:${globalThis.crypto.randomUUID()}`;
+}
+
+/**
+ * true si el error deja el despacho en duda (red, timeout, 5xx, 408/425/429)
+ * y el reintento debe usar la misma clave. Un error definitivo (4xx) o un
+ * éxito descartan la clave: la siguiente pulsación es otra operación.
+ */
+export function shouldReuseRunDueKey(error) {
+  const status = error?.status;
+  if (!Number.isInteger(status)) return true;
+  return status >= 500 || [408, 425, 429].includes(status);
 }
 
 /** Mensaje para el resultado de run-due: un despacho no es una cosecha terminada. */
@@ -454,7 +476,7 @@ export function createHarvestingApi(mutateAction) {
     updateScheduleSelection: (id, selectionFilters) => updateScheduleSelection(id, selectionFilters, mutateAction),
     deactivateSchedule: (id, explanation) => deactivateSchedule(id, explanation, mutateAction),
     prepareImmediateSchedule: (schedule) => prepareImmediateSchedule(schedule, mutateAction),
-    runDueSchedules: () => runDueSchedules(mutateAction),
+    runDueSchedules: (idempotencyKey) => runDueSchedules(idempotencyKey, mutateAction),
     pauseHarvest: (id) => pauseHarvest(id, mutateAction),
     resumeHarvest: (id) => resumeHarvest(id, mutateAction),
   };
