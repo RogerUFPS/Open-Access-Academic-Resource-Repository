@@ -1,10 +1,13 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
+import { queryKeys } from "@/shared/query/queryKeys";
 import Button from "@/shared/components/Button";
 import FormField from "@/shared/components/FormField";
 import Notice from "@/shared/components/Notice";
-import { buildSchedule, formatDate, getHarvestSources, getPlatforms, IMMEDIATE_HARVEST_ENABLED, MAX_HARVEST_LIMIT, nextBogotaDate } from "@/features/admin/harvesting/harvesting";
+import { buildSchedule, buildSelectionFilters, EMPTY_SELECTION_VALUES, formatDate, formatSelectionFilters, getHarvestFilterOptions, getHarvestSources, getPlatforms, harvestProvider, IMMEDIATE_HARVEST_ENABLED, MAX_HARVEST_LIMIT, nextBogotaDate } from "@/features/admin/harvesting/harvesting";
+import HarvestSelectionFields, { useHarvestCountries } from "./HarvestSelectionFields";
 import HarvestSourceOption from "./HarvestSourceOption";
 import HarvestScheduleRuns from "./HarvestScheduleRuns";
 import { useHarvestingApi } from "./HarvestingProvider";
@@ -17,6 +20,7 @@ const frequencies = [
 ];
 const panelClasses = "flex flex-col gap-3 rounded-xl border border-[#DCE0E5] bg-white p-5";
 const headingClasses = "text-[21px] leading-7 font-semibold min-[541px]:text-2xl min-[541px]:leading-8";
+const PROVIDER_LABELS = { openalex: "OpenAlex", doaj: "DOAJ" };
 const radioClasses = "size-[13px] accent-[#A90D27] focus-visible:outline-2 focus-visible:outline-offset-3 focus-visible:outline-primary";
 
 export default function HarvestForm() {
@@ -31,6 +35,7 @@ export default function HarvestForm() {
   const [mode, setMode] = useState("scheduled");
   const [startDate, setStartDate] = useState("");
   const [frequency, setFrequency] = useState("weekly");
+  const [selectionValues, setSelectionValues] = useState(EMPTY_SELECTION_VALUES);
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
   const [created, setCreated] = useState(null);
@@ -38,6 +43,11 @@ export default function HarvestForm() {
   const [canRetryPreparation, setCanRetryPreparation] = useState(false);
   const [runsRevision, setRunsRevision] = useState(0);
   const requestPending = useRef(false);
+  const filterOptions = useQuery({
+    queryKey: queryKeys.harvests.filterOptions,
+    queryFn: ({ signal }) => getHarvestFilterOptions(signal),
+    staleTime: 10 * 60 * 1000,
+  });
 
   useEffect(() => {
     const controller = new AbortController();
@@ -97,7 +107,8 @@ export default function HarvestForm() {
     }
     setError("");
     try {
-      const payload = buildSchedule({ platformId, limit, minutes, mode, startDate, frequency });
+      const selectionFilters = buildSelectionFilters(selectedProvider, selectionValues, filterOptions.data);
+      const payload = buildSchedule({ platformId, limit, minutes, mode, startDate, frequency, selectionFilters });
       requestPending.current = true;
       setSaving(true);
       const schedule = await createSchedule(payload);
@@ -112,6 +123,10 @@ export default function HarvestForm() {
   }
 
   const selectedSource = sources.find((item) => String(item.id) === platformId);
+  const selectedProvider = harvestProvider(selectedSource);
+  const filtersReady = Boolean(filterOptions.data);
+  const countries = useHarvestCountries(filterOptions.data, Boolean(created?.selection_filters?.country_code));
+  const countryNames = new Map((countries.data || []).map((country) => [country.abbreviation.trim().toUpperCase(), country.name]));
 
   return (
     <div className="flex-1 bg-[#F7F8FA] font-sans text-sm leading-[22px] text-[#171A1F]">
@@ -126,17 +141,31 @@ export default function HarvestForm() {
               {sourceError && <Notice variant="error" live>{sourceError}</Notice>}
               {!loading && !sourceError && !sources.length && <Notice>No hay bases de datos habilitadas para cosecha.</Notice>}
               <div className="grid grid-cols-1 gap-3 min-[541px]:grid-cols-2 min-[901px]:grid-cols-4" role="radiogroup" aria-labelledby="source-title">
-                {sources.map((item) => <HarvestSourceOption key={item.id} source={item.name} value={String(item.id)} description="Habilitada para cosecha" checked={platformId === String(item.id)} onChange={() => setPlatformId(String(item.id))} />)}
+                {sources.map((item) => {
+                  const provider = harvestProvider(item);
+                  return <HarvestSourceOption key={item.id} source={item.name} value={String(item.id)} description={provider ? `Habilitada para cosecha · ${PROVIDER_LABELS[provider]}` : "Habilitada para cosecha"} checked={platformId === String(item.id)} onChange={() => setPlatformId(String(item.id))} />;
+                })}
               </div>
               {sources.length > 0 && <p className="text-xs text-[#68707C]">Se muestran únicamente bases de datos habilitadas para cosecha.</p>}
             </section>
+            {selectedSource && <section className={panelClasses} aria-labelledby="selection-title" aria-busy={filterOptions.isPending}>
+              <h2 id="selection-title" className={headingClasses}>Selección de revistas</h2>
+              <p className="text-xs text-[#68707C]">Opcional. Sin filtros se continúa el recorrido global de {selectedSource.name}. Los filtros se combinan entre sí (todos deben cumplirse) y cada combinación conserva su propio punto de avance. Para cosechar varios proveedores con filtros distintos, crea una programación por proveedor.</p>
+              {filterOptions.isPending && <Notice live>Cargando filtros disponibles…</Notice>}
+              {filterOptions.isError && <Notice variant="error" live>
+                No se pudieron cargar los filtros de selección. {filterOptions.error?.message}
+                <Button variant="quiet" size="small" disabled={filterOptions.isFetching} onClick={() => filterOptions.refetch()}>Reintentar filtros</Button>
+              </Notice>}
+              {filtersReady && <HarvestSelectionFields idPrefix="harvest-selection" provider={selectedProvider} options={filterOptions.data} values={selectionValues} onChange={setSelectionValues} />}
+            </section>}
             <section className={panelClasses} aria-labelledby="limits-title">
               <h2 id="limits-title" className={headingClasses}>Límites de ejecución</h2>
               <div className="grid grid-cols-1 gap-4 min-[541px]:grid-cols-2">
-                <FormField id="harvest-limit" label="Límite máximo de revistas" type="number" min="1" max={MAX_HARVEST_LIMIT} step="1" value={limit} onChange={(event) => setLimit(event.target.value)} suffix="revistas" />
+                <FormField id="harvest-limit" label="Límite de registros examinados" type="number" min="1" max={MAX_HARVEST_LIMIT} step="1" value={limit} onChange={(event) => setLimit(event.target.value)} suffix="registros" />
                 <FormField id="harvest-minutes" label="Límite de tiempo" type="number" min="1" max={MAX_HARVEST_LIMIT} step="1" value={minutes} onChange={(event) => setMinutes(event.target.value)} suffix="minutos" />
               </div>
               <p className="text-xs text-[#68707C]">Indica al menos un límite. Si completas ambos, la cosecha se detiene al alcanzar el primero.</p>
+              <p className="text-xs text-[#68707C]">El límite cuenta registros examinados (agregados, actualizados, fallidos y omitidos), no revistas nuevas ni coincidencias. Con filtros DOAJ, un límite de 100 puede terminar sin coincidencias; la siguiente ejecución de la misma selección continúa donde quedó. Se recomienda definir también un límite de tiempo.</p>
             </section>
             <section className={panelClasses} aria-labelledby="schedule-title">
               <h2 id="schedule-title" className={headingClasses}>Programación</h2>
@@ -154,12 +183,12 @@ export default function HarvestForm() {
           {sourceError && <Button variant="quiet" className="self-start" onClick={() => { setLoading(true); setRevision((current) => current + 1); }}>Reintentar carga</Button>}
           <div className="flex flex-wrap items-center gap-3">
             <Button href="/admin/cosecha" variant="quiet" className="w-full min-w-[140px] min-[541px]:w-auto">{created ? "Ver cosechas" : "Cancelar"}</Button>
-            {!created && <Button type="submit" disabled={loading || saving || Boolean(sourceError) || !selectedSource || (mode === "now" && !IMMEDIATE_HARVEST_ENABLED)} className="w-full min-w-[210px] min-[541px]:w-auto">{saving ? "Guardando…" : mode === "scheduled" ? "Programar cosecha" : "Guardar cosecha"}</Button>}
+            {!created && <Button type="submit" disabled={loading || saving || Boolean(sourceError) || !selectedSource || !filtersReady || (mode === "now" && !IMMEDIATE_HARVEST_ENABLED)} className="w-full min-w-[210px] min-[541px]:w-auto">{saving ? "Guardando…" : mode === "scheduled" ? "Programar cosecha" : "Guardar cosecha"}</Button>}
             {created && canRetryPreparation && <Button disabled={saving || !IMMEDIATE_HARVEST_ENABLED} onClick={retryPreparation}>{saving ? "Preparando…" : "Reintentar preparación"}</Button>}
-            {created && <Button disabled={saving} onClick={() => { setCreated(null); setExecutionFeedback(null); setCanRetryPreparation(false); setStartDate(nextBogotaDate()); }} className="w-full min-[541px]:w-auto">Crear otra cosecha</Button>}
+            {created && <Button disabled={saving} onClick={() => { setCreated(null); setExecutionFeedback(null); setSelectionValues(EMPTY_SELECTION_VALUES); setCanRetryPreparation(false); setStartDate(nextBogotaDate()); }} className="w-full min-[541px]:w-auto">Crear otra cosecha</Button>}
           </div>
           {error && <Notice variant="error" live>{error}</Notice>}
-          {created && <Notice variant="success" live>Programación #{created.id} guardada. Inicio: {formatDate(created.start_date)} (America/Bogota). {created.frequency === "once" ? "Consulta abajo el estado de la ejecución." : "El backend ejecutará la cosecha en la fecha programada."} Guardar la programación no significa que la cosecha haya terminado.</Notice>}
+          {created && <Notice variant="success" live>Programación #{created.id} guardada. Selección: {formatSelectionFilters(created.selection_filters, countryNames)}. Inicio: {formatDate(created.start_date)} (America/Bogota). {created.frequency === "once" ? "Consulta abajo el estado de la ejecución." : "El backend ejecutará la cosecha en la fecha programada."} Guardar la programación no significa que la cosecha haya terminado.</Notice>}
           {created && saving && <Notice live>Preparando la programación…</Notice>}
           {executionFeedback && <Notice variant={executionFeedback.variant} live>{executionFeedback.message}</Notice>}
         </form>

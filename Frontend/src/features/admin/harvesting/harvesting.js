@@ -10,7 +10,7 @@ const FIELD_NAMES = {
   platforms: "Plataformas",
   frequency: "Frecuencia",
   start_date: "Fecha inicial",
-  max_quantity: "Límite de revistas",
+  max_quantity: "Límite de registros examinados",
   stop_after_minutes: "Límite de tiempo",
   delete_explanation: "Motivo de desactivación",
   url: "URL",
@@ -24,6 +24,11 @@ const FIELD_NAMES = {
   status_code: "Código de estado",
   record: "Registro",
   records: "Registros",
+  selection_filters: "Selección de revistas",
+  country_code: "País",
+  publisher: "Editorial",
+  subject: "Tema",
+  language: "Idioma",
 };
 
 // Harvest workers can return plain text, objects or serialized JSON in error_message.
@@ -54,11 +59,12 @@ export function formatHarvestError(value) {
 }
 
 export class ApiError extends Error {
-  constructor(message, status, payload) {
+  constructor(message, status, payload, retryAfter = null) {
     super(message);
     this.name = "ApiError";
     this.status = status;
     this.payload = payload;
+    this.retryAfter = retryAfter;
   }
 }
 
@@ -77,15 +83,15 @@ async function request(path, { method = "GET", body, signal, timeoutMs = 30000, 
   // Session cookies belong to Next.js. Reads use its proxy; mutations use the
   // Server Action that forwards the session and obtains the backend CSRF token.
   if (method !== "GET") {
-    const { status, data } = await mutateAction(path, method, body);
+    const { status, data, retryAfter } = await mutateAction(path, method, body);
     if (status < 200 || status >= 300) {
       const message = errorMessage(data, status);
       if (status === 401 && !shouldSkipSessionExpiredAlert(path)) {
         notifySessionExpired(message, { endpoint: path, status });
       }
-      throw new ApiError(message, status, data);
+      throw new ApiError(message, status, data, retryAfter ?? null);
     }
-    if (!expectJson) return;
+    if (!expectJson) return { status };
     if (data === null) throw new Error("La API devolvió una respuesta que no se pudo leer.");
     return data;
   }
@@ -242,6 +248,111 @@ export function getHarvestSources(platforms) {
   return platforms.filter((platform) => platform.is_harvestable === true);
 }
 
+/* ---------- Selección dirigida de revistas (selection_filters) ---------- */
+
+export const SELECTION_TEXT_MAX_LENGTH = 120;
+export const EMPTY_SELECTION_VALUES = { country_code: "", title: "", publisher: "", subject: "", language: "" };
+const SELECTION_LABELS = { country_code: "País", title: "Título", publisher: "Editorial", subject: "Tema", language: "Idioma" };
+const COUNTRY_CODE_PATTERN = /^[A-Za-z]{2}$/;
+
+/** Contrato estático de filtros por proveedor (no consulta APIs externas). */
+export function getHarvestFilterOptions(signal) {
+  return request("/api/harvesting/schedules/filter-options/", { signal });
+}
+
+/**
+ * Catálogo Country completo, solo con abreviaturas ISO de dos letras (las
+ * únicas válidas para `country_code`). El endpoint lo indica filter-options.
+ */
+export async function getHarvestCountries(endpoint = "/api/catalog/countries/", signal) {
+  // Solo se aceptan rutas relativas de la API: nunca se consulta otro origen.
+  const path = typeof endpoint === "string" && /^\/api\/[\w/-]+\/$/.test(endpoint) ? endpoint : "/api/catalog/countries/";
+  const countries = await listAll(path, { ordering: "name" }, signal);
+  return countries.filter((country) => COUNTRY_CODE_PATTERN.test(String(country.abbreviation ?? "").trim()));
+}
+
+/**
+ * Proveedor del conector según la configuración de la plataforma (mismo
+ * criterio que el backend), nunca según su ID numérico.
+ */
+export function harvestProvider(platform) {
+  if (!platform) return null;
+  const name = String(platform.name ?? "").toLowerCase();
+  const baseUrl = String(platform.base_api_url ?? "").toLowerCase();
+  let path = "";
+  try {
+    path = baseUrl ? new URL(baseUrl).pathname.replace(/\/+$/, "") : "";
+  } catch {
+    path = "";
+  }
+  if (name.includes("doaj") || (baseUrl.includes("doaj.org") && path.endsWith("/oai"))) return "doaj";
+  if (name.includes("openalex") || baseUrl.includes("openalex.org")) return "openalex";
+  return null;
+}
+
+/** Campos admitidos por un proveedor según filter-options. */
+export function selectionFieldsFor(provider, options) {
+  const fields = provider && options?.[provider];
+  return fields && typeof fields === "object" ? Object.keys(fields).filter((field) => field in EMPTY_SELECTION_VALUES) : [];
+}
+
+/**
+ * selection_filters con solo los campos activos del proveedor. `{}` conserva
+ * el recorrido global. La normalización definitiva la hace el backend.
+ */
+export function buildSelectionFilters(provider, values, options) {
+  const selection = {};
+  for (const field of selectionFieldsFor(provider, options)) {
+    const value = String(values?.[field] ?? "").trim();
+    if (!value) continue;
+    if (value.length > SELECTION_TEXT_MAX_LENGTH) {
+      throw new Error(`${SELECTION_LABELS[field]}: usa como máximo ${SELECTION_TEXT_MAX_LENGTH} caracteres.`);
+    }
+    if (field === "country_code") {
+      if (!COUNTRY_CODE_PATTERN.test(value)) throw new Error("País: selecciona un país del catálogo con código ISO de dos letras.");
+      selection.country_code = value.toUpperCase();
+    } else {
+      selection[field] = value;
+    }
+  }
+  return selection;
+}
+
+/** Valores del formulario a partir de una selección guardada. */
+export function selectionValuesFrom(filters) {
+  const values = { ...EMPTY_SELECTION_VALUES };
+  if (filters && typeof filters === "object") {
+    Object.keys(values).forEach((field) => {
+      if (typeof filters[field] === "string") values[field] = field === "country_code" ? filters[field].toUpperCase() : filters[field];
+    });
+  }
+  return values;
+}
+
+/** Texto legible de una selección; `{}` o vacío es el recorrido global. */
+export function formatSelectionFilters(filters, countryNames) {
+  if (!filters || typeof filters !== "object" || !Object.keys(filters).length) return "Recorrido global";
+  return Object.entries(filters).map(([field, value]) => {
+    if (!(field in SELECTION_LABELS)) return `${field}: ${String(value)} (filtro retirado)`;
+    const shown = field === "country_code" ? countryNames?.get(String(value).toUpperCase()) || String(value).toUpperCase() : String(value);
+    return `${SELECTION_LABELS[field]}: ${shown}`;
+  }).join(" · ");
+}
+
+export function hasRetiredSelectionFilters(filters) {
+  return Boolean(filters && typeof filters === "object" && Object.keys(filters).some((field) => !(field in SELECTION_LABELS)));
+}
+
+/** Permiso para despachar programaciones vencidas (POST run-due). */
+export function canRunDueSchedules(user) {
+  return Boolean(user?.is_superadmin || user?.effective_permissions?.harvesting?.schedules?.run_due);
+}
+
+/** Permiso para editar programaciones (PATCH). */
+export function canUpdateSchedules(user) {
+  return Boolean(user?.is_superadmin || user?.effective_permissions?.harvesting?.schedules?.update);
+}
+
 function checkPlatformLink(platformId, url, mutateAction) {
   return request(`/api/platforms/${platformId}/check-link/`, {
     method: "POST",
@@ -266,6 +377,14 @@ function checkFailedLinksAsync(mutateAction) {
 
 function createSchedule(payload, mutateAction) {
   return request("/api/harvesting/schedules/", { method: "POST", body: payload }, mutateAction);
+}
+
+// PATCH solo con selection_filters: `{}` cambia las ejecuciones futuras al recorrido global.
+function updateScheduleSelection(id, selectionFilters, mutateAction) {
+  return request(`/api/harvesting/schedules/${id}/`, {
+    method: "PATCH",
+    body: { selection_filters: selectionFilters },
+  }, mutateAction);
 }
 
 function deactivateSchedule(id, explanation, mutateAction) {
@@ -293,7 +412,28 @@ function prepareImmediateSchedule(schedule, mutateAction) {
 
 function runDueSchedules(mutateAction) {
   // Accept successful responses without a body; execution state comes from GET /harvests/.
+  // 202 confirma un despacho; 200 puede indicar que no había nuevas ejecuciones.
   return request("/api/harvesting/schedules/run-due/", { method: "POST", expectJson: false }, mutateAction);
+}
+
+/** Mensaje para el resultado de run-due: un despacho no es una cosecha terminada. */
+export function runDueFeedback(result) {
+  if (result?.status === 202) {
+    return { variant: "neutral", message: "Despacho solicitado. Las cosechas se procesan en segundo plano: consulta su estado en las ejecuciones; esto no significa que hayan terminado." };
+  }
+  return { variant: "neutral", message: "Solicitud procesada. Puede que no hubiera nuevas ejecuciones vencidas; consulta el estado actualizado en las ejecuciones." };
+}
+
+/** Mensaje de error de run-due, respetando Retry-After en 425. */
+export function runDueErrorMessage(error) {
+  if (error?.status === 425) {
+    const wait = Number.isFinite(error.retryAfter) && error.retryAfter > 0 ? ` Espera ${error.retryAfter} segundos antes de reintentar.` : " Espera unos segundos antes de reintentar.";
+    return `${error.message}${wait}`;
+  }
+  if (error?.status === 401 || error?.status === 403) {
+    return `${error.message} Ejecutar programaciones vencidas requiere el permiso «Ejecutar pendientes» de cosecha.`;
+  }
+  return error?.message || "No se pudo solicitar la ejecución.";
 }
 
 function pauseHarvest(id, mutateAction) {
@@ -311,6 +451,7 @@ export function createHarvestingApi(mutateAction) {
     checkAllLinksAsync: () => checkAllLinksAsync(mutateAction),
     checkFailedLinksAsync: () => checkFailedLinksAsync(mutateAction),
     createSchedule: (payload) => createSchedule(payload, mutateAction),
+    updateScheduleSelection: (id, selectionFilters) => updateScheduleSelection(id, selectionFilters, mutateAction),
     deactivateSchedule: (id, explanation) => deactivateSchedule(id, explanation, mutateAction),
     prepareImmediateSchedule: (schedule) => prepareImmediateSchedule(schedule, mutateAction),
     runDueSchedules: () => runDueSchedules(mutateAction),
@@ -319,7 +460,7 @@ export function createHarvestingApi(mutateAction) {
   };
 }
 
-export function buildSchedule({ platformId, limit, minutes, mode, startDate, frequency }, now = new Date()) {
+export function buildSchedule({ platformId, limit, minutes, mode, startDate, frequency, selectionFilters = {} }, now = new Date()) {
   const maxQuantity = limit === "" ? null : Number(limit);
   const stopAfterMinutes = minutes === "" ? null : Number(minutes);
   for (const value of [maxQuantity, stopAfterMinutes]) {
@@ -341,6 +482,7 @@ export function buildSchedule({ platformId, limit, minutes, mode, startDate, fre
     start_date: start.toISOString(),
     max_quantity: maxQuantity,
     stop_after_minutes: stopAfterMinutes,
+    selection_filters: selectionFilters,
   };
 }
 

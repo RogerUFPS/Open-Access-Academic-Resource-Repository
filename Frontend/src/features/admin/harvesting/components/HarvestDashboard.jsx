@@ -8,20 +8,28 @@ import Button from "@/shared/components/Button";
 import FormField from "@/shared/components/FormField";
 import MetricCard from "@/shared/components/MetricCard";
 import Notice from "@/shared/components/Notice";
-import { formatDate, getHarvests, getHarvestSourceCount, getUpcomingSchedules } from "@/features/admin/harvesting/harvesting";
+import { buildSelectionFilters, canRunDueSchedules, canUpdateSchedules, formatDate, formatSelectionFilters, getHarvestFilterOptions, getHarvests, getHarvestSourceCount, getPlatforms, getUpcomingSchedules, harvestProvider, hasRetiredSelectionFilters, runDueErrorMessage, runDueFeedback, selectionValuesFrom } from "@/features/admin/harvesting/harvesting";
+import { useAccountsApi } from "@/shared/components/AccountsProvider";
 import HarvestExecutions from "./HarvestExecutions";
+import HarvestSelectionFields, { useHarvestCountries } from "./HarvestSelectionFields";
 import { useHarvestingApi } from "./HarvestingProvider";
 import { clampPage, sanitizePageValue } from "@/shared/utils/pagination";
 
 const FREQUENCIES = { once: "Única", daily: "Diaria", weekly: "Semanal", monthly: "Mensual" };
 const SCHEDULE_PAGE_SIZE = 10;
 
-const scheduleColumns = [
-  { key: "platforms", label: "FUENTES", width: "25%", render: (row) => row.platform_names?.join(", ") || row.platforms.map((id) => `Plataforma ${id}`).join(", ") },
-  { key: "frequency", label: "FRECUENCIA", width: "15%", render: (row) => FREQUENCIES[row.frequency] || row.frequency },
-  { key: "start_date", label: "FECHA INICIAL", width: "20%", muted: true, render: (row) => formatDate(row.start_date) },
-  { key: "limits", label: "LÍMITES POR FUENTE", width: "25%", render: (row) => [
-    row.max_quantity == null ? null : `${row.max_quantity} revistas`,
+const scheduleColumns = (countryNames) => [
+  { key: "platforms", label: "FUENTES", width: "18%", render: (row) => row.platform_names?.join(", ") || row.platforms.map((id) => `Plataforma ${id}`).join(", ") },
+  { key: "selection", label: "SELECCIÓN", width: "20%", render: (row) => (
+    <div>
+      <span className="[overflow-wrap:anywhere]">{formatSelectionFilters(row.selection_filters, countryNames)}</span>
+      {hasRetiredSelectionFilters(row.selection_filters) && <span className="mt-1 block text-xs leading-[18px] text-[#820A1F]">Contiene filtros retirados: sus ejecuciones fallarán hasta editar la selección.</span>}
+    </div>
+  ) },
+  { key: "frequency", label: "FRECUENCIA", width: "11%", render: (row) => FREQUENCIES[row.frequency] || row.frequency },
+  { key: "start_date", label: "FECHA INICIAL", width: "16%", muted: true, render: (row) => formatDate(row.start_date) },
+  { key: "limits", label: "LÍMITES POR FUENTE", width: "17%", render: (row) => [
+    row.max_quantity == null ? null : `${row.max_quantity} registros examinados`,
     row.stop_after_minutes == null ? null : `${row.stop_after_minutes} minutos`,
   ].filter(Boolean).join(" · ") },
 ];
@@ -46,7 +54,8 @@ function useHarvestData(queryKey, loadData, refetchInterval = false) {
 
 export default function HarvestDashboard() {
   const queryClient = useQueryClient();
-  const { deactivateSchedule, runDueSchedules } = useHarvestingApi();
+  const { deactivateSchedule, runDueSchedules, updateScheduleSelection } = useHarvestingApi();
+  const accountsApi = useAccountsApi();
   const [page, setPage] = useState(1);
   const [pageInput, setPageInput] = useState("1");
   const [schedulePage, setSchedulePage] = useState(1);
@@ -57,13 +66,36 @@ export default function HarvestDashboard() {
   const [explanation, setExplanation] = useState("");
   const [deactivating, setDeactivating] = useState(false);
   const [scheduleFeedback, setScheduleFeedback] = useState(null);
+  const [editingSchedule, setEditingSchedule] = useState(null);
+  const [editValues, setEditValues] = useState(null);
+  const [editSaving, setEditSaving] = useState(false);
+  const [editError, setEditError] = useState("");
   const requestPending = useRef(false);
+
+  const viewer = useQuery({ queryKey: queryKeys.accounts.viewer, queryFn: ({ signal }) => accountsApi.me(signal) });
+  const canRunDue = canRunDueSchedules(viewer.data);
+  const canEditSelection = canUpdateSchedules(viewer.data);
+  const filterOptions = useQuery({
+    queryKey: queryKeys.harvests.filterOptions,
+    queryFn: ({ signal }) => getHarvestFilterOptions(signal),
+    staleTime: 10 * 60 * 1000,
+  });
+  // Las plataformas solo se consultan al editar: el proveedor sale de su configuración.
+  const platforms = useQuery({
+    queryKey: queryKeys.harvests.platforms,
+    queryFn: ({ signal }) => getPlatforms(signal),
+    enabled: Boolean(editingSchedule),
+    staleTime: 5 * 60 * 1000,
+  });
 
   const harvests = useHarvestData(queryKeys.harvests.list(page), (signal) => getHarvests(page, signal), (data) => (
     executing || data?.results.some((row) => ["pending", "running", "pausing"].includes(row.state)) ? 5000 : 30000
   ));
   const upcomingSchedules = useHarvestData(queryKeys.harvests.schedules, getUpcomingSchedules, 30000);
   const sources = useHarvestData(queryKeys.harvests.sourceCount, getHarvestSourceCount);
+  const usesCountries = [...(harvests.data?.results || []), ...(upcomingSchedules.data || [])].some((row) => row.selection_filters?.country_code);
+  const countries = useHarvestCountries(filterOptions.data, usesCountries);
+  const countryNames = new Map((countries.data || []).map((country) => [country.abbreviation.trim().toUpperCase(), country.name]));
 
   // Tras una acción se revalidan todas las páginas de ejecuciones en caché.
   const refreshHarvests = () => queryClient.invalidateQueries({ queryKey: queryKeys.harvests.lists });
@@ -77,15 +109,14 @@ export default function HarvestDashboard() {
   }
 
   async function executeDue() {
-    if (requestPending.current || harvests.loading || upcomingSchedules.loading) return;
+    if (requestPending.current || harvests.loading || upcomingSchedules.loading || !canRunDue) return;
     requestPending.current = true;
     setExecuting(true);
     setExecutionFeedback(null);
     try {
-      await runDueSchedules();
-      setExecutionFeedback({ variant: "neutral", message: "Solicitud de ejecución procesada. Consulta el estado actualizado en las ejecuciones." });
+      setExecutionFeedback(runDueFeedback(await runDueSchedules()));
     } catch (error) {
-      setExecutionFeedback({ variant: "error", message: error.message });
+      setExecutionFeedback({ variant: "error", message: runDueErrorMessage(error) });
     } finally {
       requestPending.current = false;
       setExecuting(false);
@@ -117,13 +148,64 @@ export default function HarvestDashboard() {
     }
   }
 
-  const columns = [...scheduleColumns, {
-    key: "actions", label: "ACCIONES", width: "15%", render: (row) => (
-      <Button variant="quiet" size="small" disabled={upcomingSchedules.loading || Boolean(upcomingSchedules.error) || executing || deactivating} aria-label={`Desactivar programación #${row.id}`} onClick={() => {
-        setSelectedSchedule(row);
-        setExplanation("");
-        setScheduleFeedback(null);
-      }}>Desactivar</Button>
+  // Proveedores de la programación editada; la selección debe ser compatible con todos.
+  const editProviders = editingSchedule && platforms.data
+    ? [...new Set(editingSchedule.platforms.map((id) => harvestProvider(platforms.data.find((platform) => platform.id === id))))]
+    : [];
+  const editProvider = editProviders.length === 1 ? editProviders[0] : null;
+
+  function openEdit(row) {
+    setSelectedSchedule(null);
+    setEditingSchedule(row);
+    setEditValues(selectionValuesFrom(row.selection_filters));
+    setEditError("");
+    setScheduleFeedback(null);
+  }
+
+  function closeEdit() {
+    setEditingSchedule(null);
+    setEditValues(null);
+    setEditError("");
+  }
+
+  async function saveSelection(event, globalOnly = false) {
+    event?.preventDefault();
+    if (requestPending.current || !editingSchedule || !filterOptions.data || !platforms.data) return;
+    setEditError("");
+    let selection;
+    try {
+      selection = globalOnly ? {} : buildSelectionFilters(editProvider, editValues, filterOptions.data);
+    } catch (error) {
+      setEditError(error.message);
+      return;
+    }
+    requestPending.current = true;
+    setEditSaving(true);
+    try {
+      const updated = await updateScheduleSelection(editingSchedule.id, selection);
+      setScheduleFeedback({ variant: "success", message: `Selección de la programación #${editingSchedule.id} actualizada: ${formatSelectionFilters(updated?.selection_filters ?? selection, countryNames)}. Aplica a ejecuciones futuras; las ejecuciones existentes conservan su selección.` });
+      closeEdit();
+    } catch (error) {
+      setEditError(error.message);
+    } finally {
+      requestPending.current = false;
+      setEditSaving(false);
+      upcomingSchedules.refresh();
+    }
+  }
+
+  const scheduleBusy = upcomingSchedules.loading || Boolean(upcomingSchedules.error) || executing || deactivating || editSaving;
+  const columns = [...scheduleColumns(countryNames), {
+    key: "actions", label: "ACCIONES", width: "18%", render: (row) => (
+      <div className="flex flex-wrap gap-2">
+        {canEditSelection && <Button variant="quiet" size="small" disabled={scheduleBusy} aria-label={`Editar selección de la programación #${row.id}`} onClick={() => openEdit(row)}>Editar selección</Button>}
+        <Button variant="quiet" size="small" disabled={scheduleBusy} aria-label={`Desactivar programación #${row.id}`} onClick={() => {
+          closeEdit();
+          setSelectedSchedule(row);
+          setExplanation("");
+          setScheduleFeedback(null);
+        }}>Desactivar</Button>
+      </div>
     ),
   }];
 
@@ -194,7 +276,7 @@ export default function HarvestDashboard() {
           </div>
           {harvests.loading && <Notice live>Cargando ejecuciones…</Notice>}
           {harvests.error && <Notice variant="error" live>{harvests.error}</Notice>}
-          {showHarvests && <HarvestExecutions rows={runs} onRefresh={refreshHarvests}busy={harvests.loading || Boolean(harvests.error)} />}
+          {showHarvests && <HarvestExecutions rows={runs} onRefresh={refreshHarvests} busy={harvests.loading || Boolean(harvests.error)} countryNames={countryNames} />}
           {showHarvests && harvests.data.total_pages > 1 && <div className="flex flex-wrap items-center gap-3">
             <Button variant="quiet" size="small" disabled={harvests.loading || page <= 1} onClick={() => changePage(page - 1)}>Anterior</Button>
             <label className="flex items-center gap-2 text-sm text-[#68707C]">
@@ -224,15 +306,33 @@ export default function HarvestDashboard() {
         <section className="flex flex-col gap-3.5 rounded-xl border border-[#DCE0E5] bg-white p-5" aria-labelledby="schedules-title" aria-busy={upcomingSchedules.loading}>
           <div className="flex flex-wrap items-center justify-between gap-3">
             <h2 id="schedules-title" className="text-[21px] leading-7 font-semibold min-[541px]:text-2xl min-[541px]:leading-8">Programaciones</h2>
-            <Button size="small" disabled={harvests.loading || upcomingSchedules.loading || executing || deactivating} onClick={executeDue}>{executing ? "Ejecutando…" : "Ejecutar cosechas manualmente"}</Button>
+            <Button size="small" disabled={!canRunDue || harvests.loading || upcomingSchedules.loading || executing || deactivating || editSaving} title={canRunDue ? undefined : "Requiere el permiso «Ejecutar pendientes» de cosecha"} onClick={executeDue}>{executing ? "Ejecutando…" : "Ejecutar programaciones vencidas"}</Button>
           </div>
           <p className="text-xs text-[#68707C]">Se muestran las programaciones únicas que todavía no se han lanzado y las recurrentes para sus próximas ejecuciones.</p>
-          <p className="text-xs text-[#68707C]">Inicia ahora todas las programaciones activas cuya fecha ya venció, incluidas las de otras páginas. Las programaciones futuras conservan su fecha.</p>
+          <p className="text-xs text-[#68707C]">Guardar una programación no la ejecuta. «Ejecutar programaciones vencidas» despacha ahora todas las programaciones activas cuya fecha ya venció, incluidas las de otras páginas; las futuras conservan su fecha. El despacho encola el trabajo y no significa que la cosecha haya terminado.</p>
+          {viewer.data && !canRunDue && <p className="text-xs text-[#68707C]">Tu cuenta no tiene el permiso «Ejecutar pendientes» de cosecha: las programaciones se ejecutarán en su fecha mediante el programador del servidor.</p>}
           {executionFeedback && <Notice variant={executionFeedback.variant} live>{executionFeedback.message}</Notice>}
           {upcomingSchedules.loading && <Notice live>Cargando programaciones…</Notice>}
           {upcomingSchedules.error && <Notice variant="error" live>{upcomingSchedules.error}</Notice>}
           {scheduleFeedback && <Notice variant={scheduleFeedback.variant} live>{scheduleFeedback.message}</Notice>}
           {upcomingSchedules.data && (schedules.length ? <AdminTable caption="Programaciones de cosecha pendientes y recurrentes" columns={columns} rows={schedules} /> : <Notice>No hay programaciones pendientes de cosecha.</Notice>)}
+          {editingSchedule && editValues && <form onSubmit={saveSelection} onChange={() => setEditError("")} className="flex flex-col gap-3 rounded-lg border border-[#DCE0E5] p-4" aria-busy={editSaving || platforms.isPending || filterOptions.isPending}>
+            <p className="font-semibold">Editar selección de la programación #{editingSchedule.id}</p>
+            <p className="text-xs text-[#68707C]">{editingSchedule.platform_names?.join(", ")}. Selección actual: {formatSelectionFilters(editingSchedule.selection_filters, countryNames)}. El cambio aplica a ejecuciones futuras; las ejecuciones existentes (incluidas las pausadas) conservan su selección. Si hay una cosecha activa de esta plataforma, resuélvela primero: solo puede haber una cosecha activa por plataforma.</p>
+            {hasRetiredSelectionFilters(editingSchedule.selection_filters) && <Notice variant="error">Esta programación tiene filtros retirados (acceso abierto o pertenencia a DOAJ). Guarda una selección válida o usa el recorrido global para que sus ejecuciones vuelvan a funcionar.</Notice>}
+            {(platforms.isPending || filterOptions.isPending) && <Notice live>Cargando filtros disponibles…</Notice>}
+            {platforms.isError && <Notice variant="error" live>{platforms.error?.message} <Button variant="quiet" size="small" onClick={() => platforms.refetch()}>Reintentar</Button></Notice>}
+            {filterOptions.isError && <Notice variant="error" live>{filterOptions.error?.message} <Button variant="quiet" size="small" onClick={() => filterOptions.refetch()}>Reintentar</Button></Notice>}
+            {platforms.data && filterOptions.data && (editProviders.length > 1
+              ? <Notice>La programación incluye plataformas de proveedores distintos: solo admite el recorrido global. Para filtrar, crea programaciones separadas por proveedor.</Notice>
+              : <HarvestSelectionFields idPrefix={`schedule-${editingSchedule.id}-selection`} provider={editProvider} options={filterOptions.data} values={editValues} onChange={setEditValues} disabled={editSaving} />)}
+            {editError && <Notice variant="error" live>{editError}</Notice>}
+            <div className="flex flex-wrap gap-3">
+              {editProvider && editProviders.length === 1 && <Button type="submit" size="small" disabled={editSaving || !platforms.data || !filterOptions.data}>{editSaving ? "Guardando…" : "Guardar selección"}</Button>}
+              <Button variant="quiet" size="small" disabled={editSaving || !platforms.data || !filterOptions.data} onClick={() => saveSelection(null, true)}>Usar recorrido global</Button>
+              <Button variant="quiet" size="small" disabled={editSaving} onClick={closeEdit}>Cancelar</Button>
+            </div>
+          </form>}
           {selectedSchedule && <form onSubmit={deactivate} className="flex flex-col gap-3 rounded-lg border border-[#DCE0E5] p-4" aria-busy={deactivating}>
             <p className="font-semibold">Desactivar programación #{selectedSchedule.id}</p>
             <p className="text-xs text-[#68707C]">{selectedSchedule.platform_names?.join(", ")}. Esta programación dejará de generar nuevas ejecuciones. El motivo permite archivarla si tiene registros asociados.</p>

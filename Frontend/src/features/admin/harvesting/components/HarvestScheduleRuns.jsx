@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import Button from "@/shared/components/Button";
 import Notice from "@/shared/components/Notice";
-import { getScheduleHarvests, IMMEDIATE_HARVEST_ENABLED, SCHEDULE_HARVESTS_PAGE_SIZE } from "@/features/admin/harvesting/harvesting";
+import { getScheduleHarvests, IMMEDIATE_HARVEST_ENABLED, runDueErrorMessage, runDueFeedback, SCHEDULE_HARVESTS_PAGE_SIZE } from "@/features/admin/harvesting/harvesting";
 import { isMissingPage, readPage } from "@/shared/utils/pagination";
 import HarvestExecutions from "./HarvestExecutions";
 import { useHarvestingApi } from "./HarvestingProvider";
@@ -62,10 +62,9 @@ export default function HarvestScheduleRuns({ scheduleId, revision, busy }) {
     setExecuting(true);
     setExecutionFeedback(null);
     try {
-      await runDueSchedules();
-      setExecutionFeedback({ variant: "neutral", message: "Solicitud de ejecución procesada. Consulta el estado actualizado abajo." });
+      setExecutionFeedback(runDueFeedback(await runDueSchedules()));
     } catch (error) {
-      setExecutionFeedback({ variant: "error", message: error.message });
+      setExecutionFeedback({ variant: "error", message: runDueErrorMessage(error) });
     } finally {
       requestPending.current = false;
       setExecuting(false);
