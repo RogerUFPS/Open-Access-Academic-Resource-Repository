@@ -121,10 +121,10 @@ class AgentPublicSnapshotTests(APITestCase):
         self.assertEqual(response.data["schema_version"], 1)
         self.assertIn("public", response["Cache-Control"])
         self.assertTrue(response["ETag"])
-        self.assertEqual(
-            [item["id"] for item in response.data["plataformas"]],
-            [self.platform.id],
-        )
+        # Las migraciones también siembran una plataforma pública DOAJ.
+        platforms = {item["id"]: item for item in response.data["plataformas"]}
+        self.assertIn(self.platform.id, platforms)
+        self.assertNotIn(self.draft_platform.id, platforms)
         self.assertEqual(
             [item["id"] for item in response.data["revistas"]],
             [self.journal.id],
@@ -138,9 +138,9 @@ class AgentPublicSnapshotTests(APITestCase):
             response.data["revistas"][0]["tipos_documento"],
             ["articulo de revista"],
         )
-        self.assertEqual(response.data["plataformas"][0]["idioma_principal"], "es")
+        self.assertEqual(platforms[self.platform.id]["idioma_principal"], "es")
         self.assertEqual(
-            response.data["plataformas"][0]["valid_sintaxis"]["fields"]["title"],
+            platforms[self.platform.id]["valid_sintaxis"]["fields"]["title"],
             "ti({})",
         )
         self.assertEqual(

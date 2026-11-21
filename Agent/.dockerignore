@@ -1,12 +1,13 @@
 **/__pycache__/
 *.py[cod]
 .pytest_cache/
+.venv/
+**/.git/
 data/
 .env
 docs/
-references/
-SKILL.md
 README.md
 query_agent.sh
-docker-compose.yml
+.modal.toml
+Dockerfile.modal-cli
 tests/

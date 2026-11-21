@@ -4,6 +4,11 @@ from rest_framework.permissions import BasePermission
 CRUD = ("view", "create", "update", "delete", "restore")
 
 PERMISSION_MATRIX = {
+    "agent": {
+        "models": {"view": True, "update": True},
+        "conversations": {"view": True},
+        "analytics": {"view": True},
+    },
     "audit": {"logs": {"view": True}},
     "catalog": {
         resource: {action: True for action in CRUD}
@@ -75,6 +80,7 @@ PERMISSION_MATRIX = {
 }
 
 APP_PREFIXES = {
+    "agent": "agent",
     "catalog": "catalog",
     "journals": "journals",
     "platforms": "platforms",
@@ -99,6 +105,8 @@ SELF_ACCOUNT_PATHS = {
 }
 
 ACTION_NAMES = {
+    "switch": "update",
+    "cancel": "update",
     "invite": "invite",
     "publish": "publish",
     "deactivate": "deactivate",
@@ -208,7 +216,7 @@ class ApplicationPermission(BasePermission):
                 and request.session.get("superadmin_mfa_satisfied")
             )
 
-        if request.user and request.user.is_authenticated and request.user.pending_superadmin:
+        if request.user and request.user.is_authenticated and getattr(request.user, "pending_superadmin", False):
             if path == "/api/accounts/auth/me/":
                 return request.method == "GET"
             if path == "/api/accounts/password/change/":
@@ -276,6 +284,8 @@ class ApplicationPermission(BasePermission):
             if app == "catalog":
                 return tail[0]
             return tail[0]
+        if app == "agent":
+            return tail[0] if tail and tail[0] in {"models", "conversations", "analytics"} else None
         return None
 
     @staticmethod

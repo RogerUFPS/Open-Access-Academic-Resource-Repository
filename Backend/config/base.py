@@ -28,6 +28,7 @@ INSTALLED_APPS = [
 MIDDLEWARE = [
     "corsheaders.middleware.CorsMiddleware",
     'django.middleware.security.SecurityMiddleware',
+    'apps.agent.privacy.AnonymousChatMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
     'apps.core.middleware.ThrottledSessionRenewalMiddleware',
     'django.middleware.common.CommonMiddleware',

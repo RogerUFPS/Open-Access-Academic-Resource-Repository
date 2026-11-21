@@ -1,3 +1,8 @@
+x-backend-env: &backend-env
+  - path: ./Backend/.env
+  - path: ./Backend/.agent.env
+    required: false
+
 x-service: &service
   restart: unless-stopped
   init: true
@@ -15,6 +20,22 @@ x-service: &service
     - services
 
 services:
+  backend-tests:
+    profiles: [test]
+    image: harvest-backend
+    pull_policy: never
+    env_file: [./Backend/.env, ./Postgres/.env]
+    environment:
+      DJANGO_TESTING: "0"
+      DATABASE_POOL: "0"
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: "5432"
+      DATABASE_SSLMODE: disable
+    volumes:
+      - ./Backend:/app:ro
+    command: ["python", "manage.py", "test", "apps.agent", "apps.account.tests", "apps.scheduler.tests", "--noinput", "-v", "2"]
+    networks: [services]
+
   backend-init:
     <<: *service
     build: ./Backend
@@ -24,7 +45,7 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-    env_file: ./Backend/.env
+    env_file: *backend-env
     environment:
       DJANGO_DEBUG: ${DJANGO_DEBUG:-0}
       DATABASE_POOL: "0"
@@ -59,7 +80,7 @@ services:
         condition: service_completed_successfully
       rabbitmq:
         condition: service_healthy
-    env_file: ./Backend/.env
+    env_file: *backend-env
     environment:
       DJANGO_DEBUG: ${DJANGO_DEBUG:-0}
       DATABASE_POOL: ${DATABASE_POOL:-1}
@@ -73,7 +94,7 @@ services:
     depends_on:
       rabbitmq:
         condition: service_healthy
-    env_file: ./Backend/.env
+    env_file: *backend-env
     command: ["celery", "-A", "project", "worker",
               "--loglevel=INFO", "--queues=harvesting", "--concurrency=2"]
 
@@ -84,9 +105,35 @@ services:
     depends_on:
       rabbitmq:
         condition: service_healthy
-    env_file: ./Backend/.env
+    env_file: *backend-env
     command: ["celery", "-A", "project", "beat", "--loglevel=INFO",
               "--schedule=/tmp/celerybeat-schedule"]
+
+  agent-worker:
+    <<: *service
+    image: harvest-backend
+    pull_policy: never
+    depends_on:
+      backend-init:
+        condition: service_completed_successfully
+      rabbitmq:
+        condition: service_healthy
+    env_file: *backend-env
+    command: ["celery", "-A", "project", "worker", "--loglevel=WARNING",
+              "--queues=agent", "--concurrency=4", "--hostname=agent@%h"]
+
+  agent-control:
+    <<: *service
+    image: harvest-backend
+    pull_policy: never
+    depends_on:
+      backend-init:
+        condition: service_completed_successfully
+      rabbitmq:
+        condition: service_healthy
+    env_file: *backend-env
+    command: ["celery", "-A", "project", "worker", "--loglevel=WARNING",
+              "--queues=agent-control", "--concurrency=1", "--hostname=agent-control@%h"]
 
   frontend:
     <<: *service

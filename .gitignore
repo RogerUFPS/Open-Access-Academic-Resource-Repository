@@ -1,4 +1,6 @@
 **/.env
+Backend/.agent.env
 **/.env.*
 !**/.env.example
 ./docker-compose.dev.yml
+./Agent_N/
