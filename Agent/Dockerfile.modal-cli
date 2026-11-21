@@ -1,0 +1,6 @@
+FROM python:3.12-slim
+ENV PYTHONDONTWRITEBYTECODE=1 MODAL_CONFIG_PATH=/modal/config.toml
+WORKDIR /workspace
+COPY requirements-modal.txt /tmp/requirements-modal.txt
+RUN pip install --no-cache-dir -r /tmp/requirements-modal.txt
+ENTRYPOINT ["python", "-m", "modal"]

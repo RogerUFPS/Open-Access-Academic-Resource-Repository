@@ -1,0 +1,100 @@
+name: biblioteca-agent
+
+x-model-environment: &model-environment
+  env_file:
+    - ${MODEL_ENV_FILE:-deploy/models/qwen.env}
+
+services:
+  modal-cli:
+    profiles: [deploy]
+    build:
+      context: .
+      dockerfile: Dockerfile.modal-cli
+    <<: *model-environment
+    environment:
+      MODAL_CONFIG_PATH: /modal/config.toml
+      MODAL_GPU: ${MODAL_GPU:-}
+      MODAL_HF_SECRET: ${MODAL_HF_SECRET:-}
+    volumes:
+      - .:/workspace:ro
+      - modal-config:/modal
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    <<: *model-environment
+    environment:
+      AGENT_API_KEY: ${AGENT_API_KEY:-change-me-before-sharing}
+      AGENT_VLLM_BASE_URL: http://vllm:8000/v1
+      AGENT_VLLM_API_KEY: ${AGENT_VLLM_API_KEY:-local-compose}
+      AGENT_CATALOG_SNAPSHOT: ${AGENT_CATALOG_SNAPSHOT-/app/resources/catalog_snapshot.example.json}
+      AGENT_BACKEND_SNAPSHOT_URL: ${AGENT_BACKEND_SNAPSHOT_URL:-}
+      AGENT_BACKEND_CACHE_TTL: ${AGENT_BACKEND_CACHE_TTL:-300}
+      AUTO_INDEX_RAG: "true"
+      RAG_DB_PATH: /tmp/biblioteca/rag.sqlite3
+      AGENT_MAX_CONCURRENCY: ${AGENT_MAX_CONCURRENCY:-4}
+      AGENT_CONCURRENCY_WAIT_SECONDS: ${AGENT_CONCURRENCY_WAIT_SECONDS:-1.0}
+      VLLM_REQUEST_TIMEOUT_SECONDS: ${VLLM_REQUEST_TIMEOUT_SECONDS:-300}
+      VLLM_MAX_TOKENS: ${VLLM_MAX_TOKENS:-384}
+    depends_on:
+      vllm:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:${AGENT_PORT:-8001}:8000"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3)"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  vllm:
+    image: vllm/vllm-openai:v0.11.0
+    <<: *model-environment
+    environment:
+      AGENT_VLLM_API_KEY: ${AGENT_VLLM_API_KEY:-local-compose}
+      HF_TOKEN: ${HF_TOKEN:-}
+      HF_HOME: /root/.cache/huggingface
+      VLLM_MAX_MODEL_LEN: ${VLLM_MAX_MODEL_LEN:-8192}
+      VLLM_GPU_MEMORY_UTILIZATION: ${VLLM_GPU_MEMORY_UTILIZATION:-0.90}
+      VLLM_MAX_NUM_SEQS: ${VLLM_MAX_NUM_SEQS:-8}
+    entrypoint: ["python", "/opt/biblioteca/start_vllm.py"]
+    volumes:
+      - ./deploy:/opt/biblioteca:ro
+      - huggingface-cache:/root/.cache/huggingface
+    ipc: host
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3)"]
+      interval: 15s
+      timeout: 5s
+      retries: 30
+      start_period: 60s
+
+  tests:
+    profiles: [test]
+    build:
+      context: .
+      dockerfile: Dockerfile
+    <<: *model-environment
+    environment:
+      AGENT_VLLM_BASE_URL: http://vllm:8000/v1
+      AGENT_VLLM_API_KEY: local-compose
+      AGENT_CATALOG_SNAPSHOT: /app/resources/catalog_snapshot.example.json
+    command: ["python", "-m", "unittest", "discover", "-s", "tests", "-v"]
+    volumes:
+      - ./tests:/app/tests:ro
+      - ./deploy:/app/deploy:ro
+
+volumes:
+  huggingface-cache:
+  modal-config:

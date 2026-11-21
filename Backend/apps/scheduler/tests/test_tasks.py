@@ -101,6 +101,7 @@ class BeatScheduleTests(SimpleTestCase):
         self.assertEqual(
             set(schedule),
             {
+                "agent-reconcile-every-30s",
                 "harvesting-run-due-every-5m",
                 "platforms-check-links-every-4h",
                 "platforms-check-failed-links-every-15m",

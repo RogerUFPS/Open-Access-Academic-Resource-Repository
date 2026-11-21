@@ -1,19 +1,21 @@
-Launch the dockerfile with the next command:
+# Agente de Biblioteca
 
-`docker run -d -p 11434:11434 --name ollama-custom ollama-custom`
+Servicio FastAPI con clasificación vLLM, herramientas Python, YAKE y RAG SQLite
+FTS5. El mismo código corre en Docker local y Modal. La entrada pública es el
+Backend: conserva chats anónimos, permisos, estadísticas y modelo activo, y
+envía un snapshot inmutable del catálogo real.
 
-How to ask something to a model:
+- [Despliegue Modal y local](docs/despliegue_modal_y_local.md).
+- [API privada](docs/api.md).
+- [Arquitectura](docs/architecture.md).
+- [SKILL](SKILL.md).
+- Guía pública: `../guia_implementacion_chat.md` en el repo de Biblioteca.
 
-`docker exec -it <container_name> ollama run <modelo> "Message"`
+Pruebas automatizadas sin GPU:
 
-Stop a model when you want to change it:
+```bash
+docker compose --profile test run --build --rm --no-deps tests
+```
 
-`docker exec -it <container_name> ollama stop <model>`
-
-Idea of the proccess:
-
-1. Check knowledges areas and academic programs via API.
-2. Detect language and keywords that are related to those knowledge areas and academic programs.
-3. Check public platforms and journals that has those knowledge areas and academic programs via API.
-4. Check the ValidSintaxis of the platform via API.
-5. Generate 3 search strings with the titles of the journals, knowledge areas and academic program based on the top platforms that has most quantity of information related.
+Se mantienen las pruebas de regresión; se retiraron clientes shell y reportes
+manuales antiguos. No se eliminan pesos ni secretos.

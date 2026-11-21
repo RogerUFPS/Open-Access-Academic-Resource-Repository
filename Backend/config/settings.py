@@ -5,6 +5,7 @@ from django.core.exceptions import ImproperlyConfigured
 from dotenv import load_dotenv
 
 from .base import *
+from corsheaders.defaults import default_headers
 
 load_dotenv()
 
@@ -36,6 +37,8 @@ CORS_ALLOWED_ORIGINS = [
 
 CORS_ALLOW_ALL_ORIGINS = env_bool("CORS_ALLOW", False)
 CORS_ALLOW_CREDENTIALS = True
+CORS_ALLOW_HEADERS = (*default_headers, "x-chat-token")
+CORS_EXPOSE_HEADERS = ["Retry-After"]
 if not DEBUG and CORS_ALLOW_ALL_ORIGINS:
     raise ImproperlyConfigured(
         "CORS_ALLOW no puede habilitarse junto con credenciales en producción."
@@ -53,6 +56,9 @@ CELERY_BROKER_URL = os.getenv(
 )
 CELERY_TASK_DEFAULT_QUEUE = "harvesting"
 CELERY_TASK_ROUTES = {
+    "apps.agent.process_turn": {"queue": "agent"},
+    "apps.agent.advance_switch": {"queue": "agent-control"},
+    "apps.agent.reconcile": {"queue": "agent-control"},
     "apps.harvesting.process_harvest_step": {"queue": "harvesting"},
 }
 CELERY_TASK_SERIALIZER = "json"
@@ -64,6 +70,9 @@ CELERY_WORKER_PREFETCH_MULTIPLIER = 1
 CELERY_ENABLE_UTC = True
 CELERY_TIMEZONE = "UTC"
 CELERY_BEAT_SCHEDULE = {
+    "agent-reconcile-every-30s": {
+        "task": "apps.agent.reconcile", "schedule": 30.0,
+    },
     "harvesting-run-due-every-5m": {
         "task": "apps.scheduler.tasks.dispatch_http_job",
         "schedule": crontab(minute="*/5"),
@@ -84,6 +93,24 @@ SCHEDULER_API_URL = os.getenv("SCHEDULER_API_URL", "http://backend:8000")
 SCHEDULER_API_TOKEN = os.getenv("SCHEDULER_API_TOKEN", "")
 SCHEDULER_SERVICE_USER_ID = os.getenv("SCHEDULER_SERVICE_USER_ID", "")
 LINK_CHECK_BATCH_SIZE = max(1, int(os.getenv("LINK_CHECK_BATCH_SIZE", "50")))
+AGENT_SNAPSHOT_CACHE_SECONDS = max(
+    0, int(os.getenv("AGENT_SNAPSHOT_CACHE_SECONDS", "300"))
+)
+AGENT_DEFAULT_MODEL = os.getenv("AGENT_DEFAULT_MODEL", "qwen")
+if AGENT_DEFAULT_MODEL not in {"qwen", "glm", "llama"}:
+    raise ImproperlyConfigured("AGENT_DEFAULT_MODEL debe ser qwen, glm o llama.")
+AGENT_ENDPOINTS = {name: os.getenv(f"AGENT_{name.upper()}_URL", "").strip() for name in ("qwen", "glm", "llama")}
+AGENT_SERVICE_API_KEY = os.getenv("AGENT_SERVICE_API_KEY", "")
+AGENT_MODAL_KEY = os.getenv("AGENT_MODAL_KEY", "")
+AGENT_MODAL_SECRET = os.getenv("AGENT_MODAL_SECRET", "")
+AGENT_TIMEOUT_SECONDS = max(60, int(os.getenv("AGENT_TIMEOUT_SECONDS", "900")))
+AGENT_MAX_PENDING = max(1, int(os.getenv("AGENT_MAX_PENDING", "64")))
+
+LOGGING = {
+    "version": 1, "disable_existing_loggers": False,
+    "filters": {"anonymous_chat": {"()": "apps.agent.privacy.AnonymousAccessFilter"}},
+    "loggers": {name: {"filters": ["anonymous_chat"]} for name in ("uvicorn.access", "gunicorn.access", "django.server")},
+}
 LINK_FAILURE_FRONTEND_URL = os.getenv("LINK_FAILURE_FRONTEND_URL", "")
 FRONTEND_LOGIN_URL = os.getenv(
     "FRONTEND_LOGIN_URL",

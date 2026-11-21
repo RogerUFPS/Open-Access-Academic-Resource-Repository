@@ -1,4 +1,5 @@
 .env
+.agent.env
 .env.*
 !.env.example
 .git
