@@ -49,8 +49,14 @@ function PublisherField({ id, value, onChange, disabled }) {
   );
 }
 
-/** Idioma: catálogo Language; su abreviatura es el código que DOAJ registra en dc:language. */
+const OTHER_LANGUAGE = "__other__";
+
+/**
+ * Idioma: catálogo Language (su abreviatura es el código que DOAJ registra en
+ * dc:language) más «Otro código», porque DOAJ usa idiomas que el catálogo no tiene.
+ */
 function LanguageField({ id, value, onChange, disabled }) {
+  const [otherSelected, setOtherSelected] = useState(false);
   const languages = useQuery({
     queryKey: queryKeys.harvests.languages,
     queryFn: ({ signal }) => getHarvestLanguages(signal),
@@ -65,16 +71,27 @@ function LanguageField({ id, value, onChange, disabled }) {
     );
   }
   const loaded = languages.data || [];
-  const missing = value && !loaded.some((language) => language.abbreviation.trim().toLowerCase() === value.toLowerCase());
+  const inCatalog = loaded.some((language) => language.abbreviation.trim().toLowerCase() === value.trim().toLowerCase());
+  // Un valor guardado que no está en el catálogo se edita como «Otro código».
+  const showOther = otherSelected || (Boolean(value) && languages.isSuccess && !inCatalog);
   const options = [
     { value: "", label: languages.isPending ? "Cargando idiomas…" : "Todos los idiomas" },
-    ...(missing ? [{ value, label: `${value} (no está en el catálogo)` }] : []),
     ...loaded.map((language) => {
       const code = language.abbreviation.trim().toLowerCase();
       return { value: code, label: `${catalogLabel(language.name)} (${code})` };
     }),
+    { value: OTHER_LANGUAGE, label: "Otro código ISO…" },
   ];
-  return <FormField id={id} label="Idioma" options={options} disabled={disabled || languages.isPending} value={value.toLowerCase()} onChange={(event) => onChange(event.target.value)} />;
+  return (
+    <div className="flex min-w-0 flex-col gap-2">
+      <FormField id={id} label="Idioma" options={options} disabled={disabled || languages.isPending} value={showOther ? OTHER_LANGUAGE : value.toLowerCase()} onChange={(event) => {
+        const next = event.target.value;
+        setOtherSelected(next === OTHER_LANGUAGE);
+        onChange(next === OTHER_LANGUAGE ? "" : next);
+      }} />
+      {showOther && <FormField id={`${id}-code`} label="Código ISO 639-1 del idioma" maxLength={16} placeholder="p. ej. sk, ro, hu" autoFocus={otherSelected} disabled={disabled} value={value} onChange={(event) => onChange(event.target.value)} />}
+    </div>
+  );
 }
 
 /** Catálogo Country (todas las páginas, en caché) para el filtro de OpenAlex. */

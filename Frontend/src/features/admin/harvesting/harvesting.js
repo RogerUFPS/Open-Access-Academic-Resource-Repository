@@ -166,8 +166,27 @@ export async function getHarvestSourceCount(signal) {
   return page.total_items;
 }
 
-export function getHarvests(page, signal) {
-  return list("/api/harvesting/harvests/", { page, page_size: 10, ordering: "-created_at" }, signal);
+/**
+ * Página de ejecuciones. `history` acota a un recorrido: plataforma y
+ * `filter_key` devuelto por el servidor, o `is_global` para el recorrido sin filtros.
+ */
+export function getHarvests(page, signal, history = null) {
+  return list("/api/harvesting/harvests/", {
+    page, page_size: 10, ordering: "-created_at", ...harvestHistoryQuery(history),
+  }, signal);
+}
+
+/** Recorrido (historial) al que pertenece una ejecución; nunca se calcula la clave en el navegador. */
+export function harvestHistoryOf(row) {
+  if (!row || row.platform == null || !Number.isSafeInteger(Number(row.platform)) || Number(row.platform) <= 0) return null;
+  return { platform: Number(row.platform), filterKey: typeof row.filter_key === "string" ? row.filter_key : "" };
+}
+
+export function harvestHistoryQuery(history) {
+  if (!history) return {};
+  return history.filterKey
+    ? { platform: history.platform, filter_key: history.filterKey }
+    : { platform: history.platform, is_global: "true" };
 }
 
 export function getHarvest(id, signal) {
@@ -256,6 +275,8 @@ export const SELECTION_TEXT_MAX_LENGTH = 120;
 export const EMPTY_SELECTION_VALUES = { country_code: "", title: "", publisher: "", subject: "", language: "" };
 const SELECTION_LABELS = { country_code: "País", title: "Título", publisher: "Editorial", subject: "Tema", language: "Idioma" };
 const COUNTRY_CODE_PATTERN = /^[A-Za-z]{2}$/;
+// DOAJ registra dc:language como ISO 639-1 («EN», «ES»); se admiten también códigos de tres letras o con región.
+const LANGUAGE_CODE_PATTERN = /^[A-Za-z]{2,3}(-[A-Za-z0-9]{2,8})?$/;
 
 /** Contrato estático de filtros por proveedor (no consulta APIs externas). */
 export function getHarvestFilterOptions(signal) {
@@ -339,6 +360,7 @@ export function buildSelectionFilters(provider, values, options) {
       if (!COUNTRY_CODE_PATTERN.test(value)) throw new Error("País: selecciona un país del catálogo con código ISO de dos letras.");
       selection.country_code = value.toUpperCase();
     } else if (field === "language") {
+      if (!LANGUAGE_CODE_PATTERN.test(value)) throw new Error("Idioma: usa el código ISO del idioma (p. ej. «es», «en»), no su nombre.");
       selection.language = value.toLowerCase();
     } else {
       selection[field] = value;

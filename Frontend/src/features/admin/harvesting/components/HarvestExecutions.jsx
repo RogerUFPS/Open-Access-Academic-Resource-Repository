@@ -18,7 +18,7 @@ const STATES = {
   cancelled: { label: "Cancelada", badge: "warning" },
 };
 
-export default function HarvestExecutions({ rows, onRefresh, busy = false, caption = "Ejecuciones recientes de cosecha", countryNames }) {
+export default function HarvestExecutions({ rows, onRefresh, busy = false, caption = "Ejecuciones recientes de cosecha", countryNames, onShowHistory }) {
   const { pauseHarvest, resumeHarvest } = useHarvestingApi();
   const [actions, setActions] = useState({});
   const [feedback, setFeedback] = useState(null);
@@ -57,6 +57,7 @@ export default function HarvestExecutions({ rows, onRefresh, busy = false, capti
       <div>
         <span>{row.platform_name}</span>
         <span className="mt-1 block text-xs leading-[18px] text-[#68707C] [overflow-wrap:anywhere]">{formatSelectionFilters(row.selection_filters, countryNames)}</span>
+        {onShowHistory && <button type="button" className="mt-1 text-left text-xs leading-[18px] font-semibold text-[#A90D27] underline-offset-2 hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary" aria-label={`Ver historial del recorrido de ${row.platform_name} (#${row.id})`} onClick={() => onShowHistory(row)}>Ver historial del recorrido</button>}
       </div>
     ) },
     { key: "state", label: "ESTADO", width: "14%", render: (row) => {

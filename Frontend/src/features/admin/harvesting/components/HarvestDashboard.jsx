@@ -8,7 +8,7 @@ import Button from "@/shared/components/Button";
 import FormField from "@/shared/components/FormField";
 import MetricCard from "@/shared/components/MetricCard";
 import Notice from "@/shared/components/Notice";
-import { buildSelectionFilters, canRunDueSchedules, canUpdateSchedules, formatDate, formatSelectionFilters, getHarvestFilterOptions, getHarvests, getHarvestSourceCount, getPlatforms, getUpcomingSchedules, harvestProvider, hasRetiredSelectionFilters, runDueErrorMessage, runDueFeedback, runDueKey, selectionValuesFrom, shouldReuseRunDueKey } from "@/features/admin/harvesting/harvesting";
+import { buildSelectionFilters, canRunDueSchedules, canUpdateSchedules, formatDate, formatSelectionFilters, getHarvestFilterOptions, getHarvests, getHarvestSourceCount, getPlatforms, getUpcomingSchedules, harvestHistoryOf, harvestProvider, hasRetiredSelectionFilters, runDueErrorMessage, runDueFeedback, runDueKey, selectionValuesFrom, shouldReuseRunDueKey } from "@/features/admin/harvesting/harvesting";
 import { useAccountsApi } from "@/shared/components/AccountsProvider";
 import HarvestExecutions from "./HarvestExecutions";
 import HarvestSelectionFields, { useHarvestCountries } from "./HarvestSelectionFields";
@@ -70,6 +70,8 @@ export default function HarvestDashboard() {
   const [editValues, setEditValues] = useState(null);
   const [editSaving, setEditSaving] = useState(false);
   const [editError, setEditError] = useState("");
+  // Recorrido (plataforma + filter_key del servidor) cuyo historial se muestra.
+  const [history, setHistory] = useState(null);
   const requestPending = useRef(false);
   const runDueKeyRef = useRef(null);
 
@@ -89,7 +91,8 @@ export default function HarvestDashboard() {
     staleTime: 5 * 60 * 1000,
   });
 
-  const harvests = useHarvestData(queryKeys.harvests.list(page), (signal) => getHarvests(page, signal), (data) => (
+  const historyKey = history && { platform: history.platform, filterKey: history.filterKey };
+  const harvests = useHarvestData(queryKeys.harvests.list(page, historyKey), (signal) => getHarvests(page, signal, historyKey), (data) => (
     executing || data?.results.some((row) => ["pending", "running", "pausing"].includes(row.state)) ? 5000 : 30000
   ));
   const upcomingSchedules = useHarvestData(queryKeys.harvests.schedules, getUpcomingSchedules, 30000);
@@ -213,6 +216,12 @@ export default function HarvestDashboard() {
     ),
   }];
 
+  function showHistory(next) {
+    setHistory(next);
+    setPage(1);
+    setPageInput("1");
+  }
+
   function changePage(nextPage, schedules = false) {
     if (schedules) {
       const safePage = clampPage(nextPage, schedulePages);
@@ -278,9 +287,16 @@ export default function HarvestDashboard() {
             <h2 id="runs-title" className="text-[21px] leading-7 font-semibold min-[541px]:text-2xl min-[541px]:leading-8">Ejecuciones recientes</h2>
             <Button variant="quiet" size="small" disabled={harvests.loading} onClick={harvests.refresh}>Actualizar</Button>
           </div>
+          {history && <div className="flex flex-wrap items-center gap-3 rounded-lg bg-[#EEF0F3] px-3 py-2 text-sm">
+            <span>Historial del recorrido: <strong>{history.platformName}</strong> · {history.label}{history.filterKey ? "" : " (sin filtros)"}</span>
+            <Button variant="quiet" size="small" onClick={() => showHistory(null)}>Ver todas las ejecuciones</Button>
+          </div>}
           {harvests.loading && <Notice live>Cargando ejecuciones…</Notice>}
           {harvests.error && <Notice variant="error" live>{harvests.error}</Notice>}
-          {showHarvests && <HarvestExecutions rows={runs} onRefresh={refreshHarvests} busy={harvests.loading || Boolean(harvests.error)} countryNames={countryNames} />}
+          {showHarvests && <HarvestExecutions rows={runs} onRefresh={refreshHarvests} busy={harvests.loading || Boolean(harvests.error)} countryNames={countryNames} onShowHistory={(row) => {
+            const next = harvestHistoryOf(row);
+            if (next) showHistory({ ...next, platformName: row.platform_name, label: formatSelectionFilters(row.selection_filters, countryNames) });
+          }} />}
           {showHarvests && harvests.data.total_pages > 1 && <div className="flex flex-wrap items-center gap-3">
             <Button variant="quiet" size="small" disabled={harvests.loading || page <= 1} onClick={() => changePage(page - 1)}>Anterior</Button>
             <label className="flex items-center gap-2 text-sm text-[#68707C]">
@@ -329,7 +345,7 @@ export default function HarvestDashboard() {
             {filterOptions.isError && <Notice variant="error" live>{filterOptions.error?.message} <Button variant="quiet" size="small" onClick={() => filterOptions.refetch()}>Reintentar</Button></Notice>}
             {platforms.data && filterOptions.data && (editProviders.length > 1
               ? <Notice>La programación incluye plataformas de proveedores distintos: solo admite el recorrido global. Para filtrar, crea programaciones separadas por proveedor.</Notice>
-              : <HarvestSelectionFields idPrefix={`schedule-${editingSchedule.id}-selection`} provider={editProvider} options={filterOptions.data} values={editValues} onChange={setEditValues} disabled={editSaving} />)}
+              : <HarvestSelectionFields key={editingSchedule.id} idPrefix={`schedule-${editingSchedule.id}-selection`} provider={editProvider} options={filterOptions.data} values={editValues} onChange={setEditValues} disabled={editSaving} />)}
             {editError && <Notice variant="error" live>{editError}</Notice>}
             <div className="flex flex-wrap gap-3">
               {editProvider && editProviders.length === 1 && <Button type="submit" size="small" disabled={editSaving || !platforms.data || !filterOptions.data}>{editSaving ? "Guardando…" : "Guardar selección"}</Button>}

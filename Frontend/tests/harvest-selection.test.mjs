@@ -94,3 +94,17 @@ test("language filter is sent lowercase and catalog labels are capitalized", asy
   assert.equal(catalogLabel("argentina"), "Argentina");
   assert.equal(formatSelectionFilters({ country_code: "ar" }, new Map([["AR", "argentina"]])), "País: Argentina");
 });
+
+test("language accepts ISO codes outside the catalog but not language names", () => {
+  assert.deepEqual(buildSelectionFilters("doaj", { language: "SK" }, options), { language: "sk" });
+  assert.deepEqual(buildSelectionFilters("doaj", { language: "pt-BR" }, options), { language: "pt-br" });
+  assert.throws(() => buildSelectionFilters("doaj", { language: "español" }, options), /código ISO/);
+});
+
+test("history uses the server filter_key or the global stream", async () => {
+  const { harvestHistoryOf, harvestHistoryQuery } = await import("../src/features/admin/harvesting/harvesting.js");
+  assert.deepEqual(harvestHistoryQuery(harvestHistoryOf({ platform: 2, filter_key: "abc" })), { platform: 2, filter_key: "abc" });
+  assert.deepEqual(harvestHistoryQuery(harvestHistoryOf({ platform: 2, filter_key: "" })), { platform: 2, is_global: "true" });
+  assert.deepEqual(harvestHistoryQuery(null), {});
+  assert.equal(harvestHistoryOf({ platform: null }), null);
+});

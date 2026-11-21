@@ -12,7 +12,7 @@ export const queryKeys = {
   harvests: {
     all: ["harvests"],
     lists: ["harvests", "list"],
-    list: (page) => ["harvests", "list", page],
+    list: (page, history = null) => ["harvests", "list", page, history],
     journals: (harvestId, page) => ["harvests", "journals", harvestId, page],
     schedules: ["harvests", "schedules"],
     sourceCount: ["harvests", "source-count"],
