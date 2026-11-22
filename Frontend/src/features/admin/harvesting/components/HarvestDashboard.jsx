@@ -10,6 +10,7 @@ import MetricCard from "@/shared/components/MetricCard";
 import Notice from "@/shared/components/Notice";
 import { formatDate, getHarvests, getHarvestSourceCount, getUpcomingSchedules } from "@/features/admin/harvesting/harvesting";
 import HarvestExecutions from "./HarvestExecutions";
+import { ScheduleFiltersEditor, ScheduleFiltersSummary, useFilterOptions } from "./ScheduleFilters";
 import { useHarvestingApi } from "./HarvestingProvider";
 import { clampPage, sanitizePageValue } from "@/shared/utils/pagination";
 
@@ -17,10 +18,10 @@ const FREQUENCIES = { once: "Única", daily: "Diaria", weekly: "Semanal", monthl
 const SCHEDULE_PAGE_SIZE = 10;
 
 const scheduleColumns = [
-  { key: "platforms", label: "FUENTES", width: "25%", render: (row) => row.platform_names?.join(", ") || row.platforms.map((id) => `Plataforma ${id}`).join(", ") },
-  { key: "frequency", label: "FRECUENCIA", width: "15%", render: (row) => FREQUENCIES[row.frequency] || row.frequency },
-  { key: "start_date", label: "FECHA INICIAL", width: "20%", muted: true, render: (row) => formatDate(row.start_date) },
-  { key: "limits", label: "LÍMITES POR FUENTE", width: "25%", render: (row) => [
+  { key: "platforms", label: "FUENTES", width: "18%", render: (row) => row.platform_names?.join(", ") || row.platforms.map((id) => `Plataforma ${id}`).join(", ") },
+  { key: "frequency", label: "FRECUENCIA", width: "11%", render: (row) => FREQUENCIES[row.frequency] || row.frequency },
+  { key: "start_date", label: "FECHA INICIAL", width: "16%", muted: true, render: (row) => formatDate(row.start_date) },
+  { key: "limits", label: "LÍMITES POR FUENTE", width: "17%", render: (row) => [
     row.max_quantity == null ? null : `${row.max_quantity} revistas`,
     row.stop_after_minutes == null ? null : `${row.stop_after_minutes} minutos`,
   ].filter(Boolean).join(" · ") },
@@ -57,6 +58,8 @@ export default function HarvestDashboard() {
   const [explanation, setExplanation] = useState("");
   const [deactivating, setDeactivating] = useState(false);
   const [scheduleFeedback, setScheduleFeedback] = useState(null);
+  const [editingSchedule, setEditingSchedule] = useState(null);
+  const filterOptions = useFilterOptions();
   const requestPending = useRef(false);
 
   const harvests = useHarvestData(queryKeys.harvests.list(page), (signal) => getHarvests(page, signal), (data) => (
@@ -118,12 +121,22 @@ export default function HarvestDashboard() {
   }
 
   const columns = [...scheduleColumns, {
-    key: "actions", label: "ACCIONES", width: "15%", render: (row) => (
+    key: "filters", label: "FILTROS", width: "20%", render: (row) => <ScheduleFiltersSummary filters={row.selection_filters} filterOptions={filterOptions.data} />,
+  }, {
+    key: "actions", label: "ACCIONES", width: "18%", render: (row) => (
+      <div className="flex flex-wrap gap-2">
+      <Button variant="quiet" size="small" disabled={upcomingSchedules.loading || Boolean(upcomingSchedules.error) || executing || deactivating} aria-label={`Editar filtros de la programación #${row.id}`} onClick={() => {
+        setEditingSchedule(row);
+        setSelectedSchedule(null);
+        setScheduleFeedback(null);
+      }}>Filtros</Button>
       <Button variant="quiet" size="small" disabled={upcomingSchedules.loading || Boolean(upcomingSchedules.error) || executing || deactivating} aria-label={`Desactivar programación #${row.id}`} onClick={() => {
+        setEditingSchedule(null);
         setSelectedSchedule(row);
         setExplanation("");
         setScheduleFeedback(null);
       }}>Desactivar</Button>
+      </div>
     ),
   }];
 
@@ -233,6 +246,11 @@ export default function HarvestDashboard() {
           {upcomingSchedules.error && <Notice variant="error" live>{upcomingSchedules.error}</Notice>}
           {scheduleFeedback && <Notice variant={scheduleFeedback.variant} live>{scheduleFeedback.message}</Notice>}
           {upcomingSchedules.data && (schedules.length ? <AdminTable caption="Programaciones de cosecha pendientes y recurrentes" columns={columns} rows={schedules} /> : <Notice>No hay programaciones pendientes de cosecha.</Notice>)}
+          {editingSchedule && <ScheduleFiltersEditor key={editingSchedule.id} schedule={editingSchedule} onCancel={() => setEditingSchedule(null)} onSaved={(updated) => {
+            setScheduleFeedback({ variant: "success", message: `Filtros de la programación #${updated?.id ?? editingSchedule.id} actualizados. Aplican a las próximas ejecuciones.` });
+            setEditingSchedule(null);
+            upcomingSchedules.refresh();
+          }} />}
           {selectedSchedule && <form onSubmit={deactivate} className="flex flex-col gap-3 rounded-lg border border-[#DCE0E5] p-4" aria-busy={deactivating}>
             <p className="font-semibold">Desactivar programación #{selectedSchedule.id}</p>
             <p className="text-xs text-[#68707C]">{selectedSchedule.platform_names?.join(", ")}. Esta programación dejará de generar nuevas ejecuciones. El motivo permite archivarla si tiene registros asociados.</p>
