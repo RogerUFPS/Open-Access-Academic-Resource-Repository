@@ -67,11 +67,18 @@ export class ApiError extends Error {
   }
 }
 
+// Listas de texto como antes ("a b"); los objetos anidados (p. ej. selection_filters) con su campo.
+function describeFieldError(value) {
+  if (Array.isArray(value) && value.every((item) => typeof item === "string")) return value.join(" ");
+  if (value && typeof value === "object") return formatHarvestError(value).replace(/\n/g, " · ");
+  return String(value);
+}
+
 function errorMessage(payload, status) {
   if (payload?.detail) return String(payload.detail);
   if (payload && typeof payload === "object") {
     const messages = Object.entries(payload).map(([field, value]) =>
-      `${FIELD_NAMES[field] || field}: ${typeof value === "string" ? value : formatHarvestError(value).replace(/\n/g, " · ")}`,
+      `${FIELD_NAMES[field] || field}: ${describeFieldError(value)}`,
     );
     if (messages.length) return messages.join(" · ");
   }

@@ -11,7 +11,7 @@ registerHooks({
   },
 });
 
-const { buildSchedule, buildSelectionFilters, getHarvestProvider } = await import("../src/features/admin/harvesting/harvesting.js");
+const { buildSchedule, buildSelectionFilters, createHarvestingApi, getHarvestProvider } = await import("../src/features/admin/harvesting/harvesting.js");
 
 test("selection filters send catalog IDs as JSON numbers and drop empty keys", () => {
   assert.deepEqual(buildSelectionFilters({ country: "7" }, ["country"]), { country: 7 });
@@ -39,4 +39,20 @@ test("schedule payload includes selection_filters", () => {
   const payload = buildSchedule({ platformId: "12", limit: "500", minutes: "10", mode: "scheduled", startDate: "2026-11-22T09:00", frequency: "once", selectionFilters: { country: 7 } }, now);
   assert.deepEqual(payload.selection_filters, { country: 7 });
   assert.deepEqual(buildSchedule({ platformId: "12", limit: "1", minutes: "", mode: "scheduled", startDate: "2026-11-22T09:00", frequency: "once" }, now).selection_filters, {});
+});
+
+function apiResponding(status, data) {
+  return createHarvestingApi(async () => ({ status, data }));
+}
+
+test("400 field errors keep the previous format for lists of messages", async () => {
+  const api = apiResponding(400, { max_quantity: ["Debe ser mayor que cero.", "Valor inválido."] });
+  await assert.rejects(api.createSchedule({}), { message: "Límite de revistas: Debe ser mayor que cero. Valor inválido." });
+});
+
+test("400 nested selection_filters errors are readable", async () => {
+  const api = apiResponding(400, { selection_filters: { publisher: ["El ID no existe o está archivado en el catálogo."] } });
+  await assert.rejects(api.updateScheduleFilters(10, { publisher: 999 }), {
+    message: "Filtros: Editorial: El ID no existe o está archivado en el catálogo.",
+  });
 });

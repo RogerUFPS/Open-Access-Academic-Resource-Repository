@@ -15,12 +15,15 @@ export function useFilterOptions() {
   });
 }
 
-/** Todas las plataformas, ordenadas por nombre. Se invalida junto con `queryKeys.platforms.all`. */
+/**
+ * Todas las plataformas, ordenadas por nombre. Sin staleTime: muestra lo último
+ * en caché y revalida al montar, porque habilitar una fuente para cosecha (en
+ * otra vista) no siempre invalida `queryKeys.platforms.all`.
+ */
 export function useAllPlatforms() {
   return useQuery({
     queryKey: queryKeys.platforms.list({ ordering: "name", all: true }),
     queryFn: ({ signal }) => getPlatforms(signal),
-    staleTime: 5 * 60 * 1000,
   });
 }
 
