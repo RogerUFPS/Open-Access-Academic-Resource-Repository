@@ -15,10 +15,9 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import urlparse
 from urllib.request import Request, urlopen
 
-from .config import PROJECT_ROOT, RESOURCES_DIR
+from .config import PROJECT_ROOT
 
 
-DEFAULT_SNAPSHOT = RESOURCES_DIR / "catalog_snapshot.example.json"
 DEFAULT_CACHE = PROJECT_ROOT / "data" / "backend_snapshot.json"
 
 
@@ -102,7 +101,9 @@ def load_snapshot() -> dict[str, Any]:
     backend_url = os.getenv("AGENT_BACKEND_SNAPSHOT_URL", "").strip()
     if backend_url and not configured:
         return _backend_snapshot(backend_url)
-    path = Path(configured).resolve() if configured else DEFAULT_SNAPSHOT.resolve()
+    if not configured:
+        raise ValueError("Catálogo no configurado: el Backend debe sincronizar un snapshot o configure una fuente explícita.")
+    path = Path(configured).resolve()
     if PROJECT_ROOT.resolve() not in path.parents:
         raise ValueError("AGENT_CATALOG_SNAPSHOT debe estar dentro de la carpeta Agent.")
     return _load_file(path)

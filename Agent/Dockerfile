@@ -16,7 +16,6 @@ COPY src ./src
 COPY scripts ./scripts
 COPY resources ./resources
 COPY SKILL.md ./SKILL.md
-COPY references ./references
 
 RUN useradd --system --uid 10001 --home /app agent \
     && mkdir -p /app/data \

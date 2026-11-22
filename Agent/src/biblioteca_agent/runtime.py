@@ -15,7 +15,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from .config import PROJECT_ROOT, RESOURCES_DIR, settings
 from .contracts import QueryRequest, RecommendationResponse
 from .model import ModelDefinition, model
-from .rag import RagStore, read_jsonl
+from .rag import RagStore, read_examples
 from .text import normalize_text
 from .tool_runner import run_script
 from .request_context import analysis as request_analysis
@@ -70,13 +70,13 @@ class AgentRuntime:
         self.rag = RagStore(settings.rag_path)
         self.request_slots = asyncio.Semaphore(settings.max_concurrency)
         self.active_requests = 0
-        self.runtime_prompt = (RESOURCES_DIR / "runtime_prompt.md").read_text(encoding="utf-8")
+        self.runtime_prompt = (RESOURCES_DIR / "prompts/intent_classifier.md").read_text(encoding="utf-8")
         skill = (PROJECT_ROOT / "SKILL.md").read_text(encoding="utf-8")
         self.classification_policy = skill.split("## 1. Intención y datos base", 1)[1].split("## 2. Selección de programas", 1)[0]
 
     async def start(self) -> None:
         if settings.auto_index_rag:
-            documents = await asyncio.to_thread(read_jsonl, RESOURCES_DIR / "rag_examples.approved.jsonl")
+            documents = await asyncio.to_thread(read_examples, RESOURCES_DIR / "rag/approved_examples.json")
             await asyncio.to_thread(self.rag.replace_all, documents)
 
     async def stop(self) -> None:

@@ -8,6 +8,15 @@ from apps.agent.client import AgentClient, AgentUnavailable
 
 @override_settings(AGENT_ENDPOINTS={"qwen": "http://qwen"}, AGENT_TIMEOUT_SECONDS=60)
 class AgentClientTests(SimpleTestCase):
+    @override_settings(AGENT_MODAL_KEY="test-key", AGENT_MODAL_SECRET="test-secret",
+        AGENT_ENDPOINTS={"qwen": "http://local-agent:8000", "glm": "https://test.modal.direct"})
+    def test_modal_credentials_are_not_sent_to_local_endpoints(self):
+        with AgentClient("qwen") as client:
+            self.assertNotIn("Modal-Key", client.http.headers)
+            self.assertNotIn("Modal-Secret", client.http.headers)
+        with AgentClient("glm") as client:
+            self.assertEqual(client.http.headers["Modal-Key"], "test-key")
+
     def test_cold_start_retries_only_safe_preparation(self):
         calls = []
         def handler(request):

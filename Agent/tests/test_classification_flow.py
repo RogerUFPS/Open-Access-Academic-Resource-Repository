@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock, patch
 
 from biblioteca_agent.config import RESOURCES_DIR
 from biblioteca_agent.contracts import QueryRequest
-from biblioteca_agent.rag import RagStore, read_jsonl
+from biblioteca_agent.rag import RagStore, read_examples
 from biblioteca_agent.runtime import AgentRuntime, Intent
 
 
@@ -40,7 +40,7 @@ class ClassificationFlowTests(unittest.IsolatedAsyncioTestCase):
         self.directory = tempfile.TemporaryDirectory()
         self.runtime = AgentRuntime()
         self.runtime.rag = RagStore(Path(self.directory.name) / "rag.sqlite3")
-        self.runtime.rag.replace_all(read_jsonl(RESOURCES_DIR / "rag_examples.approved.jsonl"))
+        self.runtime.rag.replace_all(read_examples(RESOURCES_DIR / "rag/approved_examples.json"))
         self.runtime.classify = AsyncMock(return_value=Intent(
             tipo="buscar_literatura", tema="inteligencia artificial", idioma="es", filtros=[]))
 
@@ -113,12 +113,12 @@ class ClassificationFlowTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual({f["filtro"] for f in result["filtros_no_aplicados"]}, {"Idioma", "Fecha de publicación"})
 
     async def test_language_as_research_subject_is_not_a_language_filter(self):
-        definitions = json.loads((RESOURCES_DIR / "catalog_snapshot.example.json").read_text())["filtros"]
+        definitions = json.loads(((RESOURCES_DIR.parent / "tests" / "fixtures" / "catalog.json")).read_text())["filtros"]
         claims = self.runtime.extract_filters("Enseñanza del inglés para educación", definitions)
         self.assertEqual(claims, [])
 
     async def test_language_list_and_year_range_are_grounded(self):
-        definitions = json.loads((RESOURCES_DIR / "catalog_snapshot.example.json").read_text())["filtros"]
+        definitions = json.loads(((RESOURCES_DIR.parent / "tests" / "fixtures" / "catalog.json")).read_text())["filtros"]
         claims = self.runtime.extract_filters("Artículos en español e inglés entre 2020 y 2025", definitions)
         intent = Intent(tipo="buscar_literatura", tema="educacion", idioma="es", filtros=claims)
         self.assertEqual(self.runtime.valid_filters(intent, "Artículos en español e inglés entre 2020 y 2025", definitions),

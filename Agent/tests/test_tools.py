@@ -16,14 +16,14 @@ SCRIPTS = ROOT / "scripts"
 sys.path.insert(0, str(ROOT / "src"))
 
 from biblioteca_agent.catalog import load_snapshot
-from biblioteca_agent.rag import RagStore, read_jsonl, validate_documents
+from biblioteca_agent.rag import RagStore, read_examples, validate_documents
 
 
 def run_tool(name, payload):
     environment = os.environ.copy()
     environment["PYTHONPATH"] = str(ROOT / "src")
     environment["AGENT_CATALOG_SNAPSHOT"] = str(
-        ROOT / "resources" / "catalog_snapshot.example.json"
+        ROOT / "tests" / "fixtures" / "catalog.json"
     )
     environment.pop("AGENT_BACKEND_SNAPSHOT_URL", None)
     result = subprocess.run(
@@ -105,7 +105,7 @@ class RagTests(unittest.TestCase):
             self.assertEqual(results[0]["id"], "one")
 
     def test_approved_examples_are_valid_and_searchable(self):
-        documents = read_jsonl(ROOT / "resources" / "rag_examples.approved.jsonl")
+        documents = read_examples(ROOT / "resources" / "rag/approved_examples.json")
         self.assertEqual(len(documents), 12)
         with tempfile.TemporaryDirectory() as directory:
             store = RagStore(Path(directory) / "rag.sqlite3")
@@ -116,7 +116,7 @@ class RagTests(unittest.TestCase):
     def test_examples_do_not_infer_unrequested_filters(self):
         documents = {
             item["id"]: item
-            for item in read_jsonl(ROOT / "resources" / "rag_examples.approved.jsonl")
+            for item in read_examples(ROOT / "resources" / "rag/approved_examples.json")
         }
         self.assertEqual(documents["rag-006-ia-sistemas"]["respuesta"]["filtros"], {})
         self.assertEqual(documents["rag-007-tecnologia-ambigua"]["respuesta"]["filtros"], {})
@@ -145,7 +145,7 @@ class RagTests(unittest.TestCase):
             self.assertEqual(store.count(), 1)
 
     def test_duplicate_ids_are_rejected(self):
-        document = read_jsonl(ROOT / "resources" / "rag_examples.approved.jsonl")[0]
+        document = read_examples(ROOT / "resources" / "rag/approved_examples.json")[0]
         with self.assertRaises(ValueError):
             validate_documents([document, document])
 
@@ -306,7 +306,7 @@ class CatalogApiTests(unittest.IsolatedAsyncioTestCase):
 
         with patch.dict(os.environ, {
             "AGENT_BACKEND_SNAPSHOT_URL": "",
-            "AGENT_CATALOG_SNAPSHOT": str(ROOT / "resources" / "catalog_snapshot.example.json"),
+            "AGENT_CATALOG_SNAPSHOT": str(ROOT / "tests" / "fixtures" / "catalog.json"),
         }, clear=False):
             result = await catalog_summary()
         self.assertEqual(result["fuente"], "archivo_configurado")
@@ -315,8 +315,14 @@ class CatalogApiTests(unittest.IsolatedAsyncioTestCase):
 
 
 class BackendSnapshotRepositoryTests(unittest.TestCase):
+    def test_missing_catalog_never_falls_back_to_example(self):
+        from biblioteca_agent.catalog import load_snapshot
+        with patch.dict(os.environ, {"AGENT_CATALOG_SNAPSHOT": "", "AGENT_BACKEND_SNAPSHOT_URL": ""}):
+            with self.assertRaises(ValueError):
+                load_snapshot()
+
     def test_backend_snapshot_is_downloaded_once_and_shared_from_disk_cache(self):
-        payload = (ROOT / "resources" / "catalog_snapshot.example.json").read_bytes()
+        payload = (ROOT / "tests" / "fixtures" / "catalog.json").read_bytes()
 
         class Handler(BaseHTTPRequestHandler):
             calls = 0

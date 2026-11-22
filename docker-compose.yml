@@ -20,17 +20,29 @@ x-service: &service
     - services
 
 services:
+  # Solo con --profile local-agent: GPU y pesos locales. Nunca en up normal.
+  agent-api:
+    profiles: [local-agent]
+    extends:
+      file: ./Agent/docker-compose.yml
+      service: api
+    networks:
+      services:
+        aliases: ["biblioteca-agent-${AGENT_INSTANCE:-qwen}"]
+      agent-inference:
+
+  vllm:
+    profiles: [local-agent]
+    extends:
+      file: ./Agent/docker-compose.yml
+      service: vllm
+    networks: [agent-inference]
+
   backend-tests:
     profiles: [test]
     image: harvest-backend
     pull_policy: never
-    env_file: [./Backend/.env, ./Postgres/.env]
-    environment:
-      DJANGO_TESTING: "0"
-      DATABASE_POOL: "0"
-      POSTGRES_HOST: postgres
-      POSTGRES_PORT: "5432"
-      DATABASE_SSLMODE: disable
+    env_file: *backend-env
     volumes:
       - ./Backend:/app:ro
     command: ["python", "manage.py", "test", "apps.agent", "apps.account.tests", "apps.scheduler.tests", "--noinput", "-v", "2"]
@@ -46,9 +58,6 @@ services:
       postgres:
         condition: service_healthy
     env_file: *backend-env
-    environment:
-      DJANGO_DEBUG: ${DJANGO_DEBUG:-0}
-      DATABASE_POOL: "0"
     command: ["sh", "-c", "python manage.py migrate --noinput && python manage.py bootstrap_superadmin"]
 
   rabbitmq:
@@ -81,9 +90,6 @@ services:
       rabbitmq:
         condition: service_healthy
     env_file: *backend-env
-    environment:
-      DJANGO_DEBUG: ${DJANGO_DEBUG:-0}
-      DATABASE_POOL: ${DATABASE_POOL:-1}
     ports:
       - "127.0.0.1:8000:8000"
 
@@ -147,12 +153,6 @@ services:
         NEXT_PUBLIC_SESSION_COOKIE_NAME: ${NEXT_PUBLIC_SESSION_COOKIE_NAME:-sessionid}
         NEXT_PUBLIC_CSRF_COOKIE_NAME: ${NEXT_PUBLIC_CSRF_COOKIE_NAME:-csrftoken}
     env_file: ./Frontend/.env
-    environment:
-      BACKEND_INTERNAL_URL: ${BACKEND_INTERNAL_URL:-http://backend:8000}
-      # El frontend se ejecuta en modo producción incluso en Docker local.
-      # Autoriza el origen público de RustFS para que la CSP no bloquee las
-      # imágenes que el backend devuelve como http://localhost:9000/...
-      CSP_IMG_SRC: ${CSP_IMG_SRC:-http://localhost:9000}
     ports:
       - "127.0.0.1:3000:3000"
 
@@ -193,12 +193,6 @@ services:
       timeout: 5s
       retries: 10
       start_period: 30s
-    environment:
-      RUSTFS_ADDRESS: ":9000"
-      RUSTFS_CONSOLE_ADDRESS: ":9001"
-      RUSTFS_CONSOLE_ENABLE: "true"
-      RUSTFS_OBS_LOGGER_LEVEL: "error"
-      RUSTFS_OBS_LOG_DIRECTORY: "/var/log/rustfs/"
     command: /data
 
   rustfs-init:
@@ -218,10 +212,13 @@ services:
         rc anonymous set download local/imagenes
 
 networks:
+  agent-inference:
+    driver: bridge
   services:
     driver: bridge
 
 volumes:
+  huggingface-cache:
   rabbitmq_data:
   postgres-data:
   rustfs-data:

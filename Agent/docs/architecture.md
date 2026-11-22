@@ -22,6 +22,15 @@ Cada snapshot se identifica por SHA-256. El contexto de petición propaga esa
 versión a los scripts, evitando mezclar catálogos concurrentes. El agente
 nunca accede directamente a PostgreSQL. El RAG se reconstruye desde ejemplos
 aprobados, no aprende automáticamente de conversaciones. YAKE se conserva.
+Los ejemplos se mantienen como un array JSON legible en
+[approved_examples.json](../resources/rag/approved_examples.json). Solo recursos
+activos se incluyen en la imagen. El catálogo sintético es un fixture de tests;
+una fuente real ausente produce un error, no una recomendación de demostración.
+
+El Compose raíz integra la API local y vLLM con el perfil optativo local-agent.
+Las redes de esa integración se declaran en la raíz. El Compose independiente
+del agente sigue disponible, sin importar Modal. Todo el adaptador cloud está
+aislado en deploy/modal y se puede retirar para la entrega local.
 
 El modelo clasifica intención; el servidor calcula relaciones, cobertura,
 sintaxis y justificación con datos reales. Una continuación hereda contexto

@@ -62,16 +62,12 @@ def validate_documents(documents: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return validated
 
 
-def read_jsonl(path: Path) -> list[dict[str, Any]]:
-    documents = []
+def read_examples(path: Path) -> list[dict[str, Any]]:
+    """Ejemplos revisados: array JSON legible y validado antes de indexar."""
     with path.open(encoding="utf-8") as source:
-        for line_number, line in enumerate(source, 1):
-            if not line.strip():
-                continue
-            try:
-                documents.append(json.loads(line))
-            except json.JSONDecodeError as exc:
-                raise ValueError(f"JSON inválido en {path.name}:{line_number}: {exc.msg}") from exc
+        documents = json.load(source)
+    if not isinstance(documents, list):
+        raise ValueError("Los ejemplos RAG deben ser un array JSON.")
     return validate_documents(documents)
 
 

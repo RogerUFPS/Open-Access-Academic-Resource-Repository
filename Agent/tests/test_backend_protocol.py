@@ -52,7 +52,7 @@ class BackendProtocolTests(unittest.IsolatedAsyncioTestCase):
         root.mkdir(exist_ok=True)
         with tempfile.TemporaryDirectory(dir=root) as directory, patch.object(snapshots, "ROOT", Path(directory)):
             async def read_catalog(name):
-                data = json.loads((RESOURCES_DIR / "catalog_snapshot.example.json").read_text())
+                data = json.loads(((RESOURCES_DIR.parent / "tests" / "fixtures" / "catalog.json")).read_text())
                 data["programas"][0]["nombre"] = name
                 digest = hashlib.sha256(json.dumps(data, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
                 path = snapshots.install(digest, data)
