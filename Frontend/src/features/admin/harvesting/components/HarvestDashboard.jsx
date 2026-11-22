@@ -10,7 +10,8 @@ import MetricCard from "@/shared/components/MetricCard";
 import Notice from "@/shared/components/Notice";
 import { formatDate, getHarvests, getHarvestSourceCount, getUpcomingSchedules } from "@/features/admin/harvesting/harvesting";
 import HarvestExecutions from "./HarvestExecutions";
-import { ScheduleFiltersEditor, ScheduleFiltersSummary, useFilterOptions } from "./ScheduleFilters";
+import { useFilterOptions } from "@/features/admin/harvesting/queries";
+import { ScheduleFiltersEditor, ScheduleFiltersSummary } from "./ScheduleFilters";
 import { useHarvestingApi } from "./HarvestingProvider";
 import { clampPage, sanitizePageValue } from "@/shared/utils/pagination";
 

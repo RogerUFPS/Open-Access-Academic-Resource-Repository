@@ -1,10 +1,11 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useRef, useState } from "react";
 import Button from "@/shared/components/Button";
 import FormField from "@/shared/components/FormField";
 import Notice from "@/shared/components/Notice";
-import { buildSchedule, buildSelectionFilters, formatDate, getFilterOptions, getHarvestProvider, getHarvestSources, getPlatforms, IMMEDIATE_HARVEST_ENABLED, MAX_HARVEST_LIMIT, nextBogotaDate } from "@/features/admin/harvesting/harvesting";
+import { buildSchedule, buildSelectionFilters, formatDate, getHarvestProvider, getHarvestSources, IMMEDIATE_HARVEST_ENABLED, MAX_HARVEST_LIMIT, nextBogotaDate } from "@/features/admin/harvesting/harvesting";
+import { queryStatus, useAllPlatforms, useFilterOptions } from "@/features/admin/harvesting/queries";
 import HarvestFilters, { getProviderFilterFields } from "./HarvestFilters";
 import HarvestSourceOption from "./HarvestSourceOption";
 import HarvestScheduleRuns from "./HarvestScheduleRuns";
@@ -22,11 +23,7 @@ const radioClasses = "size-[13px] accent-[#A90D27] focus-visible:outline-2 focus
 
 export default function HarvestForm() {
   const { createSchedule, prepareImmediateSchedule } = useHarvestingApi();
-  const [sources, setSources] = useState([]);
-  const [platformId, setPlatformId] = useState("");
-  const [loading, setLoading] = useState(true);
-  const [sourceError, setSourceError] = useState("");
-  const [revision, setRevision] = useState(0);
+  const [chosenPlatformId, setChosenPlatformId] = useState("");
   const [limit, setLimit] = useState("200");
   const [minutes, setMinutes] = useState("30");
   const [mode, setMode] = useState("scheduled");
@@ -38,38 +35,25 @@ export default function HarvestForm() {
   const [executionFeedback, setExecutionFeedback] = useState(null);
   const [canRetryPreparation, setCanRetryPreparation] = useState(false);
   const [runsRevision, setRunsRevision] = useState(0);
-  const [filterOptions, setFilterOptions] = useState(null);
-  const [filterOptionsError, setFilterOptionsError] = useState("");
   const [filterValues, setFilterValues] = useState({});
   const requestPending = useRef(false);
 
-  useEffect(() => {
-    const controller = new AbortController();
-    async function load() {
-      try {
-        const [platforms, options] = await Promise.all([
-          getPlatforms(controller.signal),
-          // Sin filter-options aún se puede cosechar sin filtros adicionales.
-          getFilterOptions(controller.signal).then((value) => ({ value }), (error) => ({ error })),
-        ]);
-        if (!controller.signal.aborted) {
-          const available = getHarvestSources(platforms);
-          setSources(available);
-          setPlatformId((current) => available.some((item) => String(item.id) === current) ? current : String(available[0]?.id || ""));
-          setStartDate((current) => current || nextBogotaDate());
-          setSourceError("");
-          setFilterOptions(options.value || null);
-          setFilterOptionsError(options.error ? options.error.message : "");
-        }
-      } catch (error) {
-        if (!controller.signal.aborted) setSourceError(error.message);
-      } finally {
-        if (!controller.signal.aborted) setLoading(false);
-      }
-    }
-    load();
-    return () => controller.abort();
-  }, [revision]);
+  // Plataformas y filtros vienen de la caché compartida del panel; se revalidan en segundo plano.
+  const platformsQuery = useAllPlatforms();
+  const filterOptionsQuery = useFilterOptions();
+  const { loading, error: sourceError } = queryStatus(platformsQuery, "No se pudieron cargar las plataformas.");
+  // Sin filter-options aún se puede cosechar sin filtros adicionales.
+  const { loading: filterOptionsLoading, error: filterOptionsError } = queryStatus(filterOptionsQuery, "No se pudieron cargar los filtros disponibles.");
+  const filterOptions = filterOptionsQuery.data || null;
+  const sources = platformsQuery.data ? getHarvestSources(platformsQuery.data) : [];
+  const platformId = sources.some((item) => String(item.id) === chosenPlatformId) ? chosenPlatformId : String(sources[0]?.id || "");
+  // La fecha sugerida se calcula en el cliente (no en el render del servidor).
+  if (!startDate && platformsQuery.data) setStartDate(nextBogotaDate());
+
+  function retryLoad() {
+    if (platformsQuery.isError) platformsQuery.refetch();
+    if (filterOptionsQuery.isError) filterOptionsQuery.refetch();
+  }
 
   async function prepare(schedule) {
     if (!IMMEDIATE_HARVEST_ENABLED) return;
@@ -129,7 +113,7 @@ export default function HarvestForm() {
   function selectPlatform(id) {
     // Cada proveedor tiene sus propios filtros: al cambiar de fuente se limpia la selección.
     if (getHarvestProvider(sources.find((item) => String(item.id) === id)) !== provider) setFilterValues({});
-    setPlatformId(id);
+    setChosenPlatformId(id);
   }
 
   return (
@@ -149,8 +133,9 @@ export default function HarvestForm() {
               </div>
               {sources.length > 0 && <p className="text-xs text-[#68707C]">Se muestran únicamente bases de datos habilitadas para cosecha.</p>}
             </section>
-            {selectedSource && (filterFields.length > 0 || filterOptionsError) && <section className={panelClasses} aria-labelledby="filters-title">
+            {selectedSource && (filterFields.length > 0 || filterOptionsError || filterOptionsLoading) && <section className={panelClasses} aria-labelledby="filters-title">
               <h2 id="filters-title" className={headingClasses}>Filtros de selección <span className="text-sm font-normal text-[#68707C]">(opcional)</span></h2>
+              {filterOptionsLoading && <Notice live>Cargando filtros disponibles…</Notice>}
               {filterOptionsError && <Notice variant="error" live>No se pudieron cargar los filtros disponibles: {filterOptionsError} Puedes programar la cosecha sin filtros o reintentar la carga.</Notice>}
               <HarvestFilters idPrefix="harvest-filter" filterOptions={filterOptions} provider={provider} values={filterValues} onChange={(values) => { setFilterValues(values); setError(""); }} />
               {filterFields.length > 0 && <p className="text-xs text-[#68707C]">
@@ -178,7 +163,7 @@ export default function HarvestForm() {
               </div>
             </section>
           </fieldset>
-          {(sourceError || filterOptionsError) && !created && <Button variant="quiet" className="self-start" disabled={loading || saving} onClick={() => { setLoading(true); setRevision((current) => current + 1); }}>Reintentar carga</Button>}
+          {(sourceError || filterOptionsError) && !created && <Button variant="quiet" className="self-start" disabled={loading || filterOptionsLoading || saving} onClick={retryLoad}>Reintentar carga</Button>}
           <div className="flex flex-wrap items-center gap-3">
             <Button href="/admin/cosecha" variant="quiet" className="w-full min-w-[140px] min-[541px]:w-auto">{created ? "Ver cosechas" : "Cancelar"}</Button>
             {!created && <Button type="submit" disabled={loading || saving || Boolean(sourceError) || !selectedSource || (mode === "now" && !IMMEDIATE_HARVEST_ENABLED)} className="w-full min-w-[210px] min-[541px]:w-auto">{saving ? "Guardando…" : mode === "scheduled" ? "Programar cosecha" : "Guardar cosecha"}</Button>}

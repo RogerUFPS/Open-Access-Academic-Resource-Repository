@@ -1,50 +1,41 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { useInfiniteQuery, useQueryClient } from "@tanstack/react-query";
 import { Check, ChevronDown, Search, X } from "lucide-react";
-import { getCatalogEntry, getCatalogOptionsPage } from "@/features/admin/harvesting/harvesting";
+import { getCatalogOptionsPage } from "@/features/admin/harvesting/harvesting";
+import { CATALOG_STALE_TIME, useCatalogEntry } from "@/features/admin/harvesting/queries";
+import { queryKeys } from "@/shared/query/queryKeys";
 
 const SEARCH_DEBOUNCE_MS = 300;
-
 /**
  * Selector único con búsqueda sobre un catálogo paginado (`results` / `next`).
  * `value` es el ID seleccionado (número o "") y `onChange` recibe el ID numérico o "".
  */
 export default function CatalogSelect({ id, label, endpoint, labelField = "name", valueField = "id", value, onChange, disabled = false, placeholder = "Todos" }) {
+  const queryClient = useQueryClient();
   const containerRef = useRef(null);
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
-  const [listing, setListing] = useState({ query: null, items: [], next: null, error: "" });
-  const [loadingMore, setLoadingMore] = useState(false);
-  const [names, setNames] = useState({});
+  const [search, setSearch] = useState("");
   const listboxId = `${id}-listbox`;
+  const hasValue = value !== "" && value != null;
 
-  const selectedName = value === "" || value == null ? "" : names[value];
-
-  // Nombre de un ID que llega preseleccionado (p. ej. al editar una programación).
-  useEffect(() => {
-    if (value === "" || value == null || names[value] || !endpoint) return undefined;
-    const controller = new AbortController();
-    getCatalogEntry(endpoint, value, controller.signal)
-      .then((entry) => setNames((current) => ({ ...current, [value]: entry?.[labelField] || `#${value}` })))
-      .catch((error) => {
-        if (!controller.signal.aborted) setNames((current) => ({ ...current, [value]: `#${value}${error?.status === 404 ? " (no disponible)" : ""}` }));
-      });
-    return () => controller.abort();
-  }, [value, names, endpoint, labelField]);
+  // Caché por catálogo y texto buscado: reabrir el selector o repetir una búsqueda no vuelve a pedirla.
+  const options = useInfiniteQuery({
+    queryKey: queryKeys.catalog.options(endpoint, search),
+    queryFn: ({ pageParam, signal }) => getCatalogOptionsPage(endpoint, { search, pageUrl: pageParam }, signal),
+    initialPageParam: null,
+    getNextPageParam: (lastPage) => lastPage.next || undefined,
+    enabled: open && Boolean(endpoint),
+    staleTime: CATALOG_STALE_TIME,
+  });
+  const entry = useCatalogEntry(endpoint, value);
 
   useEffect(() => {
-    if (!open || !endpoint) return undefined;
-    const controller = new AbortController();
-    const timer = setTimeout(() => {
-      getCatalogOptionsPage(endpoint, { search: query }, controller.signal)
-        .then((page) => setListing({ query, items: page.results, next: page.next, error: "" }))
-        .catch((error) => {
-          if (!controller.signal.aborted) setListing({ query, items: [], next: null, error: error.message || "No se pudieron cargar las opciones." });
-        });
-    }, SEARCH_DEBOUNCE_MS);
-    return () => { clearTimeout(timer); controller.abort(); };
-  }, [open, query, endpoint]);
+    const timer = setTimeout(() => setSearch(query.trim()), SEARCH_DEBOUNCE_MS);
+    return () => clearTimeout(timer);
+  }, [query]);
 
   useEffect(() => {
     if (!open) return undefined;
@@ -53,33 +44,34 @@ export default function CatalogSelect({ id, label, endpoint, labelField = "name"
     return () => document.removeEventListener("mousedown", close);
   }, [open]);
 
-  async function loadMore() {
-    if (loadingMore || !listing.next) return;
-    const currentQuery = listing.query;
-    setLoadingMore(true);
-    try {
-      const page = await getCatalogOptionsPage(endpoint, { pageUrl: listing.next });
-      setListing((current) => {
-        if (current.query !== currentQuery) return current;
-        const known = new Set(current.items.map((item) => item[valueField]));
-        return { ...current, items: [...current.items, ...page.results.filter((item) => !known.has(item[valueField]))], next: page.next };
-      });
-    } catch (error) {
-      setListing((current) => ({ ...current, next: null, error: error.message || "No se pudieron cargar más opciones." }));
-    } finally {
-      setLoadingMore(false);
-    }
+  const seen = new Set();
+  const items = (options.data?.pages || []).flatMap((page) => page.results).filter((item) => {
+    if (seen.has(item[valueField])) return false;
+    seen.add(item[valueField]);
+    return true;
+  });
+  const selectedName = !hasValue ? "" : entry.data?.[labelField] || (entry.isError ? `#${value}${entry.error?.status === 404 ? " (no disponible)" : ""}` : "");
+  const listing = {
+    items,
+    next: options.hasNextPage,
+    error: options.isError && !options.isFetching ? options.error?.message || "No se pudieron cargar las opciones." : "",
+  };
+
+  function loadMore() {
+    if (!options.isFetchingNextPage && options.hasNextPage) options.fetchNextPage();
   }
+  const loadingMore = options.isFetchingNextPage;
 
   function select(item) {
     const itemId = Number(item[valueField]);
-    setNames((current) => ({ ...current, [itemId]: item[labelField] }));
+    // La opción ya trae su nombre: se siembra la caché para no pedir la entrada.
+    queryClient.setQueryData(queryKeys.catalog.entry(endpoint, itemId), item);
     onChange(itemId);
     setOpen(false);
     setQuery("");
   }
 
-  const searching = open && listing.query !== query;
+  const searching = open && (query.trim() !== search || options.isPending);
 
   return (
     <div ref={containerRef} className="relative min-w-0" onKeyDown={(event) => { if (event.key === "Escape") setOpen(false); }}>
@@ -97,10 +89,10 @@ export default function CatalogSelect({ id, label, endpoint, labelField = "name"
             onClick={() => setOpen((current) => !current)}
             className="flex min-w-0 flex-1 items-center justify-between gap-2 text-left text-sm leading-[22px] focus-visible:outline-2 focus-visible:outline-offset-3 focus-visible:outline-primary disabled:cursor-not-allowed"
           >
-            <span className={`truncate ${selectedName || value ? "text-[#171A1F]" : "text-[#68707C]"}`}>{value === "" || value == null ? placeholder : selectedName || "Cargando…"}</span>
+            <span className={`truncate ${hasValue ? "text-[#171A1F]" : "text-[#68707C]"}`}>{hasValue ? selectedName || "Cargando…" : placeholder}</span>
             <ChevronDown aria-hidden="true" className="size-4 shrink-0 text-[#68707C]" />
           </button>
-          {value !== "" && value != null && !disabled && (
+          {hasValue && !disabled && (
             <button type="button" onClick={() => onChange("")} aria-label={`Quitar filtro de ${label.toLowerCase()}`} className="rounded p-0.5 text-[#68707C] hover:text-[#A90D27] focus-visible:outline-2 focus-visible:outline-primary">
               <X aria-hidden="true" className="size-4" />
             </button>

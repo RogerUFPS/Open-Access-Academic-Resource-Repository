@@ -16,6 +16,12 @@ export const queryKeys = {
     journals: (harvestId, page) => ["harvests", "journals", harvestId, page],
     schedules: ["harvests", "schedules"],
     sourceCount: ["harvests", "source-count"],
+    filterOptions: ["harvests", "filter-options"],
+  },
+  catalog: {
+    all: ["catalog"],
+    options: (endpoint, search) => ["catalog", "options", endpoint, search],
+    entry: (endpoint, id) => ["catalog", "entry", endpoint, Number(id)],
   },
   accounts: {
     all: ["accounts"],

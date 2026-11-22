@@ -1,27 +1,18 @@
 "use client";
 
 import { useRef, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
 import Button from "@/shared/components/Button";
 import Notice from "@/shared/components/Notice";
-import { buildSelectionFilters, getCatalogEntry, getFilterOptions, getHarvestProvider, getPlatforms } from "@/features/admin/harvesting/harvesting";
+import { buildSelectionFilters, getHarvestProvider } from "@/features/admin/harvesting/harvesting";
+import { queryStatus, useAllPlatforms, useCatalogEntry, useFilterOptions } from "@/features/admin/harvesting/queries";
 import HarvestFilters, { getProviderFilterFields } from "./HarvestFilters";
 import { useHarvestingApi } from "./HarvestingProvider";
 
 const SUMMARY_LABELS = { country: "País", publisher: "Editorial", language: "Idioma", title: "Título", subject: "Tema" };
 const CATALOG_ENDPOINTS = { country: "/api/catalog/countries/", publisher: "/api/catalog/editorials/", language: "/api/catalog/languages/" };
 
-export function useFilterOptions() {
-  return useQuery({ queryKey: ["harvesting", "filter-options"], queryFn: ({ signal }) => getFilterOptions(signal), staleTime: 5 * 60 * 1000 });
-}
-
 function CatalogName({ id, endpoint }) {
-  const { data, isError } = useQuery({
-    queryKey: ["catalog-entry", endpoint, id],
-    queryFn: ({ signal }) => getCatalogEntry(endpoint, id, signal),
-    staleTime: 10 * 60 * 1000,
-    retry: false,
-  });
+  const { data, isError } = useCatalogEntry(endpoint, id);
   return data?.name || (isError ? `#${id}` : "…");
 }
 
@@ -46,7 +37,7 @@ export function ScheduleFiltersSummary({ filters, filterOptions }) {
 export function ScheduleFiltersEditor({ schedule, onSaved, onCancel }) {
   const { updateScheduleFilters } = useHarvestingApi();
   const filterOptions = useFilterOptions();
-  const platforms = useQuery({ queryKey: ["harvesting", "platforms"], queryFn: ({ signal }) => getPlatforms(signal), staleTime: 5 * 60 * 1000 });
+  const platforms = useAllPlatforms();
   const [values, setValues] = useState(() => ({ ...(schedule.selection_filters || {}) }));
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
@@ -56,8 +47,10 @@ export function ScheduleFiltersEditor({ schedule, onSaved, onCancel }) {
   const providers = [...new Set(scheduledPlatforms.map(getHarvestProvider))];
   const provider = providers.length === 1 ? providers[0] : null;
   const fields = getProviderFilterFields(filterOptions.data, provider);
-  const loading = filterOptions.isPending || platforms.isPending;
-  const loadError = filterOptions.error?.message || platforms.error?.message || "";
+  const filterStatus = queryStatus(filterOptions, "No se pudieron cargar los filtros disponibles.");
+  const platformStatus = queryStatus(platforms, "No se pudieron cargar las plataformas.");
+  const loading = filterStatus.loading || platformStatus.loading;
+  const loadError = filterStatus.error || platformStatus.error;
 
   async function submit(event) {
     event.preventDefault();
