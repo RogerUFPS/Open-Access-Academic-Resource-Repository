@@ -10,11 +10,7 @@ from apps.platforms.models import Platform
 class HarvestingModelsTestCase(TestCase):
     @classmethod
     def setUpTestData(cls):
-        cls.user = User.objects.create_user(
-            code=0,
-            full_name="Sistema",
-            email="sistema@test.local",
-        )
+        cls.user = User.objects.get(code=0)
         cls.platform = Platform.objects.create(
             name="OpenAlex Platform",
             base_api_url="https://api.openalex.org",

@@ -11,7 +11,7 @@ class AccountConfig(AppConfig):
         from .models import AccessPreset, User
 
         for model, options in (
-            (User, {"exclude_fields": ["password", "session_key"]}),
+            (User, {"exclude_fields": ["password", "session_key", "mfa_secret"]}),
             (AccessPreset, {}),
         ):
             if not auditlog.contains(model):

@@ -146,6 +146,11 @@ class AccountRestoreTests(TestCase):
         self.account.save(update_fields=["is_active"])
         self.client = APIClient()
         self.client.force_authenticate(user=self.admin)
+        session = self.client.session
+        session["superadmin_mfa_satisfied"] = True
+        session["mfa_verified_at"] = int(time.time())
+        session["_session_renewed_at"] = int(time.time())
+        session.save()
 
     def test_restore_reactivates_the_account_and_keeps_audit_actor(self):
         archived_response = self.client.get("/api/accounts/users/archived/")

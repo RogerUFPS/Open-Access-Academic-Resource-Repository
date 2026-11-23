@@ -42,6 +42,13 @@ class HarvestFilter(django_filters.FilterSet):
     Filtro avanzado para ejecuciones de cosecha.
     """
 
+    filter_key = django_filters.CharFilter(field_name="filter_key")
+    source_exhausted = django_filters.BooleanFilter(field_name="source_exhausted")
+    is_global = django_filters.BooleanFilter(method="filter_global_stream")
+
+    def filter_global_stream(self, queryset, name, value):
+        return queryset.filter(filter_key="") if value else queryset.exclude(filter_key="")
+
     platform = django_filters.NumberFilter(
         field_name="platform_id",
         help_text="ID de la plataforma cosechada.",
@@ -89,6 +96,9 @@ class HarvestFilter(django_filters.FilterSet):
     class Meta:
         model = models.Harvest
         fields = [
+            "filter_key",
+            "source_exhausted",
+            "is_global",
             "platform",
             "schedule",
             "state",

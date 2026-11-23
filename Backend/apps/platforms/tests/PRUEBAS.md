@@ -449,6 +449,8 @@ Soft Delete, entrega de correo o respuestas tardías de URLs sustituidas.
 Todos los resultados del helper de consultas de la clase nueva verifican que
 `failure_confirmed` no aparezca como campo de respuesta. No se modifica el contrato
 para introducirlo. **Esta ampliación no se ejecutó**: la validación queda a cargo
+del desarrollador, junto con PostgreSQL para las dos pruebas de concurrencia.
+=======
 del desarrollador, junto con PostgreSQL para las pruebas de concurrencia.
 
 ## Notificación manual y rondas recuperables — 9 de noviembre de 2026

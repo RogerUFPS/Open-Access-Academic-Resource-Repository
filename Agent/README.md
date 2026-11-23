@@ -1,19 +1,43 @@
-Launch the dockerfile with the next command:
+# Agente de Biblioteca
 
-`docker run -d -p 11434:11434 --name ollama-custom ollama-custom`
+Servicio local FastAPI + vLLM, herramientas Python, YAKE y RAG SQLite FTS5.
+El Backend es la entrada pública y envía el catálogo real por snapshots privados.
 
-How to ask something to a model:
+## Ejecución
 
-`docker exec -it <container_name> ollama run <modelo> "Message"`
+- Sistema completo: el [Compose raíz](../docker-compose.yml) integra el agente
+  exclusivamente con el perfil optativo `local-agent`.
+- Servicio independiente: [Compose del agente](docker-compose.yml).
+- Cloud temporal: todo el adaptador está en [deploy/modal/](deploy/modal/).
+  No se requiere Modal para ejecutar localmente.
 
-Stop a model when you want to change it:
+Desde la raíz, configurar las claves/URLs según la [guía](docs/despliegue_modal_y_local.md):
 
-`docker exec -it <container_name> ollama stop <model>`
+```bash
+docker compose up -d
+# Solo cuando se requiera GPU e inferencia local:
+docker compose --env-file Agent/.env --profile local-agent up --build -d
+```
 
-Idea of the proccess:
+El primer comando no levanta vLLM ni la API local del agente. Los workers del
+Backend sí están activos: también se necesitan cuando el agente está en Modal.
 
-1. Check knowledges areas and academic programs via API.
-2. Detect language and keywords that are related to those knowledge areas and academic programs.
-3. Check public platforms and journals that has those knowledge areas and academic programs via API.
-4. Check the ValidSintaxis of the platform via API.
-5. Generate 3 search strings with the titles of the journals, knowledge areas and academic program based on the top platforms that has most quantity of information related.
+- [Despliegue local y separación de Modal](docs/despliegue_modal_y_local.md).
+- [API privada](docs/api.md).
+- [Arquitectura](docs/architecture.md).
+- [Edición de ejemplos RAG](resources/rag/README.md).
+
+## Recursos de producción
+
+- `resources/prompts/intent_classifier.md`: instrucciones del clasificador.
+- `resources/keywords/stopwords.json`: exclusiones de YAKE.
+- `resources/rag/approved_examples.json`: ejemplos revisados en JSON legible.
+
+No hay catálogo de demostración en producción ni fallback silencioso. El
+catálogo artificial se conserva únicamente en `tests/fixtures/catalog.json`.
+
+Pruebas CPU desde este directorio:
+
+```bash
+docker compose --profile test run --build --rm --no-deps tests
+```

@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import Link from "next/link";
 import { Open_Sans } from "next/font/google";
 import Button from "@/shared/components/Button";
@@ -8,6 +9,7 @@ import AccountFeedback from "@/shared/components/AccountFeedback";
 import { useAccountsApi } from "@/shared/components/AccountsProvider";
 import { hasAccountPermission } from "@/shared/services/apiClient";
 import { getUserDisplayName } from "@/shared/services/userService";
+import { queryKeys } from "@/shared/query/queryKeys";
 
 const outlineStyle = "!border-[#7f1218] !text-[#7f1218]";
 const openSans = Open_Sans({ subsets: ["latin"], weight: ["400", "600", "700"], display: "swap" });
@@ -18,8 +20,10 @@ function deletionDate(value) {
   return Number.isNaN(date.getTime()) ? "—" : date.toLocaleDateString("es-CO", { day: "2-digit", month: "short", year: "numeric" }).replaceAll(" de ", " ").replace("sept", "sep");
 }
 
-export default function ArchivedAdministrativeUsers({ overview = false }) {
+export default function ArchivedAdministrativeUsers() {
   const accountsApi = useAccountsApi();
+  const queryClient = useQueryClient();
+  const [viewer, setViewer] = useState(null);
   const [users, setUsers] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -37,12 +41,14 @@ export default function ArchivedAdministrativeUsers({ overview = false }) {
       setLoading(true);
       setError(null);
       setSessionRequired(false);
+      setViewer(null);
       let authenticated = false;
       try {
-        const viewer = await accountsApi.me(controller.signal);
+        const current = await accountsApi.me(controller.signal);
         authenticated = true;
-        if (viewer.force_password_change) throw new Error("Debes cambiar tu contraseña provisional desde el inicio de sesión.");
-        if (!hasAccountPermission(viewer, "view")) throw new Error("Tu cuenta no tiene permiso para consultar usuarios administrativos.");
+        if (current.force_password_change) throw new Error("Debes cambiar tu contraseña provisional desde el inicio de sesión.");
+        setViewer(current);
+        if (!hasAccountPermission(current, "view")) throw new Error("Tu cuenta no tiene permiso para consultar usuarios administrativos.");
         const data = await accountsApi.archivedUsers(controller.signal);
         if (!Array.isArray(data)) throw new Error("El servidor no devolvió un listado de usuarios eliminados válido.");
 
@@ -77,6 +83,8 @@ export default function ArchivedAdministrativeUsers({ overview = false }) {
     try {
       await accountsApi.restoreUser(user.id);
       setUsers((current) => current.filter((item) => item.id !== user.id));
+      // La lista principal está en caché: se revalida para mostrar la cuenta como activa.
+      queryClient.invalidateQueries({ queryKey: queryKeys.accounts.users });
       setNotice(`La cuenta de ${getUserDisplayName(user)} fue restaurada correctamente.`);
     } catch (error) {
       setRestoreError(error);
@@ -91,33 +99,11 @@ export default function ArchivedAdministrativeUsers({ overview = false }) {
     .some((value) => String(value || "").toLocaleLowerCase("es").includes(term)));
   const count = !loading && !error && <span className="inline-flex h-[34px] min-w-[159px] items-center justify-center rounded-full bg-[#7f1218]/5 px-[18px] text-[13px] font-semibold text-[#7f1218]" aria-live="polite">{users.length} {users.length === 1 ? "eliminado" : "eliminados"}</span>;
 
-  if (overview) return (
-    <section className={`${openSans.className} text-[#1F242E]`}>
-      <p className="text-xs font-semibold text-[#7f1218]">ADMINISTRACIÓN · GOBIERNO</p>
-      <header className="mt-2 flex flex-wrap items-center justify-between gap-3">
-        <h1 className="text-[32px] leading-[48px] font-bold">Papelera</h1>
-        {count}
-      </header>
-      <p className="mt-2 text-[15px] text-[#68707C]">Consulta los registros eliminados por tipo y decide cuáles restaurar.</p>
-      {loading && <p role="status" className="mt-6 text-sm text-[#68707C]">Cargando papelera…</p>}
-      {error && <div className="mt-6"><AccountFeedback error={error} sessionRequired={sessionRequired} retry={() => setRefresh((value) => value + 1)} /></div>}
-      {!loading && !error && <Link href="/admin/papelera?vista=usuarios" className="mt-14 flex min-h-[204px] max-w-[352px] flex-col rounded-xl border border-[#D1D6E0] bg-white p-5 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#7f1218]">
-        <div className="flex items-center justify-between gap-3">
-          <span className="flex h-10 w-10 items-center justify-center rounded-[10px] bg-[#7f1218]/10 text-sm font-bold text-[#7f1218]">UA</span>
-          <span className="rounded-full bg-[#F5F6F9] px-3 py-1.5 text-[11px] text-[#68707C]">{users.length} {users.length === 1 ? "borrado" : "borrados"}</span>
-        </div>
-        <h2 className="mt-4 text-[19px] font-semibold">Usuarios administrativos</h2>
-        <p className="mt-2 text-[13px] text-[#68707C]">Cuentas retiradas del acceso administrativo.</p>
-        <span className="mt-6 text-sm font-semibold text-[#7f1218]">Ver eliminados →</span>
-      </Link>}
-    </section>
-  );
-
   return (
     <section className={`${openSans.className} text-[#1F242E]`}>
-      <Link href="/admin/papelera" className="inline-flex h-[30px] items-center text-sm font-semibold text-[#7f1218] hover:underline">← Volver a Papelera</Link>
-      <h1 className="mt-3 text-[30px] leading-[48px] font-bold">Papelera · Usuarios administrativos</h1>
-      <p className="mt-[3px] text-[15px] leading-6 text-[#68707C]">Cuentas retiradas del acceso a administración.</p>
+      <Link href="/admin/usuarios" className="inline-flex h-[30px] items-center text-sm font-semibold text-[#7f1218] hover:underline">← Volver a usuarios administrativos</Link>
+      <h1 className="mt-3 text-[30px] leading-[48px] font-bold">Cuentas administrativas eliminadas</h1>
+      <p className="mt-[3px] text-[15px] leading-6 text-[#68707C]">Cuentas retiradas del acceso a administración. Al restaurarlas recuperan su acceso y sus permisos.</p>
       <div className="mt-11 flex flex-wrap items-center justify-between gap-4">
         <label className="w-full max-w-[560px]">
           <span className="sr-only">Buscar en usuarios administrativos eliminados</span>
@@ -142,7 +128,7 @@ export default function ArchivedAdministrativeUsers({ overview = false }) {
                 <td className="break-words px-6 py-3"><p className="text-sm font-semibold">{getUserDisplayName(user)}</p><p className="mt-1 text-xs text-[#68707C]">Cuenta administrativa</p></td>
                 <td className="px-6 text-[13px]">{deletionDate(user.deleted_at)}</td>
                 <td className="break-words px-6 text-[13px]">{getUserDisplayName(user.deleted_by)}</td>
-                <td className="px-3"><Button variant="outline" size="small" className={`${outlineStyle} !h-[38px] min-w-[105px] !text-[13px]`} disabled={restoring !== null} onClick={() => restore(user)} aria-label={`Restaurar a ${getUserDisplayName(user)}`}>{restoring === user.id ? "Restaurando…" : "Restaurar"}</Button></td>
+                <td className="px-3">{hasAccountPermission(viewer, "restore") ? <Button variant="outline" size="small" className={`${outlineStyle} !h-[38px] min-w-[105px] !text-[13px]`} disabled={restoring !== null} onClick={() => restore(user)} aria-label={`Restaurar a ${getUserDisplayName(user)}`}>{restoring === user.id ? "Restaurando…" : "Restaurar"}</Button> : <span className="text-xs text-[#68707C]">Sin permiso para restaurar</span>}</td>
               </tr>)}
               {!loading && !error && !filtered.length && <tr><td colSpan={4} className="p-10 text-center text-sm text-[#68707C]">{users.length ? "No hay usuarios eliminados que coincidan con la búsqueda." : "No hay usuarios administrativos eliminados."}</td></tr>}
             </tbody>
