@@ -1,5 +1,18 @@
 # Pruebas de la Aplicación `platforms`
 
+## Rendimiento administrativo — 11 de noviembre de 2026
+
+`test_admin_queries.py` añade cuatro regresiones: consultas constantes entre
+páginas de uno y diez registros con relaciones, equivalencia de representación
+y borrados lógicos, precargas vacías sin consultas adicionales y actualización
+de relaciones después de listar. Las fixtures son independientes del usuario
+sistema y de los catálogos precargados. El desarrollador ejecutó los dos módulos
+de rendimiento con SQLite: 8 pruebas aprobadas, sin omisiones. La regresión de
+`apps.platforms apps.scheduler` terminó en `OK (skipped=4)`: 150 pruebas aprobadas
+y 4 de concurrencia omitidas por requerir `select_for_update`. El agente revisó
+los resultados suministrados; no ejecutó los comandos.
+Véase `Backend/docs/RENDIMIENTO_LISTADOS_ADMINISTRATIVOS.md`.
+
 Estas pruebas documentan y validan el comportamiento integral del módulo `platforms` sin autenticación obligatoria del cliente, utilizando el usuario del sistema con `code=0`.
 
 La cobertura se distribuye entre modelos, filtros, serializadores, servicios,
@@ -436,6 +449,8 @@ Soft Delete, entrega de correo o respuestas tardías de URLs sustituidas.
 Todos los resultados del helper de consultas de la clase nueva verifican que
 `failure_confirmed` no aparezca como campo de respuesta. No se modifica el contrato
 para introducirlo. **Esta ampliación no se ejecutó**: la validación queda a cargo
+del desarrollador, junto con PostgreSQL para las dos pruebas de concurrencia.
+=======
 del desarrollador, junto con PostgreSQL para las pruebas de concurrencia.
 
 ## Notificación manual y rondas recuperables — 9 de noviembre de 2026

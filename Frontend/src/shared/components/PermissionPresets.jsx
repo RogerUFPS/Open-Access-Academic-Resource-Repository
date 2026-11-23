@@ -1,12 +1,14 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import Button from "@/shared/components/Button";
 import FormField from "@/shared/components/FormField";
 import AccountFeedback from "@/shared/components/AccountFeedback";
 import { useAccountsApi } from "@/shared/components/AccountsProvider";
 import { normalizeCatalog, valueFor } from "@/shared/components/UserPermissionMatrix";
 import { clampPage, sanitizePageValue } from "@/shared/utils/pagination";
+import { queryKeys } from "@/shared/query/queryKeys";
 
 const primary = "!border-[#7f1218] !bg-[#7f1218] hover:!bg-[#6a0f14]";
 const outline = "!border-[#7f1218] !text-[#7f1218]";
@@ -43,46 +45,40 @@ function DeletePresetDialog({ preset, onClose, onDeleted }) {
 
 export default function PermissionPresets({ result }) {
   const { me, presets: getPresets, permissions: getCatalog } = useAccountsApi();
-  const [data, setData] = useState(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(null);
-  const [sessionRequired, setSessionRequired] = useState(false);
-  const [refresh, setRefresh] = useState(0);
+  const queryClient = useQueryClient();
   const [search, setSearch] = useState("");
   const [status, setStatus] = useState("active");
   const [page, setPage] = useState(1);
   const [selected, setSelected] = useState(null);
   const [notice, setNotice] = useState(result === "creado" ? "El preset se creó correctamente." : result === "actualizado" ? "El preset se guardó correctamente." : "");
-  useEffect(() => {
-    const controller = new AbortController();
-    async function load() {
-      setLoading(true);
-      setData(null);
-      setError(null);
-      setSessionRequired(false);
-      let authenticated = false;
-      try {
-        const viewer = await me(controller.signal);
-        authenticated = true;
-        if (viewer.force_password_change) throw new Error("Debes cambiar tu contraseña provisional desde el inicio de sesión.");
-        if (!viewer.is_superadmin && !viewer.effective_permissions?.accounts?.presets?.view) throw new Error("Tu cuenta no tiene permiso para consultar presets.");
-        const [presets, catalogResponse] = await Promise.all([getPresets(controller.signal), getCatalog(controller.signal)]);
-        if (controller.signal.aborted) return;
-        if (!Array.isArray(presets) || presets.some((preset) => !preset || preset.id == null || typeof preset.name !== "string")) throw new Error("El servidor no devolvió una lista de presets válida.");
-        const catalog = normalizeCatalog(catalogResponse);
-        const rules = Object.entries(catalog).flatMap(([section, resources]) => Object.entries(resources).flatMap(([resource, actions]) => actions.map((action) => [section, resource, action])));
-        setData({ viewer, presets, rules });
-      } catch (error) {
-        if (controller.signal.aborted) return;
-        setError(error);
-        setSessionRequired(!authenticated && [401, 403].includes(error.status));
-      } finally {
-        if (!controller.signal.aborted) setLoading(false);
-      }
-    }
-    load();
-    return () => controller.abort();
-  }, [me, getPresets, getCatalog, refresh]);
+
+  // Lista en caché: al volver a esta vista se muestra lo último visto y se
+  // revalida en segundo plano.
+  const viewerQuery = useQuery({ queryKey: queryKeys.accounts.viewer, queryFn: ({ signal }) => me(signal) });
+  const viewer = viewerQuery.data ?? null;
+  const accessError = !viewer ? null
+    : viewer.force_password_change ? new Error("Debes cambiar tu contraseña provisional desde el inicio de sesión.")
+      : !viewer.is_superadmin && !viewer.effective_permissions?.accounts?.presets?.view ? new Error("Tu cuenta no tiene permiso para consultar presets.")
+        : null;
+  const canView = Boolean(viewer) && !accessError;
+  const presetsQuery = useQuery({
+    queryKey: queryKeys.accounts.presets,
+    queryFn: async ({ signal }) => {
+      const [presets, catalogResponse] = await Promise.all([getPresets(signal), getCatalog(signal)]);
+      if (!Array.isArray(presets) || presets.some((preset) => !preset || preset.id == null || typeof preset.name !== "string")) throw new Error("El servidor no devolvió una lista de presets válida.");
+      const catalog = normalizeCatalog(catalogResponse);
+      const rules = Object.entries(catalog).flatMap(([section, resources]) => Object.entries(resources).flatMap(([resource, actions]) => actions.map((action) => [section, resource, action])));
+      return { presets, rules };
+    },
+    enabled: canView,
+  });
+  const data = canView && presetsQuery.data ? { viewer, ...presetsQuery.data } : null;
+  const retrying = (viewerQuery.isError && viewerQuery.isFetching) || (presetsQuery.isError && presetsQuery.isFetching);
+  // Solo hay indicador de carga cuando no existe nada en caché.
+  const loading = viewerQuery.isPending || (canView && presetsQuery.isPending) || retrying;
+  const sessionRequired = viewerQuery.isError && [401, 403].includes(viewerQuery.error?.status);
+  const error = retrying ? null : viewerQuery.error ?? accessError ?? presetsQuery.error;
+  const retry = () => queryClient.invalidateQueries({ queryKey: queryKeys.accounts.all });
   const can = (action) => Boolean(data?.viewer.is_superadmin || data?.viewer.effective_permissions?.accounts?.presets?.[action]);
   const term = search.trim().toLocaleLowerCase("es");
   const filtered = (data?.presets || []).filter((preset) => (status === "all" || (preset.is_active !== false) === (status === "active")) && [preset.id, `PR-${String(preset.id).padStart(2, "0")}`, preset.name].some((value) => String(value).toLocaleLowerCase("es").includes(term)));
@@ -112,7 +108,7 @@ export default function PermissionPresets({ result }) {
       <FormField compact id="presets-status" label="Estado" value={status} onChange={(event) => { setStatus(event.target.value); setPage(1); }} options={[{ value: "active", label: "Activos" }, { value: "inactive", label: "Inactivos" }, { value: "all", label: "Todos" }]} />
     </div>
     {notice && <p role="status" className="rounded-lg bg-[#E8FAF0] p-3 text-sm text-[#0F8C45]">{notice}</p>}
-    {error && <AccountFeedback error={error} sessionRequired={sessionRequired} retry={() => setRefresh((value) => value + 1)} />}
+    {error && <AccountFeedback error={error} sessionRequired={sessionRequired} retry={retry} />}
     <div className="min-h-[388px] rounded-[10px] bg-white px-4" aria-busy={loading}>
       <div className="overflow-x-auto">
         <table className="w-full min-w-[1000px] table-fixed text-left text-xs">
@@ -140,7 +136,7 @@ export default function PermissionPresets({ result }) {
       </div>}
     </div>
     <p className="text-xs text-[#6B758A]">Los cambios de un preset se usan al aplicarlo a un usuario. Revisa los permisos antes de guardar.</p>
-    {selected && <DeletePresetDialog preset={selected} onClose={() => setSelected(null)} onDeleted={(preset) => { setSelected(null); setNotice(`El preset «${preset.name}» se eliminó correctamente.`); setRefresh((value) => value + 1); }} />}
+    {selected && <DeletePresetDialog preset={selected} onClose={() => setSelected(null)} onDeleted={(preset) => { setSelected(null); setNotice(`El preset «${preset.name}» se eliminó correctamente.`); queryClient.invalidateQueries({ queryKey: queryKeys.accounts.presets }); }} />}
     <Button variant="outline" className={outline} href="/admin/usuarios">Volver a usuarios</Button>
   </section>;
 }

@@ -5,8 +5,10 @@ import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 import AccountFeedback from "@/shared/components/AccountFeedback";
-import { LoginField } from "@/shared/components/AdminLoginForm";
+import LoginField from "@/shared/components/LoginField";
+import RateLimitNotice from "@/shared/components/RateLimitNotice";
 import { useAccountsApi } from "@/shared/components/AccountsProvider";
+import useRetryCountdown from "@/shared/hooks/useRetryCountdown";
 
 export default function ForgotPasswordForm() {
   const accountsApi = useAccountsApi();
@@ -14,17 +16,18 @@ export default function ForgotPasswordForm() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
   const [message, setMessage] = useState(null);
+  const { remaining, limited, handleRateLimit } = useRetryCountdown();
 
   async function submit(event) {
     event.preventDefault();
-    if (busy) return;
+    if (busy || limited) return;
     setError(null);
     setBusy(true);
     try {
       const result = await accountsApi.forgotPassword({ email: email.trim() });
       setMessage(result?.detail || "Si el correo está registrado, recibirás una contraseña provisional.");
     } catch (error) {
-      setError(error);
+      if (!handleRateLimit(error)) setError(error);
     } finally {
       setBusy(false);
     }
@@ -48,12 +51,13 @@ export default function ForgotPasswordForm() {
     </> : <form onSubmit={submit} aria-busy={busy}>
       <CardContent className="space-y-5">
         {error && <AccountFeedback error={error} />}
+        <RateLimitNotice remaining={remaining} />
         <fieldset disabled={busy} className="space-y-5">
           <LoginField id="forgot-email" label="Correo institucional" type="email" autoComplete="username" placeholder="usuario@ufps.edu.co" value={email} onChange={(event) => setEmail(event.target.value)} />
         </fieldset>
       </CardContent>
       <CardFooter className="flex-col gap-4 pt-2 pb-4">
-        <Button type="submit" disabled={busy} className="h-12 w-full rounded-lg bg-[#7f1218] text-[15px] font-medium text-white transition-colors hover:bg-[#6a0f14]">{busy ? "Enviando…" : "Enviar contraseña provisional"}</Button>
+        <Button type="submit" disabled={busy || limited} className="h-12 w-full rounded-lg bg-[#7f1218] text-[15px] font-medium text-white transition-colors hover:bg-[#6a0f14]">{busy ? "Enviando…" : "Enviar contraseña provisional"}</Button>
         <Link href="/admin/login" className="text-sm font-medium text-[#7f1218] hover:underline">Volver a iniciar sesión</Link>
       </CardFooter>
     </form>}

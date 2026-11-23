@@ -1,9 +1,11 @@
 import os
 
 from celery.schedules import crontab
+from django.core.exceptions import ImproperlyConfigured
 from dotenv import load_dotenv
 
 from .base import *
+from corsheaders.defaults import default_headers
 
 load_dotenv()
 
@@ -35,18 +37,28 @@ CORS_ALLOWED_ORIGINS = [
 
 CORS_ALLOW_ALL_ORIGINS = env_bool("CORS_ALLOW", False)
 CORS_ALLOW_CREDENTIALS = True
+CORS_ALLOW_HEADERS = (*default_headers, "x-chat-token")
+CORS_EXPOSE_HEADERS = ["Retry-After"]
+if not DEBUG and CORS_ALLOW_ALL_ORIGINS:
+    raise ImproperlyConfigured(
+        "CORS_ALLOW no puede habilitarse junto con credenciales en producción."
+    )
 RESEND_API_KEY = os.getenv("RESEND_API_KEY", "")
 DEFAULT_FROM_EMAIL = os.getenv(
     "DEFAULT_FROM_EMAIL",
     os.getenv("RESEND_FROM_EMAIL", "onboarding@resend.dev"),
 )
 RESEND_FROM_EMAIL = DEFAULT_FROM_EMAIL
+SUPERADMIN_EMAIL = os.getenv("SUPERADMIN_EMAIL", "").strip()
 CELERY_BROKER_URL = os.getenv(
     "CELERY_BROKER_URL",
     "amqp://harvest:harvest@rabbitmq:5672//",
 )
 CELERY_TASK_DEFAULT_QUEUE = "harvesting"
 CELERY_TASK_ROUTES = {
+    "apps.agent.process_turn": {"queue": "agent"},
+    "apps.agent.advance_switch": {"queue": "agent-control"},
+    "apps.agent.reconcile": {"queue": "agent-control"},
     "apps.harvesting.process_harvest_step": {"queue": "harvesting"},
 }
 CELERY_TASK_SERIALIZER = "json"
@@ -58,6 +70,9 @@ CELERY_WORKER_PREFETCH_MULTIPLIER = 1
 CELERY_ENABLE_UTC = True
 CELERY_TIMEZONE = "UTC"
 CELERY_BEAT_SCHEDULE = {
+    "agent-reconcile-every-30s": {
+        "task": "apps.agent.reconcile", "schedule": 30.0,
+    },
     "harvesting-run-due-every-5m": {
         "task": "apps.scheduler.tasks.dispatch_http_job",
         "schedule": crontab(minute="*/5"),
@@ -78,18 +93,86 @@ SCHEDULER_API_URL = os.getenv("SCHEDULER_API_URL", "http://backend:8000")
 SCHEDULER_API_TOKEN = os.getenv("SCHEDULER_API_TOKEN", "")
 SCHEDULER_SERVICE_USER_ID = os.getenv("SCHEDULER_SERVICE_USER_ID", "")
 LINK_CHECK_BATCH_SIZE = max(1, int(os.getenv("LINK_CHECK_BATCH_SIZE", "50")))
+AGENT_SNAPSHOT_CACHE_SECONDS = max(
+    0, int(os.getenv("AGENT_SNAPSHOT_CACHE_SECONDS", "300"))
+)
+AGENT_DEFAULT_MODEL = os.getenv("AGENT_DEFAULT_MODEL", "qwen")
+if AGENT_DEFAULT_MODEL not in {"qwen", "glm", "llama"}:
+    raise ImproperlyConfigured("AGENT_DEFAULT_MODEL debe ser qwen, glm o llama.")
+AGENT_ENDPOINTS = {name: os.getenv(f"AGENT_{name.upper()}_URL", "").strip() for name in ("qwen", "glm", "llama")}
+AGENT_SERVICE_API_KEY = os.getenv("AGENT_SERVICE_API_KEY", "")
+AGENT_MODAL_KEY = os.getenv("AGENT_MODAL_KEY", "")
+AGENT_MODAL_SECRET = os.getenv("AGENT_MODAL_SECRET", "")
+AGENT_TIMEOUT_SECONDS = max(60, int(os.getenv("AGENT_TIMEOUT_SECONDS", "900")))
+AGENT_MAX_PENDING = max(1, int(os.getenv("AGENT_MAX_PENDING", "64")))
+
+LOGGING = {
+    "version": 1, "disable_existing_loggers": False,
+    "filters": {"anonymous_chat": {"()": "apps.agent.privacy.AnonymousAccessFilter"}},
+    "loggers": {name: {"filters": ["anonymous_chat"]} for name in ("uvicorn.access", "gunicorn.access", "django.server")},
+}
 LINK_FAILURE_FRONTEND_URL = os.getenv("LINK_FAILURE_FRONTEND_URL", "")
 FRONTEND_LOGIN_URL = os.getenv(
     "FRONTEND_LOGIN_URL",
     "https://repositorio-biblioteca-frontend.vercel.app/admin/login",
 )
+SECURE_DEPLOYMENT = env_bool("SECURE_DEPLOYMENT", False)
+SECURE_SSL_REDIRECT = SECURE_DEPLOYMENT
+SECURE_HSTS_SECONDS = int(os.getenv(
+    "SECURE_HSTS_SECONDS",
+    "31536000" if SECURE_DEPLOYMENT else "0",
+))
+SECURE_HSTS_INCLUDE_SUBDOMAINS = env_bool(
+    "SECURE_HSTS_INCLUDE_SUBDOMAINS",
+    SECURE_DEPLOYMENT,
+)
+SECURE_HSTS_PRELOAD = env_bool("SECURE_HSTS_PRELOAD", SECURE_DEPLOYMENT)
+SECURE_REFERRER_POLICY = "same-origin"
+SECURE_CROSS_ORIGIN_OPENER_POLICY = "same-origin"
+if SECURE_DEPLOYMENT:
+    # Solo debe habilitarse cuando el proxy elimina la cabecera entrante y
+    # escribe su propio X-Forwarded-Proto.
+    SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
+
 SESSION_COOKIE_HTTPONLY = True
-SESSION_COOKIE_SECURE = not DEBUG
+SESSION_COOKIE_SECURE = SECURE_DEPLOYMENT or not DEBUG
 SESSION_COOKIE_AGE = 15 * 60
-SESSION_SAVE_EVERY_REQUEST = True
-CSRF_COOKIE_SECURE = not DEBUG
-SESSION_COOKIE_SAMESITE = "None" if not DEBUG else "Lax"
-CSRF_COOKIE_SAMESITE = SESSION_COOKIE_SAMESITE
+SESSION_COOKIE_NAME = os.getenv("SESSION_COOKIE_NAME", "sessionid")
+SESSION_COOKIE_PATH = "/"
+# La renovación por inactividad la hace ThrottledSessionRenewalMiddleware
+# (apps.core.middleware) como máximo cada SESSION_RENEWAL_INTERVAL segundos,
+# en lugar de escribir la sesión en la base en cada petición.
+SESSION_SAVE_EVERY_REQUEST = False
+SESSION_RENEWAL_INTERVAL = min(
+    max(0, int(os.getenv("SESSION_RENEWAL_INTERVAL", "60"))),
+    SESSION_COOKIE_AGE,
+)
+CSRF_COOKIE_NAME = os.getenv("CSRF_COOKIE_NAME", "csrftoken")
+CSRF_COOKIE_SECURE = SESSION_COOKIE_SECURE
+CSRF_COOKIE_PATH = "/"
+SESSION_COOKIE_SAMESITE = "Lax"
+CSRF_COOKIE_SAMESITE = "Lax"
+
+for _cookie_name, _cookie_secure in (
+    (SESSION_COOKIE_NAME, SESSION_COOKIE_SECURE),
+    (CSRF_COOKIE_NAME, CSRF_COOKIE_SECURE),
+):
+    if _cookie_name.startswith("__Host-") and not _cookie_secure:
+        raise ImproperlyConfigured(
+            f"{_cookie_name} requiere una cookie Secure."
+        )
+if SECURE_DEPLOYMENT and (
+    not SESSION_COOKIE_NAME.startswith("__Host-")
+    or not CSRF_COOKIE_NAME.startswith("__Host-")
+):
+    raise ImproperlyConfigured(
+        "SECURE_DEPLOYMENT requiere nombres de cookie con prefijo __Host-."
+    )
+
+MFA_ENROLLMENT_TTL = max(60, int(os.getenv("MFA_ENROLLMENT_TTL", "600")))
+RECENT_AUTH_AGE = max(60, int(os.getenv("RECENT_AUTH_AGE", "300")))
+NUM_PROXIES = max(0, int(os.getenv("NUM_PROXIES", "1")))
+REST_FRAMEWORK["NUM_PROXIES"] = NUM_PROXIES
 
 if os.getenv("DJANGO_TESTING", "").lower() in {"1", "true", "yes", "on"}:
     DATABASES = {
@@ -117,8 +200,28 @@ else:
                 os.getenv("DATABASE_PORT", "5432"),
             ),
             "OPTIONS": {"sslmode": os.getenv("DATABASE_SSLMODE", "require")},
+            # El pool sustituye a las conexiones persistentes; Django no admite
+            # ambos mecanismos a la vez.
+            "CONN_MAX_AGE": 0,
         }
     }
+
+    # Pool de conexiones de psycopg (Django >= 5.1). Solo se activa en el
+    # servicio web: Celery prefork cierra el pool al terminar cada tarea, por
+    # lo que en worker/beat añadiría aperturas de conexión en lugar de evitarlas.
+    if env_bool("DATABASE_POOL", False):
+        _pool_min_size = max(1, int(os.getenv("DATABASE_POOL_MIN_SIZE", "2")))
+        DATABASES["default"]["OPTIONS"]["pool"] = {
+            "min_size": _pool_min_size,
+            "max_size": max(
+                _pool_min_size,
+                int(os.getenv("DATABASE_POOL_MAX_SIZE", "4")),
+            ),
+            # Segundos que una petición espera una conexión libre.
+            "timeout": float(os.getenv("DATABASE_POOL_TIMEOUT", "10")),
+            # Cierra conexiones ociosas antes de que el proveedor las corte.
+            "max_idle": float(os.getenv("DATABASE_POOL_MAX_IDLE", "300")),
+        }
 
 # --- Almacenamiento S3 (RustFS) ---
 S3_ENDPOINT = os.getenv("S3_ENDPOINT", "")

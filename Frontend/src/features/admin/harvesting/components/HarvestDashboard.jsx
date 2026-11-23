@@ -1,6 +1,8 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useRef, useState } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { queryKeys } from "@/shared/query/queryKeys";
 import AdminTable from "@/shared/components/AdminTable";
 import Button from "@/shared/components/Button";
 import FormField from "@/shared/components/FormField";
@@ -8,6 +10,8 @@ import MetricCard from "@/shared/components/MetricCard";
 import Notice from "@/shared/components/Notice";
 import { formatDate, getHarvests, getHarvestSourceCount, getUpcomingSchedules } from "@/features/admin/harvesting/harvesting";
 import HarvestExecutions from "./HarvestExecutions";
+import { useFilterOptions } from "@/features/admin/harvesting/queries";
+import { ScheduleFiltersEditor, ScheduleFiltersSummary } from "./ScheduleFilters";
 import { useHarvestingApi } from "./HarvestingProvider";
 import { clampPage, sanitizePageValue } from "@/shared/utils/pagination";
 
@@ -15,59 +19,35 @@ const FREQUENCIES = { once: "Única", daily: "Diaria", weekly: "Semanal", monthl
 const SCHEDULE_PAGE_SIZE = 10;
 
 const scheduleColumns = [
-  { key: "platforms", label: "FUENTES", width: "25%", render: (row) => row.platform_names?.join(", ") || row.platforms.map((id) => `Plataforma ${id}`).join(", ") },
-  { key: "frequency", label: "FRECUENCIA", width: "15%", render: (row) => FREQUENCIES[row.frequency] || row.frequency },
-  { key: "start_date", label: "FECHA INICIAL", width: "20%", muted: true, render: (row) => formatDate(row.start_date) },
-  { key: "limits", label: "LÍMITES POR FUENTE", width: "25%", render: (row) => [
+  { key: "platforms", label: "FUENTES", width: "18%", render: (row) => row.platform_names?.join(", ") || row.platforms.map((id) => `Plataforma ${id}`).join(", ") },
+  { key: "frequency", label: "FRECUENCIA", width: "11%", render: (row) => FREQUENCIES[row.frequency] || row.frequency },
+  { key: "start_date", label: "FECHA INICIAL", width: "16%", muted: true, render: (row) => formatDate(row.start_date) },
+  { key: "limits", label: "LÍMITES POR FUENTE", width: "17%", render: (row) => [
     row.max_quantity == null ? null : `${row.max_quantity} revistas`,
     row.stop_after_minutes == null ? null : `${row.stop_after_minutes} minutos`,
   ].filter(Boolean).join(" · ") },
 ];
 
-function useHarvestData(loadData, intervalMs = null) {
-  const [state, setState] = useState({ data: null, loading: true, error: "" });
-  const [revision, setRevision] = useState(0);
-  const loadRef = useRef(null);
-  const pollingInterval = typeof intervalMs === "function" ? intervalMs(state.data) : intervalMs;
-
-  useEffect(() => {
-    const controller = new AbortController();
-    let fetching = false;
-    async function load() {
-      if (fetching) return;
-      fetching = true;
-      try {
-        const data = await loadData(controller.signal);
-        if (!controller.signal.aborted) {
-          setState({ data, loading: false, error: "" });
-        }
-      } catch (error) {
-        if (!controller.signal.aborted) setState((current) => ({ ...current, loading: false, error: error.message }));
-      } finally {
-        fetching = false;
-      }
-    }
-    loadRef.current = load;
-    load();
-    return () => { controller.abort(); loadRef.current = null; };
-  }, [loadData, revision]);
-
-  // Changing the polling cadence must not restart the request or fetch immediately.
-  useEffect(() => {
-    if (pollingInterval === null) return;
-    const timer = setInterval(() => { if (!document.hidden) loadRef.current?.(); }, pollingInterval);
-    return () => clearInterval(timer);
-  }, [pollingInterval]);
-
-  const refresh = useCallback(() => {
-    setState((current) => ({ ...current, loading: true }));
-    setRevision((current) => current + 1);
-  }, []);
-
-  return { ...state, refresh };
+// Datos en caché: al volver a la pestaña se muestra lo último visto y se
+// revalida en segundo plano. El sondeo se pausa con la pestaña oculta.
+function useHarvestData(queryKey, loadData, refetchInterval = false) {
+  const query = useQuery({
+    queryKey,
+    queryFn: ({ signal }) => loadData(signal),
+    refetchInterval: typeof refetchInterval === "function"
+      ? (current) => refetchInterval(current.state.data)
+      : refetchInterval,
+  });
+  // Solo hay aviso de carga cuando no existe nada en caché para esta clave.
+  const loading = query.isPending || (query.isError && query.isFetching);
+  const error = query.isError && !query.isFetching ? query.error?.message || "Error al cargar los datos." : "";
+  const { refetch } = query;
+  const refresh = useCallback(() => { refetch(); }, [refetch]);
+  return { data: query.data, loading, error, refresh };
 }
 
 export default function HarvestDashboard() {
+  const queryClient = useQueryClient();
   const { deactivateSchedule, runDueSchedules } = useHarvestingApi();
   const [page, setPage] = useState(1);
   const [pageInput, setPageInput] = useState("1");
@@ -79,22 +59,26 @@ export default function HarvestDashboard() {
   const [explanation, setExplanation] = useState("");
   const [deactivating, setDeactivating] = useState(false);
   const [scheduleFeedback, setScheduleFeedback] = useState(null);
+  const [editingSchedule, setEditingSchedule] = useState(null);
+  const filterOptions = useFilterOptions();
   const requestPending = useRef(false);
 
-  const loadHarvests = useCallback((signal) => getHarvests(page, signal), [page]);
-  const harvests = useHarvestData(loadHarvests, (data) => (
+  const harvests = useHarvestData(queryKeys.harvests.list(page), (signal) => getHarvests(page, signal), (data) => (
     executing || data?.results.some((row) => ["pending", "running", "pausing"].includes(row.state)) ? 5000 : 30000
   ));
+  const upcomingSchedules = useHarvestData(queryKeys.harvests.schedules, getUpcomingSchedules, 30000);
+  const sources = useHarvestData(queryKeys.harvests.sourceCount, getHarvestSourceCount);
 
-  const loadSchedules = useCallback(async (signal) => {
-    const schedules = await getUpcomingSchedules(signal);
-    if (!signal.aborted) {
-      setSchedulePage((current) => Math.min(current, Math.max(1, Math.ceil(schedules.length / SCHEDULE_PAGE_SIZE))));
-    }
-    return schedules;
-  }, []);
-  const upcomingSchedules = useHarvestData(loadSchedules, 30000);
-  const sources = useHarvestData(getHarvestSourceCount);
+  // Tras una acción se revalidan todas las páginas de ejecuciones en caché.
+  const refreshHarvests = () => queryClient.invalidateQueries({ queryKey: queryKeys.harvests.lists });
+
+  // Si la lista de programaciones se acorta, la página vuelve a la última válida.
+  const scheduleCount = upcomingSchedules.data?.length || 0;
+  const schedulePages = Math.max(1, Math.ceil(scheduleCount / SCHEDULE_PAGE_SIZE));
+  if (upcomingSchedules.data && schedulePage > schedulePages) {
+    setSchedulePage(schedulePages);
+    setSchedulePageInput(String(schedulePages));
+  }
 
   async function executeDue() {
     if (requestPending.current || harvests.loading || upcomingSchedules.loading) return;
@@ -111,7 +95,8 @@ export default function HarvestDashboard() {
       setExecuting(false);
       // The result may be uncertain after a timeout; always read the current state.
       setPage(1);
-      harvests.refresh();
+      setPageInput("1");
+      refreshHarvests();
       upcomingSchedules.refresh();
     }
   }
@@ -137,12 +122,22 @@ export default function HarvestDashboard() {
   }
 
   const columns = [...scheduleColumns, {
-    key: "actions", label: "ACCIONES", width: "15%", render: (row) => (
+    key: "filters", label: "FILTROS", width: "20%", render: (row) => <ScheduleFiltersSummary filters={row.selection_filters} filterOptions={filterOptions.data} />,
+  }, {
+    key: "actions", label: "ACCIONES", width: "18%", render: (row) => (
+      <div className="flex flex-wrap gap-2">
+      <Button variant="quiet" size="small" disabled={upcomingSchedules.loading || Boolean(upcomingSchedules.error) || executing || deactivating} aria-label={`Editar filtros de la programación #${row.id}`} onClick={() => {
+        setEditingSchedule(row);
+        setSelectedSchedule(null);
+        setScheduleFeedback(null);
+      }}>Filtros</Button>
       <Button variant="quiet" size="small" disabled={upcomingSchedules.loading || Boolean(upcomingSchedules.error) || executing || deactivating} aria-label={`Desactivar programación #${row.id}`} onClick={() => {
+        setEditingSchedule(null);
         setSelectedSchedule(row);
         setExplanation("");
         setScheduleFeedback(null);
       }}>Desactivar</Button>
+      </div>
     ),
   }];
 
@@ -156,7 +151,6 @@ export default function HarvestDashboard() {
     const safePage = clampPage(nextPage, Math.max(1, harvests.data?.total_pages ?? 1));
     setPage(safePage);
     setPageInput(String(safePage));
-    harvests.refresh();
   }
 
   function submitPageNumber() {
@@ -166,10 +160,7 @@ export default function HarvestDashboard() {
       return;
     }
     const nextPage = result.page;
-    if (nextPage !== page) {
-      setPage(nextPage);
-      harvests.refresh();
-    }
+    if (nextPage !== page) setPage(nextPage);
     setPageInput(String(nextPage));
   }
 
@@ -185,8 +176,6 @@ export default function HarvestDashboard() {
   }
 
   const runs = harvests.data?.results || [];
-  const scheduleCount = upcomingSchedules.data?.length || 0;
-  const schedulePages = Math.max(1, Math.ceil(scheduleCount / SCHEDULE_PAGE_SIZE));
   const schedules = upcomingSchedules.data?.slice((schedulePage - 1) * SCHEDULE_PAGE_SIZE, schedulePage * SCHEDULE_PAGE_SIZE) || [];
   const totals = runs.reduce((sum, row) => ({
     added: sum.added + row.records_added, updated: sum.updated + row.records_updated, failed: sum.failed + row.records_failed,
@@ -219,7 +208,7 @@ export default function HarvestDashboard() {
           </div>
           {harvests.loading && <Notice live>Cargando ejecuciones…</Notice>}
           {harvests.error && <Notice variant="error" live>{harvests.error}</Notice>}
-          {showHarvests && <HarvestExecutions rows={runs} onRefresh={harvests.refresh} busy={harvests.loading || Boolean(harvests.error)} />}
+          {showHarvests && <HarvestExecutions rows={runs} onRefresh={refreshHarvests}busy={harvests.loading || Boolean(harvests.error)} />}
           {showHarvests && harvests.data.total_pages > 1 && <div className="flex flex-wrap items-center gap-3">
             <Button variant="quiet" size="small" disabled={harvests.loading || page <= 1} onClick={() => changePage(page - 1)}>Anterior</Button>
             <label className="flex items-center gap-2 text-sm text-[#68707C]">
@@ -258,6 +247,11 @@ export default function HarvestDashboard() {
           {upcomingSchedules.error && <Notice variant="error" live>{upcomingSchedules.error}</Notice>}
           {scheduleFeedback && <Notice variant={scheduleFeedback.variant} live>{scheduleFeedback.message}</Notice>}
           {upcomingSchedules.data && (schedules.length ? <AdminTable caption="Programaciones de cosecha pendientes y recurrentes" columns={columns} rows={schedules} /> : <Notice>No hay programaciones pendientes de cosecha.</Notice>)}
+          {editingSchedule && <ScheduleFiltersEditor key={editingSchedule.id} schedule={editingSchedule} onCancel={() => setEditingSchedule(null)} onSaved={(updated) => {
+            setScheduleFeedback({ variant: "success", message: `Filtros de la programación #${updated?.id ?? editingSchedule.id} actualizados. Aplican a las próximas ejecuciones.` });
+            setEditingSchedule(null);
+            upcomingSchedules.refresh();
+          }} />}
           {selectedSchedule && <form onSubmit={deactivate} className="flex flex-col gap-3 rounded-lg border border-[#DCE0E5] p-4" aria-busy={deactivating}>
             <p className="font-semibold">Desactivar programación #{selectedSchedule.id}</p>
             <p className="text-xs text-[#68707C]">{selectedSchedule.platform_names?.join(", ")}. Esta programación dejará de generar nuevas ejecuciones. El motivo permite archivarla si tiene registros asociados.</p>

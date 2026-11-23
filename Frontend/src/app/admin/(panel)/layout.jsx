@@ -2,18 +2,20 @@ import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import AdminLayout from "@/shared/layouts/AdminLayout";
 import AccountsGateway from "@/shared/components/AccountsGateway";
-import { apiClient } from "@/shared/services/apiClient";
+import QueryProvider from "@/shared/query/QueryProvider";
+import { apiClient, pendingAccountStep } from "@/shared/services/apiClient";
 import { getUserDisplayName } from "@/shared/services/userService";
+import { SESSION_COOKIE_NAME } from "@/shared/config/cookies";
 
 export default async function AdminRouteLayout({ children }) {
   const store = await cookies();
-  const session = store.get("sessionid")?.value;
+  const session = store.get(SESSION_COOKIE_NAME)?.value;
   if (!session) redirect("/admin/login");
 
   let user;
   try {
     user = await apiClient.get("/api/accounts/auth/me/", {}, {
-      headers: { Cookie: `sessionid=${session}` },
+      headers: { Cookie: `${SESSION_COOKIE_NAME}=${session}` },
       cache: "no-store",
       signal: AbortSignal.timeout(60000),
       redirect: "error",
@@ -22,7 +24,8 @@ export default async function AdminRouteLayout({ children }) {
     if (![401, 403].includes(error.status)) throw error;
   }
 
-  if (!user || user.force_password_change) redirect("/admin/login");
+  // Password changes and superadmin MFA are completed on the login screen.
+  if (!user || pendingAccountStep(user)) redirect("/admin/login");
 
-  return <AccountsGateway initialUser={user}><AdminLayout userName={getUserDisplayName(user)}>{children}</AdminLayout></AccountsGateway>;
+  return <AccountsGateway initialUser={user}><QueryProvider><AdminLayout userName={getUserDisplayName(user)}>{children}</AdminLayout></QueryProvider></AccountsGateway>;
 }

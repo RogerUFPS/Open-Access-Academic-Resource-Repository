@@ -1,3 +1,5 @@
+import uuid
+
 from django.db import models
 
 from apps.core.models import AuditableModel
@@ -16,6 +18,8 @@ class Schedule(AuditableModel):
         DAILY = "daily", "DAILY"
         WEEKLY = "weekly", "WEEKLY"
         MONTHLY = "monthly", "MONTHLY"
+
+    selection_filters = models.JSONField(default=dict, blank=True)
 
     platforms = models.ManyToManyField(
         Platform,
@@ -86,7 +90,31 @@ class ScheduleEvent(AuditableModel):
         return f"Schedule event #{self.pk} - {self.scheduled_for}"
 
 
+class HarvestRunRequest(models.Model):
+    """Persistent result of a keyed ``run-due`` HTTP request."""
+
+    class State(models.TextChoices):
+        PROCESSING = "processing", "PROCESSING"
+        COMPLETED = "completed", "COMPLETED"
+
+    idempotency_key = models.CharField(max_length=255, unique=True)
+    operation = models.CharField(max_length=255, default="run_due")
+    state = models.CharField(max_length=20, choices=State.choices, default=State.PROCESSING)
+    processing_token = models.UUIDField(default=uuid.uuid4, editable=False)
+    response_status = models.PositiveSmallIntegerField(null=True, blank=True)
+    response_body = models.JSONField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    completed_at = models.DateTimeField(null=True, blank=True)
+
+
 class Harvest(AuditableModel):
+
+    selection_filters = models.JSONField(default=dict, blank=True)
+    resolved_filters = models.JSONField(default=dict, blank=True)
+    filter_key = models.CharField(max_length=64, default="", blank=True)
+    source_exhausted = models.BooleanField(default=False)
+    records_skipped = models.PositiveIntegerField(default=0)
 
     class State(models.TextChoices):
         PENDING = "pending", "PENDING"
@@ -213,6 +241,7 @@ class Harvest(AuditableModel):
 
     class Meta:
         ordering = ["-created_at"]
+        indexes = [models.Index(fields=["platform", "filter_key", "-created_at"], name="harvest_stream_progress_idx")]
         constraints = [
             models.UniqueConstraint(
                 fields=["platform"],
@@ -258,3 +287,14 @@ class HarvestJournal(models.Model):
 
     def __str__(self):
         return f"Harvest #{self.harvest_id}: Journal #{self.journal_id} ({self.result})"
+
+
+class HarvestSourceRecord(models.Model):
+    """Last successfully imported payload, shared by all selection streams."""
+
+    platform = models.ForeignKey(Platform, on_delete=models.CASCADE)
+    identifier = models.CharField(max_length=512)
+    fingerprint = models.CharField(max_length=64)
+
+    class Meta:
+        constraints = [models.UniqueConstraint(fields=["platform", "identifier"], name="unique_harvest_source_record")]

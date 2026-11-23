@@ -1,5 +1,19 @@
 # Pruebas de la Aplicación `journal`
 
+## Rendimiento administrativo — 11 de noviembre de 2026
+
+`test_admin_queries.py` añade cuatro regresiones: consultas constantes entre
+páginas de uno y diez revistas, equivalencia de representación y borrados lógicos,
+precargas vacías sin consultas adicionales y PATCH seguido de detalle y filtro.
+Incluye licencias ordenadas y plataformas publicadas/borrador con sus URLs vigentes.
+Las fixtures nuevas son independientes de `code=0` y los catálogos precargados.
+Las cuatro pruebas nuevas pasaron dentro de la ejecución conjunta con `platforms`:
+8 pruebas aprobadas en SQLite, sin omisiones, según el resultado suministrado
+por el desarrollador. El agente no ejecutó los comandos. Las fixtures históricas
+que crean otra vez el usuario sistema requieren revisión separada para ejecutar
+la suite completa, que no se validó en esta ejecución.
+Véase `Backend/docs/RENDIMIENTO_LISTADOS_ADMINISTRATIVOS.md`.
+
 Estas pruebas documentan y validan el comportamiento integral del módulo `journal` sin autenticación obligatoria del cliente, utilizando el usuario del sistema con `code=0`.
 
 **Cobertura actual: 86 pruebas** distribuidas entre modelos, serializadores,

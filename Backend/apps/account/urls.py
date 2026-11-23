@@ -5,7 +5,11 @@ from . import views
 urlpatterns = [
     path("auth/csrf/", views.CsrfView.as_view(), name="account-csrf"),
     path("auth/login/", views.LoginView.as_view(), name="account-login"),
+    path("auth/mfa/challenge/", views.MFAChallengeView.as_view(), name="account-mfa-challenge"),
+    path("auth/mfa/enroll/", views.MFAEnrollmentView.as_view(), name="account-mfa-enroll"),
+    path("auth/mfa/enroll/confirm/", views.MFAEnrollmentConfirmView.as_view(), name="account-mfa-enroll-confirm"),
     path("auth/logout/", views.LogoutView.as_view(), name="account-logout"),
+    path("auth/session/", views.SessionView.as_view(), name="account-session"),
     path("auth/me/", views.MeView.as_view(), name="account-me"),
     path("register/", views.RegisterView.as_view(), name="account-register"),
     path("password/change/", views.ChangePasswordView.as_view(), name="password-change"),
@@ -17,6 +21,7 @@ urlpatterns = [
         name="account-archived-users",
     ),
     path("users/invite/", views.InviteView.as_view(), name="account-user-invite"),
+    path("superadmin/accounts/", views.SuperadminAccountsView.as_view(), name="superadmin-accounts"),
     path(
         "users/<int:pk>/",
         views.UserDetailView.as_view(),

@@ -36,13 +36,14 @@ from .permissions import LinkVerificationPermission
 
 logger = logging.getLogger(__name__)
 
-def _existing_link_check_run(mode, idempotency_key):
+def _existing_link_check_run(mode, user, idempotency_key):
     if idempotency_key:
-        run = models.LinkCheckRun.objects.filter(
+        request = models.LinkCheckRequest.objects.select_related("run").filter(
+            requested_by=user,
             idempotency_key=idempotency_key,
         ).first()
-        if run:
-            return run
+        if request:
+            return request.run
     return models.LinkCheckRun.objects.filter(
         mode=mode,
         finished_at__isnull=True,
@@ -52,20 +53,42 @@ def _existing_link_check_run(mode, idempotency_key):
 def _get_or_create_link_check_run(mode, user, idempotency_key):
     try:
         with transaction.atomic():
-            existing = _existing_link_check_run(mode, idempotency_key)
-            if existing:
-                return existing, False
-            run = models.LinkCheckRun.objects.create(
-                mode=mode,
-                requested_by=user,
-                idempotency_key=idempotency_key,
-            )
-        return run, True
+            if idempotency_key:
+                request = models.LinkCheckRequest.objects.select_related("run").filter(
+                    requested_by=user,
+                    idempotency_key=idempotency_key,
+                ).first()
+                if request:
+                    return request.run, False
+            existing = _existing_link_check_run(mode, user, None)
+            if existing is None:
+                existing = models.LinkCheckRun.objects.create(
+                    mode=mode,
+                    requested_by=user,
+                )
+                created = True
+            else:
+                created = False
+            if idempotency_key:
+                models.LinkCheckRequest.objects.create(
+                    requested_by=user,
+                    idempotency_key=idempotency_key,
+                    mode=mode,
+                    run=existing,
+                )
+        return existing, created
     except IntegrityError:
-        # A concurrent request may win either the idempotency-key or active-mode
-        # unique constraint after our initial read.
-        existing = _existing_link_check_run(mode, idempotency_key)
+        # A concurrent request may win the request-key or active-mode unique
+        # constraint after our initial read.
+        existing = _existing_link_check_run(mode, user, idempotency_key)
         if existing:
+            if idempotency_key:
+                request, _ = models.LinkCheckRequest.objects.get_or_create(
+                    requested_by=user,
+                    idempotency_key=idempotency_key,
+                    defaults={"mode": mode, "run": existing},
+                )
+                existing = request.run
             return existing, False
         raise
 
@@ -127,6 +150,29 @@ def _with_public_relations(queryset):
             )
         )
     return queryset.select_related("valid_sintaxis").prefetch_related(*prefetches)
+
+
+def _with_admin_relations(queryset):
+    # Las reglas administrativas difieren de las públicas: conservar el filtro
+    # del manager de los vínculos y la representación actual de procedencia.
+    relation_specs = (
+        ("support_links", "institutions", models.SharedPlatformSupport, "institution"),
+        ("language_links", "languages", models.SharedPlatformLanguage, "language"),
+        ("country_links", "countries", models.SharedPlatformCountry, "country"),
+        ("knowledge_area_links", "knowledge_areas", models.SharedPlatformKnowledgeArea, "knowledge_area"),
+        ("material_type_links", "material_types", models.SharedPlatformMaterialType, "material_type"),
+        ("academic_program_links", "academic_programs", models.SharedPlatformAcademicProgram, "academic_program"),
+    )
+    return queryset.prefetch_related(*(
+        Prefetch(
+            relation_name,
+            queryset=through_model.objects.select_related(relation_field).order_by(
+                f"{relation_field}__name",
+            ),
+            to_attr=f"_admin_{data_field}",
+        )
+        for relation_name, data_field, through_model, relation_field in relation_specs
+    ))
 
 
 # ==============================================================================
@@ -468,6 +514,12 @@ class PlatformViewSet(ResourceImageMixin, AuditableViewSet):
     queryset = _with_public_link_logs(models.Platform.objects.all())
     serializer_class = serializers.PlatformSerializer
     image_folder = "platforms"
+
+    def get_queryset(self):
+        queryset = super().get_queryset()
+        if getattr(self, "action", None) == "list":
+            return _with_admin_relations(queryset)
+        return queryset
 
     search_fields = [
         "name",

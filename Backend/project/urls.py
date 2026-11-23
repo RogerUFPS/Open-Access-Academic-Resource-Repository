@@ -35,6 +35,14 @@ urlpatterns = [
         "api/audit/",
         include("apps.audit.urls"),
     ),
+    path(
+        "api/agent/",
+        include("apps.agent.urls"),
+    ),
+    path(
+        "api/indicators/",
+        include("apps.indicators.urls"),
+    ),
 
     # OpenAPI / Swagger
     path(

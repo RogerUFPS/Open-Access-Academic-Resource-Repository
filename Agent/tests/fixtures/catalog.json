@@ -1,0 +1,47 @@
+{
+  "schema_version": 1,
+  "advertencia": "Datos sintéticos para validar el servicio aislado; no representan el catálogo productivo.",
+  "programas": [
+    {"id": 12, "nombre": "Ingeniería de Sistemas", "areas": [7, 15]},
+    {"id": 31, "nombre": "Licenciatura en Informática", "areas": [7, 9]}
+  ],
+  "areas": [
+    {"id": 7, "nombre": "Inteligencia Artificial"},
+    {"id": 9, "nombre": "Educación"},
+    {"id": 15, "nombre": "Bases de Datos"}
+  ],
+  "filtros": [
+    {"id": 1, "clave": "idioma", "nombre": "Idioma", "tipo": "lista", "valores_validos": ["es", "en", "pt"], "formato": null},
+    {"id": 2, "clave": "tipo_documento", "nombre": "Tipo de documento", "tipo": "lista", "valores_validos": ["articulo", "tesis", "libro"], "formato": null},
+    {"id": 3, "clave": "fecha_publicacion", "nombre": "Fecha de publicación", "tipo": "rango_anios", "valores_validos": null, "formato": "AAAA-AAAA"}
+  ],
+  "plataformas": [
+    {
+      "id": 3,
+      "nombre": "SciELO (ejemplo)",
+      "idiomas": ["es", "en", "pt"],
+      "idioma_principal": "es",
+      "valid_sintaxis": {
+        "booleans": ["AND", "OR", "NOT"],
+        "parenthesis": true,
+        "fields": {"title": "ti({})", "subject": "su({})", "language": "la({})", "year": "py({})"}
+      }
+    },
+    {
+      "id": 5,
+      "nombre": "Dialnet (ejemplo)",
+      "idiomas": ["es"],
+      "idioma_principal": "es",
+      "valid_sintaxis": {
+        "booleans": ["AND"],
+        "parenthesis": false,
+        "fields": {}
+      }
+    }
+  ],
+  "revistas": [
+    {"id": 101, "titulo": "Revista Iberoamericana de Inteligencia Artificial y Educación", "programas": [12, 31], "plataformas": [3], "idiomas": ["es", "en"], "tipos_documento": ["articulo"], "fecha_publicacion": "2023-05-01"},
+    {"id": 102, "titulo": "Sistemas de Información y Bases de Datos", "programas": [12], "plataformas": [3, 5], "idiomas": ["es"], "tipos_documento": ["articulo", "tesis"], "fecha_publicacion": "2022-02-10"},
+    {"id": 103, "titulo": "Educación, Tecnología y Aprendizaje", "programas": [31], "plataformas": [5], "idiomas": ["es"], "tipos_documento": ["articulo"], "fecha_publicacion": "2024-08-20"}
+  ]
+}

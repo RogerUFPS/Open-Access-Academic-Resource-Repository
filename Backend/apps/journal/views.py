@@ -49,7 +49,8 @@ class LicenseViewSet(AuditableViewSet):
         return super().destroy(request, *args, **kwargs)
 
 
-def _with_platform_urls(queryset, *, published_only=False):
+def with_platform_urls(queryset, *, published_only=False):
+    """Prefetch platform URLs and their latest link-check logs for journals."""
     platform_links = (
         models.SharedJournalPlatform.objects
         .filter(platform__deleted_at__isnull=True)
@@ -115,6 +116,36 @@ def _with_public_relations(queryset):
                 to_attr=f"_public_{relation_name}",
             )
         )
+    return queryset.prefetch_related(*prefetches)
+
+
+def with_admin_relations(queryset):
+    """Prefetch every relation consumed by the administrative serializer."""
+    prefetches = []
+    for config in serializers.JOURNAL_RELATION_CONFIG:
+        # La representación enriquecida de plataformas ya utiliza
+        # _url_platform_links, con sus URLs y filtros propios.
+        if config.data_field == "platforms":
+            continue
+        relation_name = (
+            config.through_model._meta.get_field("journal").remote_field.related_name
+        )
+        links = config.through_model.objects.all()
+        if config.ordering:
+            links = links.order_by(*config.ordering)
+        prefetches.append(Prefetch(
+            relation_name, queryset=links, to_attr=f"_admin_{config.data_field}",
+        ))
+    prefetches.append(Prefetch(
+        "knowledge_area_links",
+        queryset=(
+            models.SharedJournalKnowledgeArea.objects
+            .filter(knowledge_area__deleted_at__isnull=True)
+            .select_related("knowledge_area")
+            .order_by("knowledge_area__name")
+        ),
+        to_attr="_admin_knowledge_areas",
+    ))
     return queryset.prefetch_related(*prefetches)
 
 
@@ -208,10 +239,16 @@ class JournalViewSet(ResourceImageMixin, AuditableViewSet):
     de revistas académicas.
     """
 
-    queryset = _with_platform_urls(models.Journal.objects.all())
+    queryset = with_platform_urls(models.Journal.objects.all())
 
     serializer_class = serializers.JournalSerializer
     image_folder = "journals"
+
+    def get_queryset(self):
+        queryset = super().get_queryset()
+        if getattr(self, "action", None) == "list":
+            return with_admin_relations(queryset)
+        return queryset
 
     search_fields = [
         "title",
@@ -504,7 +541,7 @@ class JournalPublicViewSet(
     Exploración pública de revistas activas y validadas.
     """
 
-    queryset = _with_public_relations(_with_platform_urls((
+    queryset = _with_public_relations(with_platform_urls((
         models.Journal.objects
         .filter(
             active=True,

@@ -4,6 +4,7 @@ from django.utils.duration import duration_string
 from rest_framework import serializers
 
 from . import models
+from .selection import normalize_filters, resolve_filters, OPENALEX_FIELDS, DOAJ_FIELDS
 
 AUDIT_FIELDS = (
     "id",
@@ -18,6 +19,20 @@ AUDIT_FIELDS = (
 
 
 class ScheduleSerializer(serializers.ModelSerializer):
+    selection_filters = serializers.JSONField(
+        required=False,
+        help_text=(
+            "OpenAlex: country=ID de Country. DOAJ: publisher=ID de Editorial, "
+            "language=ID de Language; title y subject son texto. "
+            "Consulta schedules/filter-options/ para los endpoints de catálogo."
+        ),
+    )
+
+    def validate_selection_filters(self, value):
+        value = normalize_filters(value)
+        resolve_filters(value)
+        return value
+
     platform_names = serializers.SlugRelatedField(
         source="platforms",
         slug_field="name",
@@ -31,6 +46,7 @@ class ScheduleSerializer(serializers.ModelSerializer):
             *AUDIT_FIELDS,
             "platforms",
             "platform_names",
+            "selection_filters",
             "frequency",
             "max_quantity",
             "stop_after_minutes",
@@ -79,6 +95,18 @@ class ScheduleSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError(
                 {"start_date": "Debes indicar la fecha y hora de la primera ejecución."}
             )
+        selection = attrs.get("selection_filters", getattr(self.instance, "selection_filters", {}))
+        if "selection_filters" not in attrs:
+            try:
+                resolve_filters(selection)
+            except serializers.ValidationError as exc:
+                raise serializers.ValidationError({"selection_filters": exc.detail}) from exc
+        platforms = attrs.get("platforms", self.instance.platforms.all() if self.instance else [])
+        from .services import _is_doaj_platform
+        for platform in platforms:
+            allowed = DOAJ_FIELDS if _is_doaj_platform(platform) else OPENALEX_FIELDS
+            if set(selection) - allowed:
+                raise serializers.ValidationError({"selection_filters": f"Filtros incompatibles con {platform.name}; crea programaciones separadas por proveedor."})
         return attrs
 
 
@@ -120,6 +148,11 @@ class HarvestSerializer(serializers.ModelSerializer):
             "schedule_frequency",
             "max_quantity",
             "stop_after_minutes",
+            "selection_filters",
+            "resolved_filters",
+            "filter_key",
+            "source_exhausted",
+            "records_skipped",
             "api_cursor",
             "api_marker",
             "state",

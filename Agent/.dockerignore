@@ -1,0 +1,13 @@
+**/__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+**/.git/
+data/
+.env
+docs/
+README.md
+query_agent.sh
+.modal.toml
+deploy/modal/
+tests/

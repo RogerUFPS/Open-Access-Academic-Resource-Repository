@@ -551,12 +551,14 @@ class PlatformSerializer(
     @extend_schema_field(PlatformKnowledgeAreaOriginSerializer(many=True))
     def get_knowledge_areas(self, obj):
         """Áreas efectivas derivadas de los programas académicos."""
-        links = (
-            models.SharedPlatformKnowledgeArea.objects
-            .filter(platform=obj)
-            .select_related("knowledge_area")
-            .order_by("knowledge_area__name")
-        )
+        links = getattr(obj, "_admin_knowledge_areas", None)
+        if links is None:
+            links = (
+                models.SharedPlatformKnowledgeArea.objects
+                .filter(platform=obj)
+                .select_related("knowledge_area")
+                .order_by("knowledge_area__name")
+            )
         return [
             {
                 "id": link.knowledge_area_id,
@@ -588,9 +590,11 @@ class PlatformSerializer(
         )
 
         for data_field, through_model, relation_field in classification.MANUAL_SECTION_SPECS:
-            links = through_model.objects.filter(
-                platform=instance,
-            ).select_related(relation_field).order_by(f"{relation_field}__name")
+            links = getattr(instance, f"_admin_{data_field}", None)
+            if links is None:
+                links = through_model.objects.filter(
+                    platform=instance,
+                ).select_related(relation_field).order_by(f"{relation_field}__name")
             representation[data_field] = [
                 {
                     "id": getattr(link, f"{relation_field}_id"),

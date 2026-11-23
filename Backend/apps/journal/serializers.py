@@ -305,6 +305,13 @@ class JournalKnowledgeAreasField(serializers.Field):
         return [by_id[area_id] for area_id in data]
 
     def to_representation(self, journal):
+        links = getattr(journal, "_admin_knowledge_areas", None)
+        if links is None:
+            links = journal.knowledge_area_links.select_related(
+                "knowledge_area"
+            ).filter(knowledge_area__deleted_at__isnull=True).order_by(
+                "knowledge_area__name"
+            )
         return [
             {
                 "id": link.knowledge_area_id,
@@ -313,11 +320,7 @@ class JournalKnowledgeAreasField(serializers.Field):
                 "is_derived": link.is_derived,
                 "editable": link.editable,
             }
-            for link in journal.knowledge_area_links.select_related(
-                "knowledge_area"
-            ).filter(knowledge_area__deleted_at__isnull=True).order_by(
-                "knowledge_area__name"
-            )
+            for link in links
         ]
 
 
@@ -508,19 +511,24 @@ class JournalSerializer(
     def to_representation(self, instance):
         representation = super().to_representation(instance)
 
-        representation = self._represent_relations(
-            instance=instance,
-            representation=representation,
-        )
+        # Estas relaciones se representan como listas de IDs. Plataformas
+        # utiliza su representación enriquecida, sin construir otra que se
+        # descarte después; licencias se representa una sola vez.
+        for config in self.relation_config:
+            if config.data_field == "platforms":
+                continue
+            links = getattr(instance, f"_admin_{config.data_field}", None)
+            if links is None:
+                links = config.through_model.objects.filter(journal=instance)
+                if config.ordering:
+                    links = links.order_by(*config.ordering)
+            representation[config.data_field] = [
+                getattr(link, f"{config.relation_field}_id") for link in links
+            ]
         representation["platforms"] = [
             _represent_journal_platform(link, include_relation_key=True)
             for link in _journal_platform_links(instance)
         ]
-        representation["licenses"] = list(
-            instance.license_links.filter(deleted_at__isnull=True)
-            .order_by("license__name")
-            .values_list("license_id", flat=True)
-        )
         return representation
 
     def _clear_validation(self, journal):
