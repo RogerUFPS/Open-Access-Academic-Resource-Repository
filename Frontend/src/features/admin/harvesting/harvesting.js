@@ -24,6 +24,11 @@ const FIELD_NAMES = {
   status_code: "Código de estado",
   record: "Registro",
   records: "Registros",
+  selection_filters: "Filtros",
+  country: "País",
+  publisher: "Editorial",
+  language: "Idioma",
+  subject: "Tema",
 };
 
 // Harvest workers can return plain text, objects or serialized JSON in error_message.
@@ -62,11 +67,18 @@ export class ApiError extends Error {
   }
 }
 
+// Listas de texto como antes ("a b"); los objetos anidados (p. ej. selection_filters) con su campo.
+function describeFieldError(value) {
+  if (Array.isArray(value) && value.every((item) => typeof item === "string")) return value.join(" ");
+  if (value && typeof value === "object") return formatHarvestError(value).replace(/\n/g, " · ");
+  return String(value);
+}
+
 function errorMessage(payload, status) {
   if (payload?.detail) return String(payload.detail);
   if (payload && typeof payload === "object") {
     const messages = Object.entries(payload).map(([field, value]) =>
-      `${FIELD_NAMES[field] || field}: ${Array.isArray(value) ? value.join(" ") : String(value)}`,
+      `${FIELD_NAMES[field] || field}: ${describeFieldError(value)}`,
     );
     if (messages.length) return messages.join(" · ");
   }
@@ -238,6 +250,66 @@ export function getPlatformJournals(platformId, signal) {
   return listAll("/api/journals/", { platform: platformId }, signal);
 }
 
+/** Filtros que admite cada proveedor (`openalex`, `doaj`) y de qué catálogo salen sus opciones. */
+export function getFilterOptions(signal) {
+  return request("/api/harvesting/schedules/filter-options/", { signal });
+}
+
+/**
+ * Una página de opciones de un catálogo. `pageUrl` es el `next` de la página
+ * anterior; se reduce a ruta + query para que pase por el proxy de Next.js.
+ */
+export function getCatalogOptionsPage(endpoint, { search = "", pageUrl } = {}, signal) {
+  if (pageUrl) {
+    const url = new URL(pageUrl, "http://local");
+    return list(`${url.pathname}${url.search}`, {}, signal);
+  }
+  return list(endpoint, { search: search.trim(), ordering: "name", page_size: 25 }, signal);
+}
+
+export function getCatalogEntry(endpoint, id, signal) {
+  return request(`${endpoint.replace(/\/?$/, "/")}${encodeURIComponent(id)}/`, { signal });
+}
+
+// Mismo criterio que el backend (_is_doaj_platform): lo que no es DOAJ se cosecha con OpenAlex.
+export function getHarvestProvider(platform) {
+  if (!platform) return null;
+  const name = String(platform.name || "").toLowerCase();
+  const baseUrl = String(platform.base_api_url || "").toLowerCase();
+  let isDoajOai = false;
+  try {
+    isDoajOai = baseUrl.includes("doaj.org") && new URL(baseUrl).pathname.replace(/\/+$/, "").endsWith("/oai");
+  } catch {
+    isDoajOai = false;
+  }
+  return name.includes("doaj") || isDoajOai ? "doaj" : "openalex";
+}
+
+export const TEXT_FILTER_MAX_LENGTH = 120;
+
+/**
+ * Convierte la selección del formulario en `selection_filters`: IDs numéricos,
+ * textos recortados y sin claves vacías ni ajenas al proveedor.
+ */
+export function buildSelectionFilters(values = {}, allowedFields) {
+  const filters = {};
+  Object.entries(values).forEach(([key, value]) => {
+    if (allowedFields && !allowedFields.includes(key)) return;
+    if (value === null || value === undefined || value === "") return;
+    if (["country", "publisher", "language"].includes(key)) {
+      const id = Number(value);
+      if (!Number.isSafeInteger(id) || id <= 0) throw new Error(`${FIELD_NAMES[key]}: selecciona una opción válida del catálogo.`);
+      filters[key] = id;
+      return;
+    }
+    const text = String(value).trim();
+    if (!text) return;
+    if (text.length > TEXT_FILTER_MAX_LENGTH) throw new Error(`${FIELD_NAMES[key] || key}: máximo ${TEXT_FILTER_MAX_LENGTH} caracteres.`);
+    filters[key] = text;
+  });
+  return filters;
+}
+
 export function getHarvestSources(platforms) {
   return platforms.filter((platform) => platform.is_harvestable === true);
 }
@@ -266,6 +338,14 @@ function checkFailedLinksAsync(mutateAction) {
 
 function createSchedule(payload, mutateAction) {
   return request("/api/harvesting/schedules/", { method: "POST", body: payload }, mutateAction);
+}
+
+// El objeto reemplaza la selección completa; {} quita todos los filtros.
+function updateScheduleFilters(id, selectionFilters, mutateAction) {
+  return request(`/api/harvesting/schedules/${id}/`, {
+    method: "PATCH",
+    body: { selection_filters: selectionFilters },
+  }, mutateAction);
 }
 
 function deactivateSchedule(id, explanation, mutateAction) {
@@ -311,6 +391,7 @@ export function createHarvestingApi(mutateAction) {
     checkAllLinksAsync: () => checkAllLinksAsync(mutateAction),
     checkFailedLinksAsync: () => checkFailedLinksAsync(mutateAction),
     createSchedule: (payload) => createSchedule(payload, mutateAction),
+    updateScheduleFilters: (id, filters) => updateScheduleFilters(id, filters, mutateAction),
     deactivateSchedule: (id, explanation) => deactivateSchedule(id, explanation, mutateAction),
     prepareImmediateSchedule: (schedule) => prepareImmediateSchedule(schedule, mutateAction),
     runDueSchedules: () => runDueSchedules(mutateAction),
@@ -319,7 +400,7 @@ export function createHarvestingApi(mutateAction) {
   };
 }
 
-export function buildSchedule({ platformId, limit, minutes, mode, startDate, frequency }, now = new Date()) {
+export function buildSchedule({ platformId, limit, minutes, mode, startDate, frequency, selectionFilters = {} }, now = new Date()) {
   const maxQuantity = limit === "" ? null : Number(limit);
   const stopAfterMinutes = minutes === "" ? null : Number(minutes);
   for (const value of [maxQuantity, stopAfterMinutes]) {
@@ -341,6 +422,7 @@ export function buildSchedule({ platformId, limit, minutes, mode, startDate, fre
     start_date: start.toISOString(),
     max_quantity: maxQuantity,
     stop_after_minutes: stopAfterMinutes,
+    selection_filters: selectionFilters,
   };
 }
 
