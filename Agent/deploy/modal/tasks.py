@@ -4,14 +4,18 @@ from __future__ import annotations
 
 from pathlib import Path
 import os
+import sys
+
+LOCAL_ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(LOCAL_ROOT))
 
 import modal
 
-from deploy.modal_config import deployment_environment, load_deployment_model
+from deploy.model_config import deployment_environment
+from deploy.modal.profile import load_cloud_model
 
 
-LOCAL_ROOT = Path(__file__).resolve().parent
-MODEL = load_deployment_model()
+MODEL = load_cloud_model(LOCAL_ROOT)
 MODEL_CACHE = "/models/huggingface"
 
 app = modal.App("biblioteca-agent-tasks")
@@ -43,5 +47,3 @@ def download_model() -> dict[str, str]:
     path = snapshot_download(repo_id=MODEL.checkpoint)
     model_volume.commit()
     return {"model": MODEL.checkpoint, "cache_path": path}
-
-

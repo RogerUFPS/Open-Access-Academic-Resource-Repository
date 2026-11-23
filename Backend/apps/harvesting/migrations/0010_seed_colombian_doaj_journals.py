@@ -102,10 +102,13 @@ def seed_doaj_backend_harvest(apps, schema_editor):
 
     platform = Platform.objects.filter(name__iexact="DOAJ").first()
     platform_values = {
+        "status": "borrador",
         "base_api_url": DOAJ_OAI_URL,
         "is_harvestable": True,
         "requires_registration": False,
         "has_access_text": True,
+        "validated_by_id": None,
+        "validated_at": None,
         "deleted_at": None,
         "deleted_by_id": None,
         "delete_explanation": None,
@@ -113,7 +116,6 @@ def seed_doaj_backend_harvest(apps, schema_editor):
     if platform is None:
         platform = Platform.objects.create(
             name="doaj",
-            status="publicado",
             start_period=_timestamp(harvest_rows[0]["started_at"]).date(),
             url_image=None,
             url_image_thumbnail=None,

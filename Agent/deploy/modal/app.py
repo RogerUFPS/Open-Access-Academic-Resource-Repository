@@ -7,19 +7,23 @@ que el adaptador OpenAI existente se reutiliza sin publicar un segundo servicio.
 from __future__ import annotations
 
 import os
+import sys
 import subprocess
 import time
 import urllib.error
 import urllib.request
 from pathlib import Path
 
+LOCAL_ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(LOCAL_ROOT))
+
 import modal
 
-from deploy.modal_config import build_vllm_command, deployment_environment, load_deployment_model
+from deploy.model_config import build_vllm_command, deployment_environment
+from deploy.modal.profile import load_cloud_model
 
 
-LOCAL_ROOT = Path(__file__).resolve().parent
-MODEL = load_deployment_model()
+MODEL = load_cloud_model(LOCAL_ROOT)
 VLLM_VERSION = "0.11.0"
 TRANSFORMERS_VERSION = "4.57.1"
 VLLM_PORT = 8000

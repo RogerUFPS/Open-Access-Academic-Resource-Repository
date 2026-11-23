@@ -1,0 +1,2 @@
+# Solo para el entorno de despliegue; nunca para la API local.
+modal==1.6.4

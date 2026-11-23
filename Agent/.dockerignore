@@ -9,5 +9,5 @@ docs/
 README.md
 query_agent.sh
 .modal.toml
-Dockerfile.modal-cli
+deploy/modal/
 tests/

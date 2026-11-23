@@ -8,7 +8,7 @@ from biblioteca_agent.config import RESOURCES_DIR
 from biblioteca_agent.text import normalize_text
 
 
-GENERIC_PATH = RESOURCES_DIR / "palabras_genericas.json"
+GENERIC_PATH = RESOURCES_DIR / "keywords/stopwords.json"
 
 
 def _extract(text, language, origin, limit=20):

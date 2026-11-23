@@ -29,7 +29,9 @@ class AgentClient:
         headers = {"Connection": "close"}
         if settings.AGENT_SERVICE_API_KEY:
             headers["X-API-Key"] = settings.AGENT_SERVICE_API_KEY
-        if settings.AGENT_MODAL_KEY and settings.AGENT_MODAL_SECRET:
+        # No filtrar credenciales de Modal a un endpoint local o ajeno.
+        modal_endpoint = (urlparse(url).hostname or "").endswith(".modal.direct")
+        if modal_endpoint and settings.AGENT_MODAL_KEY and settings.AGENT_MODAL_SECRET:
             headers.update({"Modal-Key": settings.AGENT_MODAL_KEY, "Modal-Secret": settings.AGENT_MODAL_SECRET})
         self.name = name
         self.deadline = time.monotonic() + settings.AGENT_TIMEOUT_SECONDS

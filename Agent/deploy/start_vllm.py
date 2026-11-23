@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import os
 
-from modal_config import build_vllm_command, load_deployment_model
+from model_config import build_vllm_command, load_deployment_model
 
 
 model = load_deployment_model()
@@ -13,6 +13,6 @@ command = build_vllm_command(
     api_key=os.getenv("AGENT_VLLM_API_KEY", "local-compose"),
     host="0.0.0.0",
     port=8000,
-        max_model_len=int(os.getenv("VLLM_MAX_MODEL_LEN", "8192")),
+    max_model_len=int(os.getenv("VLLM_MAX_MODEL_LEN", "8192")),
 )
 os.execvp(command[0], command)

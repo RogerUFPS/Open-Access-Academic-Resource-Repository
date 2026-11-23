@@ -1,8 +1,7 @@
 data/
-docs/
 references/
-resources/
 .env
+docs/
 .venv/
 **/__pycache__/
 *.py[cod]

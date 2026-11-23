@@ -7,7 +7,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "src"))
 
-from deploy.modal_config import build_vllm_command, deployment_environment, load_deployment_model
+from deploy.model_config import build_vllm_command, deployment_environment, load_deployment_model
 
 
 def environment(name: str) -> dict[str, str]:

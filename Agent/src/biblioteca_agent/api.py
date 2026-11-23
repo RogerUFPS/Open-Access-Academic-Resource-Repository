@@ -93,7 +93,7 @@ async def ready():
 def _catalog_summary(snapshot: dict[str, Any]) -> dict[str, Any]:
     configured_file = os.getenv("AGENT_CATALOG_SNAPSHOT", "").strip()
     backend_url = os.getenv("AGENT_BACKEND_SNAPSHOT_URL", "").strip()
-    source = "archivo_configurado" if configured_file else "backend_publico" if backend_url else "ejemplo"
+    source = "archivo_configurado" if configured_file else "backend_publico" if backend_url else "no_configurado"
     return {
         "schema_version": snapshot["schema_version"],
         "fuente": source,
