@@ -13,6 +13,7 @@ import {
   Users, 
   Cpu, 
   Tag, 
+  Boxes,
   MessageSquare, 
   LogOut, 
   Menu, 
@@ -157,6 +158,7 @@ function AdminLayoutContent({ children, userName }) {
       items: [
         { name: "Módulo de IA", href: "/admin/modulo-ia", icon: Cpu },
         { name: "Clasificación", href: "/admin/areas-conocimiento", icon: Tag, matches: ["/admin/programas-academicos"] },
+        { name: "Catálogos", href: "/admin/catalogo", icon: Boxes },
         { name: "Chats", href: "/admin/chats", icon: MessageSquare },
       ]
     }
