@@ -56,6 +56,7 @@ export function buildJournalChecklist({
   issn,
   title,
   editorial,
+  urlImage,
   publicationDate,
   languages,
   countries,
@@ -68,6 +69,7 @@ export function buildJournalChecklist({
   return [
     { key: "issn", label: "ISSN y título", done: filled(issn) && filled(title) },
     { key: "editorial", label: "Editorial", done: filled(editorial) },
+    { key: "url_image", label: "Imagen de la revista", done: filled(urlImage) },
     { key: "publication_date", label: "Fecha de publicación", done: filled(publicationDate) },
     { key: "languages", label: "Al menos un idioma", done: count(languages) > 0 },
     { key: "countries", label: "Al menos un país", done: count(countries) > 0 },

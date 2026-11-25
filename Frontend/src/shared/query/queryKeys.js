@@ -38,4 +38,7 @@ export const queryKeys = {
     analyticsTopics: (params) => ["agent", "analytics", "topics", params],
     analyticsQueries: (params) => ["agent", "analytics", "queries", params],
   },
+  indicators: {
+    overview: ["indicators", "overview"],
+  },
 };
