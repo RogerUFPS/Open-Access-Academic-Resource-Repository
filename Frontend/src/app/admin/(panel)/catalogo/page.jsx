@@ -55,7 +55,7 @@ export default function CatalogsPage() {
   );
 
   return (
-    <div className="min-h-screen bg-slate-50 font-sans text-slate-900">
+    <div className="min-h-screen font-sans text-slate-900">
       <main className="mx-auto max-w-6xl px-5 py-8 sm:py-10">
         <nav aria-label="Ruta" className="text-sm text-slate-600">
           Administración <span aria-hidden="true">/</span> <span className="font-medium text-slate-900">Catálogos</span>
