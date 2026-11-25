@@ -3,6 +3,8 @@
 import { useEffect, useState } from "react";
 import { catalogAdminService, CATALOG_RESOURCES } from "./catalogAdminService";
 import { extractApiErrorText, normalizeApiFieldErrors } from "@/shared/services/apiClient";
+import FlagPicker from "./FlagPicker";
+import { suggestCountryAbbreviation } from "./flagCountries";
 
 const focus = "focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#7f1218]";
 const inputClass = `mt-1 w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm ${focus}`;
@@ -115,7 +117,35 @@ export function CatalogEntryDialog({ resource, item, onClose, onComplete }) {
         <div className="space-y-4 px-5 py-5">
           {error && <p role="alert" className="rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-800">{error}</p>}
           {loading && <p role="status" className="text-sm text-slate-600">Cargando datos del registro…</p>}
-          {config.fields.map((field) => (
+          {config.fields.map((field) => field.name === "emoji_flag" ? (
+            <div key={field.name}>
+              <span id="catalog-emoji-flag-label" className="block text-sm font-medium text-slate-800">
+                {field.label} <span aria-hidden="true" className="text-rose-700">*</span>
+              </span>
+              <FlagPicker
+                value={values.emoji_flag}
+                invalid={Boolean(fieldErrors.emoji_flag)}
+                labelledBy="catalog-emoji-flag-label"
+                describedBy={fieldErrors.emoji_flag ? "catalog-emoji-flag-error" : undefined}
+                onChange={(emoji) => {
+                  setValues((current) => ({ ...current, emoji_flag: emoji }));
+                  setFieldErrors((current) => ({ ...current, emoji_flag: "" }));
+                  setError("");
+                }}
+                onSelectCountry={(country) => {
+                  setValues((current) => ({
+                    ...current,
+                    abbreviation: suggestCountryAbbreviation(current.abbreviation, country.code),
+                  }));
+                }}
+              />
+              {fieldErrors.emoji_flag && (
+                <span id="catalog-emoji-flag-error" className="mt-1 block text-xs text-rose-700">
+                  {fieldErrors.emoji_flag}
+                </span>
+              )}
+            </div>
+          ) : (
             <label key={field.name} htmlFor={`catalog-${field.name}`} className="block text-sm font-medium text-slate-800">
               {field.label} <span aria-hidden="true" className="text-rose-700">*</span>
               <input
@@ -135,11 +165,6 @@ export function CatalogEntryDialog({ resource, item, onClose, onComplete }) {
               {fieldErrors[field.name] && (
                 <span id={`catalog-${field.name}-error`} className="mt-1 block text-xs text-rose-700">
                   {fieldErrors[field.name]}
-                </span>
-              )}
-              {field.name === "emoji_flag" && (
-                <span aria-live="polite" className="mt-2 inline-flex items-center gap-2 text-sm text-slate-600">
-                  Vista previa: <span className="text-2xl">{values.emoji_flag || "—"}</span>
                 </span>
               )}
             </label>
