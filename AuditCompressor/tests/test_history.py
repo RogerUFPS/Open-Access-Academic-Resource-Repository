@@ -1,10 +1,12 @@
 import datetime as dt
 import unittest
 
+from app.config import ConfigurationError
+from app.duckdb_session import register_parquet_key
 from app.history import query_history
 from app.manifest import SnapshotRange
 from app.snapshots import SnapshotIntegrityError, create_snapshot
-from tests.support import ARCHIVE, END, START, FakeStorage, audit_connection
+from tests.support import ARCHIVE, END, START, TEST_KEY, FakeStorage, audit_connection
 
 DAY = dt.timedelta(days=1)
 NOW = dt.datetime(2026, 1, 1, tzinfo=dt.timezone.utc)
@@ -20,12 +22,15 @@ class QueryHistoryTests(unittest.TestCase):
     def setUp(self):
         connection = audit_connection()
         self.addCleanup(connection.close)
+        register_parquet_key(connection, TEST_KEY)
         self.storage = FakeStorage()
         for snapshot_range in (FIRST, SECOND):
             create_snapshot(connection, "audit", self.storage, ARCHIVE, snapshot_range, NOW)
 
-    def query(self, start, end, limit=100, offset=0):
-        return query_history(self.storage, ARCHIVE, SnapshotRange(start, end), limit, offset)
+    def query(self, start, end, limit=100, offset=0, key=TEST_KEY):
+        return query_history(
+            self.storage, ARCHIVE, SnapshotRange(start, end), limit, offset, key
+        )
 
     @staticmethod
     def ids(page):
@@ -59,6 +64,10 @@ class QueryHistoryTests(unittest.TestCase):
         self.storage.objects[SECOND_PART] += b"tampered"
         with self.assertRaises(SnapshotIntegrityError):
             self.query(START, END + DAY)
+
+    def test_encrypted_snapshots_require_the_key(self):
+        with self.assertRaises(ConfigurationError):
+            self.query(START, END, key="")
 
     def test_rejects_invalid_pagination(self):
         for limit, offset in ((0, 0), (1001, 0), (10, -1)):

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import base64
+import binascii
 import os
 import re
 from dataclasses import dataclass
@@ -27,6 +29,18 @@ def _ensure_present(values: dict[str, str]) -> None:
     missing = [name for name, value in values.items() if not value]
     if missing:
         raise ConfigurationError(f"Faltan variables de entorno: {', '.join(missing)}.")
+
+
+def parquet_encryption_key(value: str) -> str:
+    """Valida AUDIT_ENCRYPTION_KEY: 32 bytes aleatorios codificados en base64 (256 bits)."""
+    _ensure_present({"AUDIT_ENCRYPTION_KEY": value})
+    try:
+        decoded = base64.b64decode(value, validate=True)
+    except binascii.Error:
+        decoded = b""
+    if len(decoded) != 32:
+        raise ConfigurationError("AUDIT_ENCRYPTION_KEY debe ser 32 bytes codificados en base64.")
+    return value
 
 
 @dataclass(frozen=True, slots=True)
@@ -135,6 +149,7 @@ class Settings:
     database: DatabaseSettings
     storage: StorageSettings
     archive: ArchiveSettings
+    encryption_key: str = ""
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -143,7 +158,11 @@ class Settings:
             database=DatabaseSettings.from_env(),
             storage=StorageSettings.from_env(),
             archive=ArchiveSettings.from_yaml(CONFIG_PATH),
+            encryption_key=os.getenv("AUDIT_ENCRYPTION_KEY", "").strip(),
         )
+
+    def require_encryption_key(self) -> str:
+        return parquet_encryption_key(self.encryption_key)
 
 
 @lru_cache(maxsize=1)

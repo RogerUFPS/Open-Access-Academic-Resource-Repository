@@ -1,10 +1,17 @@
+import base64
 import tempfile
 import unittest
 from dataclasses import replace
 from pathlib import Path
 
-from app.config import CONFIG_PATH, ArchiveSettings, ConfigurationError, DatabaseSettings
-from tests.support import ARCHIVE
+from app.config import (
+    CONFIG_PATH,
+    ArchiveSettings,
+    ConfigurationError,
+    DatabaseSettings,
+    parquet_encryption_key,
+)
+from tests.support import ARCHIVE, TEST_KEY
 
 
 class ArchiveSettingsTests(unittest.TestCase):
@@ -34,6 +41,19 @@ class ArchiveSettingsTests(unittest.TestCase):
             path.write_text("audit:\n  table: auditlog_logentry\n", encoding="utf-8")
             with self.assertRaises(ConfigurationError):
                 ArchiveSettings.from_yaml(path)
+
+
+class EncryptionKeyTests(unittest.TestCase):
+    def test_accepts_32_bytes_in_base64(self):
+        self.assertEqual(parquet_encryption_key(TEST_KEY), TEST_KEY)
+
+    def test_rejects_missing_malformed_or_short_keys(self):
+        short = base64.b64encode(bytes(16)).decode()
+        for value in ("", "not base64!", short):
+            with self.subTest(value=value), self.assertRaises(ConfigurationError) as raised:
+                parquet_encryption_key(value)
+            if value:
+                self.assertNotIn(value, str(raised.exception))
 
 
 class DatabaseSettingsTests(unittest.TestCase):

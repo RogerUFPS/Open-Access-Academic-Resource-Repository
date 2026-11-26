@@ -1,4 +1,4 @@
-"""Única fuente de conexiones DuckDB del servicio."""
+"""Única fuente de conexiones DuckDB del servicio y utilidades SQL compartidas."""
 
 from __future__ import annotations
 
@@ -8,9 +8,10 @@ from contextlib import contextmanager
 
 import duckdb
 
-from .config import DatabaseSettings
+from .config import ConfigurationError, DatabaseSettings
 
 POSTGRES_CATALOG = "pg"
+PARQUET_KEY_NAME = "audit_snapshot_key"
 
 
 def sql_literal(value: str) -> str:
@@ -18,8 +19,29 @@ def sql_literal(value: str) -> str:
     return "'" + value.replace("'", "''") + "'"
 
 
+def quote_identifier(name: str) -> str:
+    return '"' + name.replace('"', '""') + '"'
+
+
 def timestamp_literal(value: dt.datetime) -> str:
     return f"TIMESTAMPTZ {sql_literal(value.isoformat())}"
+
+
+ENCRYPTION_CONFIG = f"{{footer_key: {sql_literal(PARQUET_KEY_NAME)}}}"
+
+
+def register_parquet_key(connection: duckdb.DuckDBPyConnection, key: str) -> None:
+    """Registra la clave de cifrado solo en la memoria de esta conexión.
+
+    El error de DuckDB podría citar la sentencia con la clave: se reemplaza
+    por uno propio sin encadenarlo.
+    """
+    try:
+        connection.execute(
+            f"PRAGMA add_parquet_key({sql_literal(PARQUET_KEY_NAME)}, {sql_literal(key)})"
+        )
+    except duckdb.Error:
+        raise ConfigurationError("DuckDB rechazó AUDIT_ENCRYPTION_KEY.") from None
 
 
 @contextmanager

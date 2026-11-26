@@ -1,5 +1,6 @@
 """Utilidades compartidas por los tests: datos de auditoría y almacenamiento en memoria."""
 
+import base64
 import datetime as dt
 import hashlib
 import json
@@ -13,6 +14,7 @@ UTC = dt.timezone.utc
 START = dt.datetime(2025, 1, 1, tzinfo=UTC)
 END = dt.datetime(2025, 7, 1, tzinfo=UTC)
 MICROSECOND = dt.timedelta(microseconds=1)
+TEST_KEY = base64.b64encode(bytes(range(32))).decode()
 
 ARCHIVE = ArchiveSettings(
     schema="main",

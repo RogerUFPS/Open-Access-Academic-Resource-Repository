@@ -7,7 +7,8 @@ from unittest import mock
 
 import duckdb
 
-from app.config import DatabaseSettings, Settings, StorageSettings
+from app.config import ConfigurationError, DatabaseSettings, Settings, StorageSettings
+from app.duckdb_session import ENCRYPTION_CONFIG, register_parquet_key
 from app.manifest import Manifest, SnapshotRange
 from app.snapshots import (
     SnapshotConflictError,
@@ -16,8 +17,9 @@ from app.snapshots import (
     create_snapshot,
     export_range,
     sha256_file,
+    source_with_inet_text,
 )
-from tests.support import ARCHIVE, END, START, FakeStorage, audit_connection
+from tests.support import ARCHIVE, END, START, TEST_KEY, FakeStorage, audit_connection
 
 NOW = dt.datetime(2026, 1, 1, tzinfo=dt.timezone.utc)
 MANIFEST_KEY = "auditlog/20250101T000000Z_20250701T000000Z/manifest.json"
@@ -59,10 +61,37 @@ class ExportRangeTests(unittest.TestCase):
         self.assertEqual(list(Path(self.directory.name).iterdir()), [])
 
 
+class InetTextTests(unittest.TestCase):
+    def test_matches_postgres_text_for_inet_values(self):
+        connection = duckdb.connect()
+        self.addCleanup(connection.close)
+        connection.execute("CREATE TABLE ips (id INTEGER, ip VARCHAR)")
+        connection.executemany(
+            "INSERT INTO ips VALUES (?, ?)",
+            [
+                (1, "172.27.0.5/32"),
+                (2, "10.0.0.0/24"),
+                (3, "::1/128"),
+                (4, "2001:db8::/32"),
+                (5, None),
+            ],
+        )
+        source = source_with_inet_text("ips", ["ip"])
+        values = connection.execute(f"SELECT ip FROM {source} ORDER BY id").fetchall()
+        self.assertEqual(
+            [value for (value,) in values],
+            ["172.27.0.5", "10.0.0.0/24", "::1", "2001:db8::/32", None],
+        )
+
+    def test_without_inet_columns_the_table_is_used_as_is(self):
+        self.assertEqual(source_with_inet_text("pg.public.audit", []), "pg.public.audit")
+
+
 class CreateSnapshotTests(unittest.TestCase):
     def setUp(self):
         self.connection = audit_connection()
         self.addCleanup(self.connection.close)
+        register_parquet_key(self.connection, TEST_KEY)
         self.storage = FakeStorage()
 
     def create(self, snapshot_range=None):
@@ -86,6 +115,24 @@ class CreateSnapshotTests(unittest.TestCase):
         self.assertEqual(part.key, PART_KEY)
         self.assertEqual(part.sha256, hashlib.sha256(self.storage.objects[PART_KEY]).hexdigest())
         self.assertEqual(part.size, len(self.storage.objects[PART_KEY]))
+
+    def test_stored_part_is_encrypted_and_needs_the_key(self):
+        self.assertTrue(self.create().encrypted)
+        content = self.storage.objects[PART_KEY]
+        self.assertNotIn(b"nested", content)
+
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "part.parquet"
+            path.write_bytes(content)
+            reader = duckdb.connect()
+            self.addCleanup(reader.close)
+            with self.assertRaises(duckdb.Error):
+                reader.execute(f"SELECT count(*) FROM read_parquet('{path}')").fetchone()
+            register_parquet_key(reader, TEST_KEY)
+            count = reader.execute(
+                f"SELECT count(*) FROM read_parquet('{path}', encryption_config = {ENCRYPTION_CONFIG})"
+            ).fetchone()[0]
+        self.assertEqual(count, 3)
 
     def test_corrupted_upload_does_not_produce_a_manifest(self):
         self.storage.corrupt = True
@@ -133,6 +180,22 @@ class ArchiveAuditRangeTests(unittest.TestCase):
         ):
             with self.assertRaises(ValueError):
                 archive_audit_range(settings, SnapshotRange(START, END), now=START)
+        session.assert_not_called()
+        storage.from_settings.assert_not_called()
+
+    def test_missing_encryption_key_fails_before_connecting(self):
+        settings = Settings(
+            api_key="",
+            database=DatabaseSettings("postgres", 5432, "db", "user", "secret"),
+            storage=StorageSettings("http://rustfs:9000", "auditorias", "us-east-1", "a", "b"),
+            archive=ARCHIVE,
+        )
+        with (
+            mock.patch("app.snapshots.postgres_session") as session,
+            mock.patch("app.snapshots.SnapshotStorage") as storage,
+        ):
+            with self.assertRaises(ConfigurationError):
+                archive_audit_range(settings, SnapshotRange(START, END), now=END)
         session.assert_not_called()
         storage.from_settings.assert_not_called()
 

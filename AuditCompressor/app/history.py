@@ -10,8 +10,13 @@ from typing import Any
 
 import duckdb
 
-from .config import ArchiveSettings, Settings
-from .duckdb_session import sql_literal, timestamp_literal
+from .config import ArchiveSettings, Settings, parquet_encryption_key
+from .duckdb_session import (
+    ENCRYPTION_CONFIG,
+    register_parquet_key,
+    sql_literal,
+    timestamp_literal,
+)
 from .manifest import Manifest, SnapshotFile, SnapshotRange
 from .snapshots import SnapshotIntegrityError, list_manifests, sha256_file
 from .storage import SnapshotStorage
@@ -44,6 +49,11 @@ def _download_verified(storage: SnapshotStorage, file: SnapshotFile, path: Path)
     return path
 
 
+def _read_file(path: Path, encrypted: bool) -> str:
+    options = f", encryption_config = {ENCRYPTION_CONFIG}" if encrypted else ""
+    return f"SELECT * FROM read_parquet({sql_literal(str(path))}{options})"
+
+
 def _row_to_json(
     columns: list[str], row: tuple[Any, ...], json_columns: tuple[str, ...]
 ) -> dict[str, Any]:
@@ -59,17 +69,26 @@ def query_history(
     snapshot_range: SnapshotRange,
     limit: int,
     offset: int,
+    encryption_key: str = "",
 ) -> HistoryPage:
     """Registros archivados en [start, end), ordenados por fecha y clave primaria.
 
     Los snapshots que se cruzan con el rango se combinan en una sola consulta;
-    quien llama no conoce cómo están divididos.
+    quien llama no conoce cómo están divididos. Cada archivo se descifra solo
+    si su manifest indica que está cifrado.
     """
     if not 1 <= limit <= MAX_PAGE_SIZE or offset < 0:
         raise ValueError(f"limit debe estar entre 1 y {MAX_PAGE_SIZE} y offset no ser negativo.")
-    files = [file for manifest in snapshots_for(storage, archive, snapshot_range) for file in manifest.files]
+    files = [
+        (file, manifest.encrypted)
+        for manifest in snapshots_for(storage, archive, snapshot_range)
+        for file in manifest.files
+    ]
     if not files:
         return HistoryPage(count=0, results=[])
+    needs_key = any(encrypted for _, encrypted in files)
+    if needs_key:
+        encryption_key = parquet_encryption_key(encryption_key)
 
     timestamp = f'"{archive.timestamp_column}"'
     where = (
@@ -77,18 +96,19 @@ def query_history(
         f"AND {timestamp} < {timestamp_literal(snapshot_range.end)}"
     )
     with tempfile.TemporaryDirectory(prefix="audit-history-") as directory:
-        paths = [
-            _download_verified(storage, file, Path(directory) / f"{index:04d}.parquet")
-            for index, file in enumerate(files)
+        reads = [
+            _read_file(
+                _download_verified(storage, file, Path(directory) / f"{index:04d}.parquet"),
+                encrypted,
+            )
+            for index, (file, encrypted) in enumerate(files)
         ]
-        source = (
-            "read_parquet(["
-            + ", ".join(sql_literal(str(path)) for path in paths)
-            + "], union_by_name = true)"
-        )
+        source = "(" + " UNION ALL BY NAME ".join(reads) + ")"
         connection = duckdb.connect()
         try:
             connection.execute("SET TimeZone = 'UTC'")
+            if needs_key:
+                register_parquet_key(connection, encryption_key)
             count = connection.execute(f"SELECT count(*) FROM {source} WHERE {where}").fetchone()[0]
             # La fecha sale como texto ISO 8601 en UTC, lista para JSON.
             cursor = connection.execute(
@@ -111,4 +131,6 @@ def read_audit_history(
     settings: Settings, snapshot_range: SnapshotRange, limit: int, offset: int
 ) -> HistoryPage:
     storage = SnapshotStorage.from_settings(settings.storage)
-    return query_history(storage, settings.archive, snapshot_range, limit, offset)
+    return query_history(
+        storage, settings.archive, snapshot_range, limit, offset, settings.encryption_key
+    )
