@@ -1,0 +1,17 @@
+# Configuración no sensible del archivado de auditoría.
+# Los secretos (PostgreSQL, RustFS, API Key) se leen de AuditCompressor/.env.
+# El período a archivar no se define aquí: lo indica cada orden de archivado.
+
+audit:
+  # Tabla de django-auditlog; apps.audit.AuditLog es un proxy sobre ella.
+  schema: public
+  table: auditlog_logentry
+  timestamp_column: timestamp
+  primary_key: id
+
+storage:
+  # Ruta dentro del bucket S3_BUCKET: <prefix>/<snapshot_id>/...
+  prefix: auditlog
+
+parquet:
+  compression: zstd

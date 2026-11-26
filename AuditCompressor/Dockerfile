@@ -16,6 +16,7 @@ USER 10001
 # Extensiones en la imagen: en ejecución no se descargan de internet.
 RUN python -c "import duckdb; con = duckdb.connect(); con.install_extension('postgres'); con.install_extension('httpfs')"
 
+COPY config ./config
 COPY app ./app
 
 EXPOSE 8000
