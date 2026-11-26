@@ -14,6 +14,7 @@ function journalChecklist(journal) {
     issn: journal.issn,
     title: journal.title,
     editorial: journal.editorial,
+    urlImage: journal.url_image,
     publicationDate: journal.publication_date,
     languages: journal.languages,
     countries: journal.countries,

@@ -104,3 +104,33 @@ class SessionHardeningTests(TestCase):
 
         self.assertEqual(response.status_code, 403)
         self.assertEqual(response.data["code"], "recent_authentication_required")
+
+    @patch("apps.account.views.verify_totp", return_value=True)
+    def test_pending_successor_replaces_outgoing_admin_after_mfa_enrollment(self, _verify):
+        successor = User.objects.create_user(
+            email="successor@example.org",
+            password="Successor-password-927",
+            pending_superadmin=True,
+            force_password_change=False,
+            created_by=self.user,
+        )
+        client = APIClient()
+        client.force_authenticate(successor)
+        response = client.post("/api/accounts/auth/mfa/enroll/")
+        self.assertEqual(response.status_code, 200)
+
+        response = client.post(
+            "/api/accounts/auth/mfa/enroll/confirm/",
+            {"code": "123456"},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.user.refresh_from_db()
+        successor.refresh_from_db()
+        self.assertFalse(self.user.is_active)
+        self.assertTrue(successor.is_active)
+        self.assertTrue(successor.is_superadmin)
+        self.assertFalse(successor.pending_superadmin)
+        self.assertTrue(successor.mfa_enabled)
+        self.assertEqual(User.objects.filter(is_active=True, is_superadmin=True).count(), 1)

@@ -3,6 +3,7 @@ import hashlib
 from django.contrib.auth.base_user import AbstractBaseUser, BaseUserManager
 from django.core.exceptions import ValidationError
 from django.db import models
+from django.db.models import Q
 from django.utils import timezone
 
 from apps.core.models import SoftDeleteMixin, SoftDeleteQuerySet
@@ -55,6 +56,7 @@ class User(SoftDeleteMixin, AbstractBaseUser):
     email = models.EmailField(unique=True)
     is_active = models.BooleanField(default=True)
     is_superadmin = models.BooleanField(default=False)
+    pending_superadmin = models.BooleanField(default=False)
     force_password_change = models.BooleanField(default=False)
     mfa_secret = models.TextField(blank=True, default="")
     mfa_enabled = models.BooleanField(default=False)
@@ -92,6 +94,28 @@ class User(SoftDeleteMixin, AbstractBaseUser):
 
     objects = UserManager()
     all_objects = models.Manager()
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["is_superadmin"],
+                condition=Q(is_superadmin=True, is_active=True),
+                name="account_single_active_superadmin",
+            ),
+            models.UniqueConstraint(
+                fields=["pending_superadmin"],
+                condition=Q(pending_superadmin=True, is_active=True),
+                name="account_single_pending_superadmin",
+            ),
+            models.CheckConstraint(
+                condition=~Q(is_superadmin=True, pending_superadmin=True),
+                name="account_pending_not_superadmin",
+            ),
+            models.CheckConstraint(
+                condition=Q(pending_superadmin=False) | Q(is_active=True),
+                name="account_pending_superadmin_active",
+            ),
+        ]
 
     USERNAME_FIELD = "email"
     REQUIRED_FIELDS = []

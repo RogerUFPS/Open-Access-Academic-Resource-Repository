@@ -75,13 +75,18 @@ export default function HomePage() {
             <h2 className="mt-2 text-xl font-bold text-[#1f1a1a] group-hover:text-[#a3141c]">Revistas</h2>
             <p className="mt-2 text-sm leading-6 text-[#5c5252]">Publicaciones para mantenerte al día.</p>
           </Link>
-          <div className="rounded-lg border border-[#e7dfd9] bg-white p-5 sm:col-span-2 lg:col-span-1">
+          <Link
+            href="/asistente"
+            className={`${collectionCardClass} sm:col-span-2 lg:col-span-1`}
+          >
             <svg aria-hidden="true" viewBox="0 0 24 24" className="h-7 w-7 text-[#c9a45c]" fill="none" stroke="currentColor" strokeWidth="1.7">
-              <path d="M3 5.5c3.2-.9 6.2-.5 9 1.5v13c-2.8-2-5.8-2.4-9-1.5zM21 5.5c-3.2-.9-6.2-.5-9 1.5v13c2.8-2 5.8-2.4 9-1.5z" />
+              <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+              <path d="M8 9h8M8 13h5" />
             </svg>
-            <span className="mt-4 block text-xs font-bold uppercase tracking-widest text-[#5c5252]">Encuentra tu próximo recurso</span>
-            <p className="mt-2 text-xl font-bold leading-snug text-[#1f1a1a]">Una buena búsqueda abre caminos.</p>
-          </div>
+            <span className="mt-4 block text-xs font-bold uppercase tracking-widest text-[#a3141c]">03 / Asistente IA</span>
+            <h2 className="mt-2 text-xl font-bold text-[#1f1a1a] group-hover:text-[#a3141c]">Asistente de búsqueda</h2>
+            <p className="mt-2 text-sm leading-6 text-[#5c5252]">Describe tu tema y obtén cadenas de búsqueda adaptadas a las plataformas del directorio.</p>
+          </Link>
         </section>
       </main>
     </PublicLayout>

@@ -4,6 +4,11 @@ from rest_framework.permissions import BasePermission
 CRUD = ("view", "create", "update", "delete", "restore")
 
 PERMISSION_MATRIX = {
+    "agent": {
+        "models": {"view": True, "update": True},
+        "conversations": {"view": True},
+        "analytics": {"view": True},
+    },
     "audit": {"logs": {"view": True}},
     "catalog": {
         resource: {action: True for action in CRUD}
@@ -78,6 +83,7 @@ PERMISSION_MATRIX = {
 }
 
 APP_PREFIXES = {
+    "agent": "agent",
     "catalog": "catalog",
     "journals": "journals",
     "platforms": "platforms",
@@ -103,6 +109,8 @@ SELF_ACCOUNT_PATHS = {
 }
 
 ACTION_NAMES = {
+    "switch": "update",
+    "cancel": "update",
     "invite": "invite",
     "publish": "publish",
     "deactivate": "deactivate",
@@ -158,11 +166,6 @@ class ApplicationPermission(BasePermission):
         path = request.path_info.rstrip("/") + "/"
         if path in PUBLIC_ACCOUNT_PATHS:
             return True
-        if (
-            path == "/api/harvesting/schedules/run-due/"
-            and request.method == "POST"
-        ):
-            return True
         if path == "/api/accounts/auth/me/":
             return bool(
                 request.user
@@ -204,13 +207,28 @@ class ApplicationPermission(BasePermission):
                 }
             return True
 
-        if path in {"/api/accounts/superadmin/accounts/", "/api/accounts/superadmin/deactivate/"}:
+        if path == "/api/accounts/superadmin/accounts/":
             return bool(
                 request.user and request.user.is_authenticated
                 and request.user.is_active and request.user.is_superadmin
                 and not request.user.force_password_change
                 and request.session.get("superadmin_mfa_satisfied")
             )
+
+        if request.user and request.user.is_authenticated and getattr(request.user, "pending_superadmin", False):
+            if path == "/api/accounts/auth/me/":
+                return request.method == "GET"
+            if path == "/api/accounts/password/change/":
+                return True
+            if path in {
+                "/api/accounts/auth/logout/",
+                "/api/accounts/auth/session/",
+                "/api/accounts/auth/mfa/challenge/",
+                "/api/accounts/auth/mfa/enroll/",
+                "/api/accounts/auth/mfa/enroll/confirm/",
+            }:
+                return True
+            return False
 
         segments = [part for part in path.strip("/").split("/") if part]
         if len(segments) < 2 or segments[0] != "api":
@@ -267,6 +285,8 @@ class ApplicationPermission(BasePermission):
             if app == "catalog":
                 return tail[0]
             return tail[0]
+        if app == "agent":
+            return tail[0] if tail and tail[0] in {"models", "conversations", "analytics"} else None
         return None
 
     @staticmethod

@@ -1,0 +1,67 @@
+name: biblioteca-agent
+
+x-agent-config: &agent-config
+  env_file:
+    - ${MODEL_ENV_FILE:-deploy/models/qwen.env}
+    - ./.env
+
+services:
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    <<: *agent-config
+    depends_on:
+      vllm:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:${AGENT_PORT:-8001}:8000"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3)"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  vllm:
+    image: vllm/vllm-openai:v0.11.0
+    <<: *agent-config
+    entrypoint: ["python", "/opt/biblioteca/start_vllm.py"]
+    volumes:
+      - ./deploy/start_vllm.py:/opt/biblioteca/start_vllm.py:ro
+      - ./deploy/model_config.py:/opt/biblioteca/model_config.py:ro
+      - huggingface-cache:/root/.cache/huggingface
+    ipc: host
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3)"]
+      interval: 15s
+      timeout: 5s
+      retries: 30
+      start_period: 60s
+
+  tests:
+    profiles: [test]
+    build:
+      context: .
+      dockerfile: Dockerfile
+    # No cargar credenciales ni catálogo de producción en las pruebas.
+    env_file:
+      - ${MODEL_ENV_FILE:-deploy/models/qwen.env}
+      - path: ./tests/.env
+        required: false
+    command: ["python", "-m", "unittest", "discover", "-s", "tests", "-v"]
+    volumes:
+      - ./tests:/app/tests:ro
+      - ./deploy:/app/deploy:ro
+
+volumes:
+  huggingface-cache:

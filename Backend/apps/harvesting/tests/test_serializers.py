@@ -16,7 +16,7 @@ class HarvestingSerializersTestCase(TestCase):
     def setUpTestData(cls):
         cls.user = User.objects.get(code=0)
         cls.platform = Platform.objects.create(
-            name="OpenAlex",
+            name="OpenAlex Serializer Test",
             base_api_url="https://api.openalex.org",
             is_harvestable=True,
             created_by=cls.user,

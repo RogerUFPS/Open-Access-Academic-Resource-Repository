@@ -1,3 +1,8 @@
+x-backend-env: &backend-env
+  - path: ./Backend/.env
+  - path: ./Backend/.agent.env
+    required: false
+
 x-service: &service
   restart: unless-stopped
   init: true
@@ -15,6 +20,34 @@ x-service: &service
     - services
 
 services:
+  # Solo con --profile local-agent: GPU y pesos locales. Nunca en up normal.
+  agent-api:
+    profiles: [local-agent]
+    extends:
+      file: ./Agent/docker-compose.yml
+      service: api
+    networks:
+      services:
+        aliases: ["biblioteca-agent-${AGENT_INSTANCE:-qwen}"]
+      agent-inference:
+
+  vllm:
+    profiles: [local-agent]
+    extends:
+      file: ./Agent/docker-compose.yml
+      service: vllm
+    networks: [agent-inference]
+
+  backend-tests:
+    profiles: [test]
+    image: harvest-backend
+    pull_policy: never
+    env_file: *backend-env
+    volumes:
+      - ./Backend:/app:ro
+    command: ["python", "manage.py", "test", "apps.agent", "apps.account.tests", "apps.scheduler.tests", "--noinput", "-v", "2"]
+    networks: [services]
+
   backend-init:
     <<: *service
     build: ./Backend
@@ -24,10 +57,7 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-    env_file: ./Backend/.env
-    environment:
-      DJANGO_DEBUG: ${DJANGO_DEBUG:-0}
-      DATABASE_POOL: "0"
+    env_file: *backend-env
     command: ["sh", "-c", "python manage.py migrate --noinput && python manage.py bootstrap_superadmin"]
 
   rabbitmq:
@@ -59,10 +89,7 @@ services:
         condition: service_completed_successfully
       rabbitmq:
         condition: service_healthy
-    env_file: ./Backend/.env
-    environment:
-      DJANGO_DEBUG: ${DJANGO_DEBUG:-0}
-      DATABASE_POOL: ${DATABASE_POOL:-1}
+    env_file: *backend-env
     ports:
       - "127.0.0.1:8000:8000"
 
@@ -73,7 +100,7 @@ services:
     depends_on:
       rabbitmq:
         condition: service_healthy
-    env_file: ./Backend/.env
+    env_file: *backend-env
     command: ["celery", "-A", "project", "worker",
               "--loglevel=INFO", "--queues=harvesting", "--concurrency=2"]
 
@@ -84,9 +111,37 @@ services:
     depends_on:
       rabbitmq:
         condition: service_healthy
-    env_file: ./Backend/.env
+    env_file: *backend-env
     command: ["celery", "-A", "project", "beat", "--loglevel=INFO",
               "--schedule=/tmp/celerybeat-schedule"]
+
+  agent-worker:
+    # Consultas al agente por HTTP, tanto en Modal como en despliegue local.
+    <<: *service
+    image: harvest-backend
+    pull_policy: never
+    depends_on:
+      backend-init:
+        condition: service_completed_successfully
+      rabbitmq:
+        condition: service_healthy
+    env_file: *backend-env
+    command: ["celery", "-A", "project", "worker", "--loglevel=WARNING",
+              "--queues=agent", "--concurrency=4", "--hostname=agent@%h"]
+
+  agent-control:
+    # Cambio seguro entre endpoints del agente, locales o de Modal.
+    <<: *service
+    image: harvest-backend
+    pull_policy: never
+    depends_on:
+      backend-init:
+        condition: service_completed_successfully
+      rabbitmq:
+        condition: service_healthy
+    env_file: *backend-env
+    command: ["celery", "-A", "project", "worker", "--loglevel=WARNING",
+              "--queues=agent-control", "--concurrency=1", "--hostname=agent-control@%h"]
 
   frontend:
     <<: *service
@@ -98,8 +153,6 @@ services:
         NEXT_PUBLIC_SESSION_COOKIE_NAME: ${NEXT_PUBLIC_SESSION_COOKIE_NAME:-sessionid}
         NEXT_PUBLIC_CSRF_COOKIE_NAME: ${NEXT_PUBLIC_CSRF_COOKIE_NAME:-csrftoken}
     env_file: ./Frontend/.env
-    environment:
-      BACKEND_INTERNAL_URL: ${BACKEND_INTERNAL_URL:-http://backend:8000}
     ports:
       - "127.0.0.1:3000:3000"
 
@@ -140,12 +193,6 @@ services:
       timeout: 5s
       retries: 10
       start_period: 30s
-    environment:
-      RUSTFS_ADDRESS: ":9000"
-      RUSTFS_CONSOLE_ADDRESS: ":9001"
-      RUSTFS_CONSOLE_ENABLE: "true"
-      RUSTFS_OBS_LOGGER_LEVEL: "error"
-      RUSTFS_OBS_LOG_DIRECTORY: "/var/log/rustfs/"
     command: /data
 
   rustfs-init:
@@ -165,10 +212,13 @@ services:
         rc anonymous set download local/imagenes
 
 networks:
+  agent-inference:
+    driver: bridge
   services:
     driver: bridge
 
 volumes:
+  huggingface-cache:
   rabbitmq_data:
   postgres-data:
   rustfs-data:

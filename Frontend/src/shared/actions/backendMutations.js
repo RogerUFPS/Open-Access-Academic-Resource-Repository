@@ -19,7 +19,8 @@ const ALLOWED_ACCOUNT_MUTATIONS = [
   ["DELETE", /^presets\/\d+\/$/],
   ["POST", /^auth\/(login|logout)\/$/],
   ["POST", /^auth\/mfa\/(challenge|enroll|enroll\/confirm)\/$/],
-  ["POST", /^superadmin\/(accounts|deactivate)\/$/],
+  ["POST", /^superadmin\/accounts\/$/],
+  ["DELETE", /^superadmin\/accounts\/$/],
   ["POST", /^password\/(change|forgot)\/$/],
   ["POST", /^users\/invite\/$/],
   ["POST", /^users\/\d+\/restore\/$/],
@@ -40,6 +41,11 @@ const ALLOWED_HARVEST_MUTATIONS = [
   ["POST", /^\/api\/platforms\/\d+\/check-links\/$/],
   ["POST", /^\/api\/platforms\/check-links-async\/$/],
   ["POST", /^\/api\/platforms\/check-failed-links\/$/],
+];
+
+const ALLOWED_AGENT_MUTATIONS = [
+  ["POST", /^\/api\/agent\/models\/switch\/$/],
+  ["POST", /^\/api\/agent\/models\/cancel\/$/],
 ];
 
 async function responseData(response) {
@@ -178,4 +184,11 @@ export async function mutateHarvest(path, method, body) {
   // check-links de una plataforma es síncrono y puede comprobar muchas URLs.
   const longRunning = path === "/api/harvesting/schedules/run-due/" || path.endsWith("/resume/") || /^\/api\/platforms\/\d+\/check-links\/$/.test(path);
   return mutateBackend(path, method, body, longRunning ? null : 90000);
+}
+
+export async function mutateAgent(path, method, body) {
+  if (typeof path !== "string" || !ALLOWED_AGENT_MUTATIONS.some(([verb, pattern]) => verb === method && pattern.test(path))) {
+    return { status: 400, data: { detail: "La operación del módulo de IA solicitada no es válida." } };
+  }
+  return mutateBackend(path, method, body, 90000);
 }

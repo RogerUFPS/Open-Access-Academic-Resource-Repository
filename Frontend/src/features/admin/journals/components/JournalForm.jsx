@@ -181,6 +181,7 @@ export default function JournalForm({ initialData = null, isEdit = false, publis
     issn: formData.issn,
     title: formData.title,
     editorial: formData.editorial,
+    urlImage: formData.url_image,
     publicationDate: formData.publication_date,
     languages: formData.languages,
     countries: formData.countries,
@@ -447,7 +448,7 @@ export default function JournalForm({ initialData = null, isEdit = false, publis
           <FormSection id="journal-access" number={2} title="Acceso y licencias">
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3 items-start">
               <div id={fieldAnchorId("url_image")} className={cardClass}>
-                <span className={labelClass}>Imagen (opcional)</span>
+                <span className={labelClass}>Imagen (requerida para publicar)</span>
                 <ResourceImageUploader
                   value={formData.url_image}
                   alt={`Imagen de ${formData.title || "la revista"}`}
