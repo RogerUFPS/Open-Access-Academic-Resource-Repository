@@ -31,7 +31,7 @@ const nextConfig = {
     // Normaliza para evitar barras duplicadas si la variable trae / al final
     const apiUrl = (process.env.BACKEND_INTERNAL_URL || process.env.NEXT_PUBLIC_API_URL)
       ?.replace(/\/+$/, "");
-    const modules = ["accounts", "agent", "audit", "catalog", "harvesting", "journals", "platforms"];
+    const modules = ["accounts", "agent", "audit", "catalog", "harvesting", "journals", "platforms", "indicators"];
 
     return modules.flatMap((module) => [
       // 1. Ruta base exacta del módulo (ej: /api/journals/ -> /api/journals/)
