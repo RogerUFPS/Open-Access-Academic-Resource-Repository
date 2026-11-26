@@ -9,12 +9,14 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY app ./app
-COPY config ./config
-
-RUN useradd --system --uid 10001 --home /app auditcompressor
+RUN useradd --system --uid 10001 --create-home --home-dir /home/auditcompressor auditcompressor
 
 USER 10001
+
+# Extensiones en la imagen: en ejecución no se descargan de internet.
+RUN python -c "import duckdb; con = duckdb.connect(); con.install_extension('postgres'); con.install_extension('httpfs')"
+
+COPY app ./app
 
 EXPOSE 8000
 
