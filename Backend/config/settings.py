@@ -106,6 +106,13 @@ AGENT_MODAL_SECRET = os.getenv("AGENT_MODAL_SECRET", "")
 AGENT_TIMEOUT_SECONDS = max(60, int(os.getenv("AGENT_TIMEOUT_SECONDS", "900")))
 AGENT_MAX_PENDING = max(1, int(os.getenv("AGENT_MAX_PENDING", "64")))
 
+# AuditCompressor: consulta de auditoría archivada (solo lectura desde el Backend).
+AUDIT_COMPRESSOR_URL = os.getenv("AUDIT_COMPRESSOR_URL", "http://audit-compressor:8000").strip()
+AUDIT_COMPRESSOR_API_KEY = os.getenv("AUDIT_COMPRESSOR_API_KEY", "").strip()
+AUDIT_COMPRESSOR_TIMEOUT_SECONDS = max(
+    5, int(os.getenv("AUDIT_COMPRESSOR_TIMEOUT_SECONDS", "120"))
+)
+
 LOGGING = {
     "version": 1, "disable_existing_loggers": False,
     "filters": {"anonymous_chat": {"()": "apps.agent.privacy.AnonymousAccessFilter"}},

@@ -9,7 +9,12 @@ PERMISSION_MATRIX = {
         "conversations": {"view": True},
         "analytics": {"view": True},
     },
-    "audit": {"logs": {"view": True}},
+    "audit": {
+        "logs": {"view": True},
+        # Auditoría archivada en AuditCompressor; solo consulta.
+        "archived-logs": {"view": True},
+        "archived-superadmin-events": {"view": True},
+    },
     "catalog": {
         resource: {action: True for action in CRUD}
         for resource in (

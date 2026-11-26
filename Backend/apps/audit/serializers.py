@@ -88,3 +88,31 @@ class AuditActionSerializer(serializers.Serializer):
     action = serializers.IntegerField()
     name = serializers.CharField()
     label = serializers.CharField()
+
+
+class ArchivedAuditQuerySerializer(serializers.Serializer):
+    """Período [start_date, end_date) en días UTC y página de la consulta archivada."""
+
+    start_date = serializers.DateField()
+    end_date = serializers.DateField()
+    page = serializers.IntegerField(min_value=1, default=1)
+    page_size = serializers.IntegerField(min_value=1, max_value=100, default=10)
+
+    def validate(self, attrs):
+        if attrs["start_date"] >= attrs["end_date"]:
+            raise serializers.ValidationError(
+                {"end_date": "Debe ser posterior a start_date."}
+            )
+        return attrs
+
+
+class ArchivedAuditPageSerializer(serializers.Serializer):
+    """Respuesta paginada con el mismo formato que los demás listados."""
+
+    current_page = serializers.IntegerField()
+    total_pages = serializers.IntegerField()
+    page_size = serializers.IntegerField()
+    total_items = serializers.IntegerField()
+    next = serializers.URLField(allow_null=True)
+    previous = serializers.URLField(allow_null=True)
+    results = serializers.ListField(child=serializers.DictField())
