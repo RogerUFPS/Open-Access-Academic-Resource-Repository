@@ -45,6 +45,14 @@ def sha256_file(path: Path) -> str:
     return digest.hexdigest()
 
 
+def download_verified(storage: SnapshotStorage, file: SnapshotFile, path: Path) -> Path:
+    """Descarga el archivo y comprueba su SHA-256: solo se usa lo verificado."""
+    storage.download_file(file.key, path)
+    if sha256_file(path) != file.sha256:
+        raise SnapshotIntegrityError(f"El SHA-256 almacenado no coincide para {file.key}.")
+    return path
+
+
 def inet_as_postgres_text(column: str) -> str:
     """Expresión que muestra un inet como PostgreSQL: sin máscara si es una sola dirección.
 

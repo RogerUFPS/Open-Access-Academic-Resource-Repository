@@ -7,7 +7,7 @@ import logging
 import threading
 from typing import Annotated, Any
 
-from fastapi import Depends, FastAPI, HTTPException, Query, status
+from fastapi import Depends, FastAPI, HTTPException, Path, Query, status
 from pydantic import BaseModel
 
 from . import __version__
@@ -20,7 +20,8 @@ from .config import (
     get_settings,
 )
 from .history import MAX_PAGE_SIZE, read_history
-from .manifest import SnapshotRange
+from .manifest import SNAPSHOT_ID_PATTERN, SnapshotRange
+from .offload import OffloadVerificationError, SnapshotNotFoundError, offload
 from .security import require_api_key
 from .snapshots import SnapshotConflictError, SnapshotIntegrityError, archive_range
 
@@ -28,10 +29,11 @@ logger = logging.getLogger(__name__)
 
 app = FastAPI(title="AuditCompressor", version=__version__)
 
-# Un archivado a la vez: dos órdenes simultáneas sobre rangos solapados podrían
-# superar ambas la comprobación de solapamiento. Suficiente con un único
-# proceso (uvicorn --workers 1, como en el Dockerfile).
+# Un archivado u offload a la vez: dos órdenes simultáneas podrían superar
+# ambas las comprobaciones previas. Suficiente con un único proceso
+# (uvicorn --workers 1, como en el Dockerfile).
 _archive_lock = threading.Lock()
+_BUSY = "Ya hay un archivado u offload en curso; reintentar más tarde."
 
 _NOT_CONFIGURED = "El servicio de archivado no está configurado."
 
@@ -84,10 +86,7 @@ def post_snapshot(
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
 
     if not _archive_lock.acquire(blocking=False):
-        raise HTTPException(
-            status.HTTP_409_CONFLICT,
-            detail="Ya hay un archivado en curso; reintentar más tarde.",
-        )
+        raise HTTPException(status.HTTP_409_CONFLICT, detail=_BUSY)
     try:
         manifest = archive_range(settings, source, snapshot_range, now)
     except SnapshotConflictError as exc:
@@ -104,6 +103,39 @@ def post_snapshot(
     finally:
         _archive_lock.release()
     return manifest.to_dict()
+
+
+@app.post(
+    "/sources/{source_name}/snapshots/{snapshot_id}/offload",
+    dependencies=[Depends(require_api_key)],
+)
+def post_offload(
+    snapshot_id: Annotated[str, Path(pattern=SNAPSHOT_ID_PATTERN)],
+    settings: Annotated[Settings, Depends(get_settings)],
+    source: Annotated[SourceSettings, Depends(get_source)],
+) -> dict[str, Any]:
+    """Borra de PostgreSQL los registros del snapshot, solo si la copia queda verificada."""
+    if not _archive_lock.acquire(blocking=False):
+        raise HTTPException(status.HTTP_409_CONFLICT, detail=_BUSY)
+    try:
+        result = offload(settings, source, snapshot_id)
+    except SnapshotNotFoundError as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    except OffloadVerificationError as exc:
+        logger.error("Offload %s/%s rechazado: %s", source.name, snapshot_id, exc)
+        raise HTTPException(status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+    except SnapshotIntegrityError as exc:
+        logger.error("Offload %s/%s con snapshot corrupto: %s", source.name, snapshot_id, exc)
+        raise HTTPException(
+            status.HTTP_502_BAD_GATEWAY,
+            detail="El snapshot almacenado no superó la verificación de integridad.",
+        ) from exc
+    except ConfigurationError as exc:
+        logger.error("Offload no disponible: %s", exc)
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, detail=_NOT_CONFIGURED) from exc
+    finally:
+        _archive_lock.release()
+    return {**result.receipt.to_dict(), "already_offloaded": result.already_offloaded}
 
 
 @app.get("/sources/{source_name}/history", dependencies=[Depends(require_api_key)])

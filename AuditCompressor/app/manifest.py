@@ -3,11 +3,19 @@
 from __future__ import annotations
 
 import datetime as dt
+import re
 from dataclasses import asdict, dataclass
 from typing import Any
 
 MANIFEST_FORMAT_VERSION = 1
 MANIFEST_NAME = "manifest.json"
+# Formato de SnapshotRange.snapshot_id; impide rutas arbitrarias en el bucket.
+SNAPSHOT_ID_PATTERN = r"^\d{8}T\d{6}Z_\d{8}T\d{6}Z$"
+_SNAPSHOT_ID = re.compile(SNAPSHOT_ID_PATTERN)
+
+
+def is_snapshot_id(value: str) -> bool:
+    return bool(_SNAPSHOT_ID.fullmatch(value))
 
 
 @dataclass(frozen=True, slots=True)

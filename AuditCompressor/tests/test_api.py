@@ -9,6 +9,12 @@ from app import main
 from app.config import ConfigurationError, DatabaseSettings, Settings, StorageSettings, get_settings
 from app.history import HistoryPage
 from app.manifest import Manifest, SnapshotFile, SnapshotRange
+from app.offload import (
+    OffloadReceipt,
+    OffloadResult,
+    OffloadVerificationError,
+    SnapshotNotFoundError,
+)
 from app.snapshots import SnapshotConflictError, SnapshotIntegrityError
 from tests.support import END, SOURCE, START
 
@@ -124,6 +130,61 @@ class SnapshotEndpointTests(EndpointTestCase):
         self.assertEqual(self.post().status_code, 502)
         self.archive.side_effect = None
         self.assertEqual(self.post().status_code, 201)
+
+
+class OffloadEndpointTests(EndpointTestCase):
+    SNAPSHOT_ID = "20250101T000000Z_20250701T000000Z"
+    RECEIPT = OffloadReceipt(
+        snapshot_id=SNAPSHOT_ID,
+        offloaded_at=dt.datetime(2026, 1, 1, tzinfo=dt.timezone.utc),
+        deleted_rows=3,
+    )
+
+    def setUp(self):
+        super().setUp()
+        self.offload = self.patch(
+            "offload", return_value=OffloadResult(self.RECEIPT, already_offloaded=False)
+        )
+
+    def post(self, snapshot_id=SNAPSHOT_ID, headers=HEADERS, source="auditlog"):
+        return self.client.post(
+            f"/sources/{source}/snapshots/{snapshot_id}/offload", headers=headers
+        )
+
+    def test_returns_the_receipt(self):
+        response = self.post(source="superadmin_events")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json(), {**self.RECEIPT.to_dict(), "already_offloaded": False})
+        _, source, snapshot_id = self.offload.call_args.args
+        self.assertEqual((source, snapshot_id), (EVENTS, self.SNAPSHOT_ID))
+
+    def test_requires_a_valid_api_key(self):
+        self.assertEqual(self.post(headers={}).status_code, 401)
+        self.offload.assert_not_called()
+
+    def test_rejects_unknown_sources_and_malformed_snapshot_ids(self):
+        self.assertEqual(self.post(source="users").status_code, 404)
+        self.assertEqual(self.post(snapshot_id="not-a-snapshot").status_code, 422)
+        self.offload.assert_not_called()
+
+    def test_errors_map_to_http_statuses(self):
+        for error, expected in (
+            (SnapshotNotFoundError("no existe"), 404),
+            (OffloadVerificationError("no coincide"), 409),
+            (SnapshotIntegrityError("hash distinto"), 502),
+            (ConfigurationError("Faltan variables de entorno: AUDIT_ENCRYPTION_KEY."), 503),
+        ):
+            with self.subTest(error=type(error).__name__):
+                self.offload.side_effect = error
+                self.assertEqual(self.post().status_code, expected)
+
+    def test_shares_the_lock_with_archiving(self):
+        self.assertTrue(main._archive_lock.acquire(blocking=False))
+        try:
+            self.assertEqual(self.post().status_code, 409)
+        finally:
+            main._archive_lock.release()
+        self.offload.assert_not_called()
 
 
 class HistoryEndpointTests(EndpointTestCase):

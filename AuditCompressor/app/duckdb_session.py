@@ -5,6 +5,7 @@ from __future__ import annotations
 import datetime as dt
 from collections.abc import Iterator
 from contextlib import contextmanager
+from pathlib import Path
 
 import duckdb
 
@@ -30,6 +31,12 @@ def timestamp_literal(value: dt.datetime) -> str:
 ENCRYPTION_CONFIG = f"{{footer_key: {sql_literal(PARQUET_KEY_NAME)}}}"
 
 
+def read_parquet_sql(path: Path, encrypted: bool) -> str:
+    """SELECT sobre un Parquet local; si está cifrado usa la clave registrada."""
+    options = f", encryption_config = {ENCRYPTION_CONFIG}" if encrypted else ""
+    return f"SELECT * FROM read_parquet({sql_literal(str(path))}{options})"
+
+
 def register_parquet_key(connection: duckdb.DuckDBPyConnection, key: str) -> None:
     """Registra la clave de cifrado solo en la memoria de esta conexión.
 
@@ -45,11 +52,13 @@ def register_parquet_key(connection: duckdb.DuckDBPyConnection, key: str) -> Non
 
 
 @contextmanager
-def postgres_session(database: DatabaseSettings) -> Iterator[duckdb.DuckDBPyConnection]:
-    """Conexión con PostgreSQL adjunto en modo READ_ONLY como ``pg``.
+def postgres_session(
+    database: DatabaseSettings, read_only: bool = True
+) -> Iterator[duckdb.DuckDBPyConnection]:
+    """Conexión con PostgreSQL adjunto como ``pg``, en modo READ_ONLY por defecto.
 
-    Las credenciales viajan en un SECRET temporal en memoria, nunca en la cadena
-    de conexión ni en los logs.
+    Solo el offload abre una sesión con escritura. Las credenciales viajan en un
+    SECRET temporal en memoria, nunca en la cadena de conexión ni en los logs.
     """
     database.ensure_complete()
     connection = duckdb.connect()
@@ -62,8 +71,9 @@ def postgres_session(database: DatabaseSettings) -> Iterator[duckdb.DuckDBPyConn
             f"DATABASE {sql_literal(database.name)}, USER {sql_literal(database.user)}, "
             f"PASSWORD {sql_literal(database.password)})"
         )
+        mode = ", READ_ONLY" if read_only else ""
         connection.execute(
-            f"ATTACH '' AS {POSTGRES_CATALOG} (TYPE postgres, SECRET audit_postgres, READ_ONLY)"
+            f"ATTACH '' AS {POSTGRES_CATALOG} (TYPE postgres, SECRET audit_postgres{mode})"
         )
         yield connection
     finally:

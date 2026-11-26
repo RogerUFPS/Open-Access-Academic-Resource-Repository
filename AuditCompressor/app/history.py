@@ -12,14 +12,13 @@ import duckdb
 
 from .config import Settings, SourceSettings, parquet_encryption_key
 from .duckdb_session import (
-    ENCRYPTION_CONFIG,
     quote_identifier,
+    read_parquet_sql,
     register_parquet_key,
-    sql_literal,
     timestamp_literal,
 )
-from .manifest import Manifest, SnapshotFile, SnapshotRange
-from .snapshots import SnapshotIntegrityError, list_manifests, sha256_file
+from .manifest import Manifest, SnapshotRange
+from .snapshots import download_verified, list_manifests
 from .storage import SnapshotStorage
 
 MAX_PAGE_SIZE = 1000
@@ -40,19 +39,6 @@ def snapshots_for(
         if manifest.range.overlaps(snapshot_range)
     ]
     return sorted(manifests, key=lambda manifest: manifest.range.start)
-
-
-def _download_verified(storage: SnapshotStorage, file: SnapshotFile, path: Path) -> Path:
-    """Descarga el archivo y lo verifica antes de leerlo: se consulta lo verificado."""
-    storage.download_file(file.key, path)
-    if sha256_file(path) != file.sha256:
-        raise SnapshotIntegrityError(f"El SHA-256 almacenado no coincide para {file.key}.")
-    return path
-
-
-def _read_file(path: Path, encrypted: bool) -> str:
-    options = f", encryption_config = {ENCRYPTION_CONFIG}" if encrypted else ""
-    return f"SELECT * FROM read_parquet({sql_literal(str(path))}{options})"
 
 
 def _row_to_json(
@@ -98,8 +84,8 @@ def query_history(
     )
     with tempfile.TemporaryDirectory(prefix="audit-history-") as directory:
         reads = [
-            _read_file(
-                _download_verified(storage, file, Path(directory) / f"{index:04d}.parquet"),
+            read_parquet_sql(
+                download_verified(storage, file, Path(directory) / f"{index:04d}.parquet"),
                 encrypted,
             )
             for index, (file, encrypted) in enumerate(files)
