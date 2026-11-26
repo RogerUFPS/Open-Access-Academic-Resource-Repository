@@ -8,6 +8,8 @@ audit:
   table: auditlog_logentry
   timestamp_column: timestamp
   primary_key: id
+  # Columnas jsonb: la consulta histórica las devuelve como objetos JSON.
+  json_columns: [changes, serialized_data, additional_data]
 
 storage:
   # Ruta dentro del bucket S3_BUCKET: <prefix>/<snapshot_id>/...

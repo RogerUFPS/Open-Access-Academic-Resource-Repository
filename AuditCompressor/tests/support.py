@@ -21,6 +21,7 @@ ARCHIVE = ArchiveSettings(
     primary_key="id",
     prefix="auditlog",
     compression="zstd",
+    json_columns=("changes",),
 )
 
 
@@ -51,10 +52,15 @@ class FakeStorage:
     def __init__(self) -> None:
         self.objects: dict[str, bytes] = {}
         self.corrupt = False
+        self.downloaded: list[str] = []
 
     def upload_file(self, path: Path, key: str) -> None:
         content = path.read_bytes()
         self.objects[key] = content + b"corrupt" if self.corrupt else content
+
+    def download_file(self, key: str, path: Path) -> None:
+        self.downloaded.append(key)
+        path.write_bytes(self.objects[key])
 
     def sha256(self, key: str) -> str:
         return hashlib.sha256(self.objects[key]).hexdigest()

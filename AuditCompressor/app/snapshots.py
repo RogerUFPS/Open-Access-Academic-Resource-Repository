@@ -11,7 +11,7 @@ from pathlib import Path
 import duckdb
 
 from .config import ArchiveSettings, Settings
-from .duckdb_session import POSTGRES_CATALOG, postgres_session, sql_literal
+from .duckdb_session import POSTGRES_CATALOG, postgres_session, sql_literal, timestamp_literal
 from .manifest import MANIFEST_NAME, Manifest, SnapshotFile, SnapshotRange
 from .storage import SnapshotStorage
 
@@ -37,10 +37,6 @@ def sha256_file(path: Path) -> str:
     return digest.hexdigest()
 
 
-def _timestamp_literal(value: dt.datetime) -> str:
-    return f"TIMESTAMPTZ {sql_literal(value.isoformat())}"
-
-
 def export_range(
     connection: duckdb.DuckDBPyConnection,
     source: str,
@@ -59,8 +55,8 @@ def export_range(
     column = f'"{archive.timestamp_column}"'
     query = (
         f"SELECT * FROM {source} "
-        f"WHERE {column} >= {_timestamp_literal(snapshot_range.start)} "
-        f"AND {column} < {_timestamp_literal(snapshot_range.end)} "
+        f"WHERE {column} >= {timestamp_literal(snapshot_range.start)} "
+        f"AND {column} < {timestamp_literal(snapshot_range.end)} "
         f'ORDER BY "{archive.primary_key}"'
     )
     try:

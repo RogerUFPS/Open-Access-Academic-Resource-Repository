@@ -7,6 +7,7 @@ from fastapi.testclient import TestClient
 
 from app import main
 from app.config import ConfigurationError, DatabaseSettings, Settings, StorageSettings, get_settings
+from app.history import HistoryPage
 from app.manifest import Manifest, SnapshotFile, SnapshotRange
 from app.snapshots import SnapshotConflictError, SnapshotIntegrityError
 from tests.support import ARCHIVE, END, START
@@ -104,6 +105,58 @@ class SnapshotEndpointTests(unittest.TestCase):
         self.assertEqual(self.post().status_code, 502)
         self.archive.side_effect = None
         self.assertEqual(self.post().status_code, 201)
+
+
+class HistoryEndpointTests(unittest.TestCase):
+    QUERY = {"start_date": "2025-01-01", "end_date": "2025-07-01"}
+
+    def setUp(self):
+        main.app.dependency_overrides[get_settings] = lambda: SETTINGS
+        self.addCleanup(main.app.dependency_overrides.clear)
+        patcher = mock.patch(
+            "app.main.read_audit_history",
+            return_value=HistoryPage(count=1, results=[{"id": 2}]),
+        )
+        self.read = patcher.start()
+        self.addCleanup(patcher.stop)
+        self.client = TestClient(main.app)
+
+    def get(self, params=None, headers=HEADERS):
+        return self.client.get("/history", params=params or self.QUERY, headers=headers)
+
+    def test_returns_a_page_for_the_requested_range(self):
+        response = self.get(self.QUERY | {"limit": 10, "offset": 20})
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            response.json(), {"count": 1, "limit": 10, "offset": 20, "results": [{"id": 2}]}
+        )
+        _, snapshot_range, limit, offset = self.read.call_args.args
+        self.assertEqual((snapshot_range, limit, offset), (SnapshotRange(START, END), 10, 20))
+
+    def test_requires_a_valid_api_key(self):
+        self.assertEqual(self.get(headers={}).status_code, 401)
+        self.read.assert_not_called()
+
+    def test_invalid_parameters_are_rejected(self):
+        for params in (
+            {"start_date": "2025-07-01", "end_date": "2025-01-01"},
+            {"start_date": "2025-01-01"},
+            self.QUERY | {"limit": 0},
+            self.QUERY | {"limit": 1001},
+            self.QUERY | {"offset": -1},
+        ):
+            with self.subTest(params=params):
+                self.assertEqual(self.get(params).status_code, 422)
+        self.read.assert_not_called()
+
+    def test_errors_map_to_http_statuses(self):
+        for error, expected in (
+            (SnapshotIntegrityError("hash distinto"), 502),
+            (ConfigurationError("Faltan variables de entorno: S3_BUCKET."), 503),
+        ):
+            with self.subTest(error=type(error).__name__):
+                self.read.side_effect = error
+                self.assertEqual(self.get().status_code, expected)
 
 
 if __name__ == "__main__":

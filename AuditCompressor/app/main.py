@@ -7,11 +7,12 @@ import logging
 import threading
 from typing import Annotated, Any
 
-from fastapi import Depends, FastAPI, HTTPException, status
+from fastapi import Depends, FastAPI, HTTPException, Query, status
 from pydantic import BaseModel
 
 from . import __version__
 from .config import SERVICE_NAME, ConfigurationError, Settings, get_settings
+from .history import MAX_PAGE_SIZE, read_audit_history
 from .manifest import SnapshotRange
 from .security import require_api_key
 from .snapshots import SnapshotConflictError, SnapshotIntegrityError, archive_audit_range
@@ -80,3 +81,33 @@ def create_snapshot(
     finally:
         _archive_lock.release()
     return manifest.to_dict()
+
+
+@app.get("/history", dependencies=[Depends(require_api_key)])
+def read_history(
+    settings: Annotated[Settings, Depends(get_settings)],
+    start_date: dt.date,
+    end_date: dt.date,
+    limit: Annotated[int, Query(ge=1, le=MAX_PAGE_SIZE)] = 100,
+    offset: Annotated[int, Query(ge=0)] = 0,
+) -> dict[str, Any]:
+    """Auditoría archivada en [start_date, end_date), combinando todos sus snapshots."""
+    try:
+        snapshot_range = SnapshotRange.from_dates(start_date, end_date)
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
+    try:
+        page = read_audit_history(settings, snapshot_range, limit, offset)
+    except ConfigurationError as exc:
+        logger.error("Consulta histórica no disponible: %s", exc)
+        raise HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="El servicio de archivado no está configurado.",
+        ) from exc
+    except SnapshotIntegrityError as exc:
+        logger.error("Snapshot corrupto en la consulta %s: %s", snapshot_range.snapshot_id, exc)
+        raise HTTPException(
+            status.HTTP_502_BAD_GATEWAY,
+            detail="Un snapshot del rango no superó la verificación de integridad.",
+        ) from exc
+    return {"count": page.count, "limit": limit, "offset": offset, "results": page.results}

@@ -93,10 +93,12 @@ class ArchiveSettings:
     primary_key: str
     prefix: str
     compression: str
+    json_columns: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         # Los identificadores se interpolan en SQL: solo nombres simples.
-        for value in (self.schema, self.table, self.timestamp_column, self.primary_key):
+        identifiers = (self.schema, self.table, self.timestamp_column, self.primary_key)
+        for value in (*identifiers, *self.json_columns):
             if not isinstance(value, str) or not _IDENTIFIER.match(value):
                 raise ConfigurationError(f"Identificador inválido en config.yaml: {value!r}.")
         if not isinstance(self.prefix, str) or not _PREFIX.match(self.prefix):
@@ -119,6 +121,7 @@ class ArchiveSettings:
                 primary_key=data["audit"]["primary_key"],
                 prefix=data["storage"]["prefix"],
                 compression=data["parquet"]["compression"],
+                json_columns=tuple(data["audit"].get("json_columns", ())),
             )
         except FileNotFoundError as exc:
             raise ConfigurationError(f"No existe el archivo de configuración {path}.") from exc

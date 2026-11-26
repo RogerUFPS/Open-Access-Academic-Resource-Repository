@@ -13,11 +13,15 @@ class ArchiveSettingsTests(unittest.TestCase):
         self.assertEqual(archive.qualified_table, "public.auditlog_logentry")
         self.assertEqual(archive.timestamp_column, "timestamp")
         self.assertEqual(archive.primary_key, "id")
+        self.assertEqual(archive.json_columns, ("changes", "serialized_data", "additional_data"))
 
     def test_rejects_identifiers_that_could_alter_sql(self):
+        injected = 'id"; DROP TABLE x; --'
         for field in ("schema", "table", "timestamp_column", "primary_key"):
             with self.subTest(field=field), self.assertRaises(ConfigurationError):
-                replace(ARCHIVE, **{field: 'id"; DROP TABLE x; --'})
+                replace(ARCHIVE, **{field: injected})
+        with self.assertRaises(ConfigurationError):
+            replace(ARCHIVE, json_columns=("changes", injected))
 
     def test_rejects_unsafe_prefix_and_unknown_compression(self):
         for changes in ({"prefix": "../other"}, {"prefix": "/root"}, {"compression": "zip"}):

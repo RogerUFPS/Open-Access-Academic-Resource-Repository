@@ -44,6 +44,9 @@ class SnapshotStorage:
     def upload_file(self, path: Path, key: str) -> None:
         self._client.upload_file(str(path), self._bucket, key)
 
+    def download_file(self, key: str, path: Path) -> None:
+        self._client.download_file(self._bucket, key, str(path))
+
     def sha256(self, key: str) -> str:
         """SHA-256 del contenido almacenado, descargándolo por partes."""
         body = self._client.get_object(Bucket=self._bucket, Key=key)["Body"]

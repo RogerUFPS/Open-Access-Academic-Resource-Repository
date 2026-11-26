@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import datetime as dt
 from collections.abc import Iterator
 from contextlib import contextmanager
 
@@ -15,6 +16,10 @@ POSTGRES_CATALOG = "pg"
 def sql_literal(value: str) -> str:
     """Literal SQL para sentencias que DuckDB no permite parametrizar."""
     return "'" + value.replace("'", "''") + "'"
+
+
+def timestamp_literal(value: dt.datetime) -> str:
+    return f"TIMESTAMPTZ {sql_literal(value.isoformat())}"
 
 
 @contextmanager
