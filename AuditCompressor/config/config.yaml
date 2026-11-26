@@ -1,19 +1,27 @@
 # Configuración no sensible del archivado de auditoría.
-# Los secretos (PostgreSQL, RustFS, API Key) se leen de AuditCompressor/.env.
+# Los secretos (PostgreSQL, RustFS, API Key, cifrado) se leen de AuditCompressor/.env.
 # El período a archivar no se define aquí: lo indica cada orden de archivado.
+#
+# Cada fuente es una tabla independiente: tiene sus propios snapshots en
+# <S3_BUCKET>/<nombre de la fuente>/<snapshot_id>/ y su propia ruta en la API.
 
-audit:
-  # Tabla de django-auditlog; apps.audit.AuditLog es un proxy sobre ella.
-  schema: public
-  table: auditlog_logentry
-  timestamp_column: timestamp
-  primary_key: id
-  # Columnas jsonb: la consulta histórica las devuelve como objetos JSON.
-  json_columns: [changes, serialized_data, additional_data]
+sources:
+  # Auditoría general de django-auditlog; apps.audit.AuditLog es un proxy sobre ella.
+  auditlog:
+    schema: public
+    table: auditlog_logentry
+    timestamp_column: timestamp
+    primary_key: id
+    # Columnas jsonb: la consulta histórica las devuelve como objetos JSON.
+    json_columns: [changes, serialized_data, additional_data]
 
-storage:
-  # Ruta dentro del bucket S3_BUCKET: <prefix>/<snapshot_id>/...
-  prefix: auditlog
+  # Eventos de seguridad del superadmin (apps.account.SuperadminAuditEvent).
+  superadmin_events:
+    schema: public
+    table: account_superadminauditevent
+    timestamp_column: timestamp
+    primary_key: id
+    json_columns: [details]
 
 parquet:
   compression: zstd

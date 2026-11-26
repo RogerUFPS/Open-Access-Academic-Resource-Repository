@@ -11,11 +11,18 @@ from fastapi import Depends, FastAPI, HTTPException, Query, status
 from pydantic import BaseModel
 
 from . import __version__
-from .config import SERVICE_NAME, ConfigurationError, Settings, get_settings
-from .history import MAX_PAGE_SIZE, read_audit_history
+from .config import (
+    SERVICE_NAME,
+    ConfigurationError,
+    Settings,
+    SourceSettings,
+    UnknownSourceError,
+    get_settings,
+)
+from .history import MAX_PAGE_SIZE, read_history
 from .manifest import SnapshotRange
 from .security import require_api_key
-from .snapshots import SnapshotConflictError, SnapshotIntegrityError, archive_audit_range
+from .snapshots import SnapshotConflictError, SnapshotIntegrityError, archive_range
 
 logger = logging.getLogger(__name__)
 
@@ -26,12 +33,30 @@ app = FastAPI(title="AuditCompressor", version=__version__)
 # proceso (uvicorn --workers 1, como en el Dockerfile).
 _archive_lock = threading.Lock()
 
+_NOT_CONFIGURED = "El servicio de archivado no está configurado."
+
 
 class SnapshotRequest(BaseModel):
     """Período [start_date, end_date) en días completos UTC."""
 
     start_date: dt.date
     end_date: dt.date
+
+
+def get_source(
+    source_name: str, settings: Annotated[Settings, Depends(get_settings)]
+) -> SourceSettings:
+    try:
+        return settings.source(source_name)
+    except UnknownSourceError as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+
+
+def _range_or_422(start_date: dt.date, end_date: dt.date) -> SnapshotRange:
+    try:
+        return SnapshotRange.from_dates(start_date, end_date)
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
 
 
 @app.get("/health")
@@ -41,18 +66,19 @@ def health() -> dict[str, str]:
 
 
 @app.post(
-    "/snapshots",
+    "/sources/{source_name}/snapshots",
     status_code=status.HTTP_201_CREATED,
     dependencies=[Depends(require_api_key)],
 )
-def create_snapshot(
+def post_snapshot(
     request: SnapshotRequest,
     settings: Annotated[Settings, Depends(get_settings)],
+    source: Annotated[SourceSettings, Depends(get_source)],
 ) -> dict[str, Any]:
-    """Archiva en RustFS la auditoría del período y devuelve su manifest."""
+    """Archiva en RustFS los registros de la fuente en el período y devuelve su manifest."""
     now = dt.datetime.now(dt.timezone.utc)
+    snapshot_range = _range_or_422(request.start_date, request.end_date)
     try:
-        snapshot_range = SnapshotRange.from_dates(request.start_date, request.end_date)
         snapshot_range.ensure_closed(now)
     except ValueError as exc:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
@@ -63,17 +89,14 @@ def create_snapshot(
             detail="Ya hay un archivado en curso; reintentar más tarde.",
         )
     try:
-        manifest = archive_audit_range(settings, snapshot_range, now)
+        manifest = archive_range(settings, source, snapshot_range, now)
     except SnapshotConflictError as exc:
         raise HTTPException(status.HTTP_409_CONFLICT, detail=str(exc)) from exc
     except ConfigurationError as exc:
         logger.error("Archivado no disponible: %s", exc)
-        raise HTTPException(
-            status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="El servicio de archivado no está configurado.",
-        ) from exc
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, detail=_NOT_CONFIGURED) from exc
     except SnapshotIntegrityError as exc:
-        logger.error("Snapshot %s no verificado: %s", snapshot_range.snapshot_id, exc)
+        logger.error("Snapshot %s/%s no verificado: %s", source.name, snapshot_range.snapshot_id, exc)
         raise HTTPException(
             status.HTTP_502_BAD_GATEWAY,
             detail="El snapshot almacenado no superó la verificación de integridad.",
@@ -83,29 +106,24 @@ def create_snapshot(
     return manifest.to_dict()
 
 
-@app.get("/history", dependencies=[Depends(require_api_key)])
-def read_history(
+@app.get("/sources/{source_name}/history", dependencies=[Depends(require_api_key)])
+def get_history(
     settings: Annotated[Settings, Depends(get_settings)],
+    source: Annotated[SourceSettings, Depends(get_source)],
     start_date: dt.date,
     end_date: dt.date,
     limit: Annotated[int, Query(ge=1, le=MAX_PAGE_SIZE)] = 100,
     offset: Annotated[int, Query(ge=0)] = 0,
 ) -> dict[str, Any]:
-    """Auditoría archivada en [start_date, end_date), combinando todos sus snapshots."""
+    """Registros archivados de la fuente en [start_date, end_date), de todos sus snapshots."""
+    snapshot_range = _range_or_422(start_date, end_date)
     try:
-        snapshot_range = SnapshotRange.from_dates(start_date, end_date)
-    except ValueError as exc:
-        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
-    try:
-        page = read_audit_history(settings, snapshot_range, limit, offset)
+        page = read_history(settings, source, snapshot_range, limit, offset)
     except ConfigurationError as exc:
         logger.error("Consulta histórica no disponible: %s", exc)
-        raise HTTPException(
-            status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="El servicio de archivado no está configurado.",
-        ) from exc
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, detail=_NOT_CONFIGURED) from exc
     except SnapshotIntegrityError as exc:
-        logger.error("Snapshot corrupto en la consulta %s: %s", snapshot_range.snapshot_id, exc)
+        logger.error("Snapshot corrupto en %s %s: %s", source.name, snapshot_range.snapshot_id, exc)
         raise HTTPException(
             status.HTTP_502_BAD_GATEWAY,
             detail="Un snapshot del rango no superó la verificación de integridad.",

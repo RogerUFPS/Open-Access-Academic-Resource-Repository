@@ -6,41 +6,78 @@ from pathlib import Path
 
 from app.config import (
     CONFIG_PATH,
-    ArchiveSettings,
     ConfigurationError,
     DatabaseSettings,
+    Settings,
+    StorageSettings,
+    UnknownSourceError,
+    load_sources,
     parquet_encryption_key,
 )
-from tests.support import ARCHIVE, TEST_KEY
+from tests.support import SOURCE, TEST_KEY
 
 
-class ArchiveSettingsTests(unittest.TestCase):
-    def test_repository_config_points_to_auditlog(self):
-        archive = ArchiveSettings.from_yaml(CONFIG_PATH)
-        self.assertEqual(archive.qualified_table, "public.auditlog_logentry")
-        self.assertEqual(archive.timestamp_column, "timestamp")
-        self.assertEqual(archive.primary_key, "id")
-        self.assertEqual(archive.json_columns, ("changes", "serialized_data", "additional_data"))
+class SourceSettingsTests(unittest.TestCase):
+    def test_repository_config_declares_both_audit_tables(self):
+        sources = load_sources(CONFIG_PATH)
+        self.assertEqual(set(sources), {"auditlog", "superadmin_events"})
+
+        auditlog = sources["auditlog"]
+        self.assertEqual(auditlog.qualified_table, "public.auditlog_logentry")
+        self.assertEqual((auditlog.timestamp_column, auditlog.primary_key), ("timestamp", "id"))
+        self.assertEqual(auditlog.json_columns, ("changes", "serialized_data", "additional_data"))
+
+        events = sources["superadmin_events"]
+        self.assertEqual(events.qualified_table, "public.account_superadminauditevent")
+        self.assertEqual((events.timestamp_column, events.primary_key), ("timestamp", "id"))
+        self.assertEqual(events.json_columns, ("details",))
+
+    def test_source_name_is_its_storage_prefix(self):
+        self.assertEqual(SOURCE.prefix, "auditlog")
 
     def test_rejects_identifiers_that_could_alter_sql(self):
         injected = 'id"; DROP TABLE x; --'
         for field in ("schema", "table", "timestamp_column", "primary_key"):
             with self.subTest(field=field), self.assertRaises(ConfigurationError):
-                replace(ARCHIVE, **{field: injected})
+                replace(SOURCE, **{field: injected})
         with self.assertRaises(ConfigurationError):
-            replace(ARCHIVE, json_columns=("changes", injected))
+            replace(SOURCE, json_columns=("changes", injected))
 
-    def test_rejects_unsafe_prefix_and_unknown_compression(self):
-        for changes in ({"prefix": "../other"}, {"prefix": "/root"}, {"compression": "zip"}):
+    def test_rejects_unsafe_source_names_and_unknown_compression(self):
+        for changes in (
+            {"name": "../other"},
+            {"name": "Auditlog"},
+            {"name": "audit/log"},
+            {"compression": "zip"},
+        ):
             with self.subTest(changes=changes), self.assertRaises(ConfigurationError):
-                replace(ARCHIVE, **changes)
+                replace(SOURCE, **changes)
 
-    def test_incomplete_yaml_is_reported(self):
+    def test_incomplete_or_empty_yaml_is_reported(self):
+        contents = (
+            "sources:\n  auditlog:\n    table: auditlog_logentry\nparquet:\n  compression: zstd\n",
+            "sources: {}\nparquet:\n  compression: zstd\n",
+            "parquet:\n  compression: zstd\n",
+        )
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "config.yaml"
-            path.write_text("audit:\n  table: auditlog_logentry\n", encoding="utf-8")
-            with self.assertRaises(ConfigurationError):
-                ArchiveSettings.from_yaml(path)
+            for content in contents:
+                with self.subTest(content=content), self.assertRaises(ConfigurationError):
+                    path.write_text(content, encoding="utf-8")
+                    load_sources(path)
+
+
+class SettingsSourceTests(unittest.TestCase):
+    def test_unknown_source_is_reported(self):
+        settings = Settings(
+            api_key="",
+            database=DatabaseSettings("postgres", 5432, "db", "user", "secret"),
+            storage=StorageSettings("http://rustfs:9000", "auditorias", "us-east-1", "a", "b"),
+            sources={"auditlog": SOURCE},
+        )
+        self.assertIs(settings.source("auditlog"), SOURCE)
+        with self.assertRaises(UnknownSourceError):
+            settings.source("users")
 
 
 class EncryptionKeyTests(unittest.TestCase):

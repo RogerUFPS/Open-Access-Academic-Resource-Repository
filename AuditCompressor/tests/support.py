@@ -8,7 +8,7 @@ from pathlib import Path
 
 import duckdb
 
-from app.config import ArchiveSettings
+from app.config import SourceSettings
 
 UTC = dt.timezone.utc
 START = dt.datetime(2025, 1, 1, tzinfo=UTC)
@@ -16,12 +16,12 @@ END = dt.datetime(2025, 7, 1, tzinfo=UTC)
 MICROSECOND = dt.timedelta(microseconds=1)
 TEST_KEY = base64.b64encode(bytes(range(32))).decode()
 
-ARCHIVE = ArchiveSettings(
+SOURCE = SourceSettings(
+    name="auditlog",
     schema="main",
     table="audit",
     timestamp_column="timestamp",
     primary_key="id",
-    prefix="auditlog",
     compression="zstd",
     json_columns=("changes",),
 )

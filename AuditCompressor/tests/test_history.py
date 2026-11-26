@@ -6,7 +6,7 @@ from app.duckdb_session import register_parquet_key
 from app.history import query_history
 from app.manifest import SnapshotRange
 from app.snapshots import SnapshotIntegrityError, create_snapshot
-from tests.support import ARCHIVE, END, START, TEST_KEY, FakeStorage, audit_connection
+from tests.support import SOURCE, END, START, TEST_KEY, FakeStorage, audit_connection
 
 DAY = dt.timedelta(days=1)
 NOW = dt.datetime(2026, 1, 1, tzinfo=dt.timezone.utc)
@@ -25,11 +25,11 @@ class QueryHistoryTests(unittest.TestCase):
         register_parquet_key(connection, TEST_KEY)
         self.storage = FakeStorage()
         for snapshot_range in (FIRST, SECOND):
-            create_snapshot(connection, "audit", self.storage, ARCHIVE, snapshot_range, NOW)
+            create_snapshot(connection, "audit", self.storage, SOURCE, snapshot_range, NOW)
 
     def query(self, start, end, limit=100, offset=0, key=TEST_KEY):
         return query_history(
-            self.storage, ARCHIVE, SnapshotRange(start, end), limit, offset, key
+            self.storage, SOURCE, SnapshotRange(start, end), limit, offset, key
         )
 
     @staticmethod

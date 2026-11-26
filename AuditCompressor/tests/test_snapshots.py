@@ -2,6 +2,7 @@ import datetime as dt
 import hashlib
 import tempfile
 import unittest
+from dataclasses import replace
 from pathlib import Path
 from unittest import mock
 
@@ -13,13 +14,13 @@ from app.manifest import Manifest, SnapshotRange
 from app.snapshots import (
     SnapshotConflictError,
     SnapshotIntegrityError,
-    archive_audit_range,
+    archive_range,
     create_snapshot,
     export_range,
     sha256_file,
     source_with_inet_text,
 )
-from tests.support import ARCHIVE, END, START, TEST_KEY, FakeStorage, audit_connection
+from tests.support import SOURCE, END, START, TEST_KEY, FakeStorage, audit_connection
 
 NOW = dt.datetime(2026, 1, 1, tzinfo=dt.timezone.utc)
 MANIFEST_KEY = "auditlog/20250101T000000Z_20250701T000000Z/manifest.json"
@@ -34,9 +35,9 @@ class ExportRangeTests(unittest.TestCase):
         self.connection = audit_connection()
         self.addCleanup(self.connection.close)
 
-    def export(self, source="audit"):
+    def export(self, relation="audit"):
         return export_range(
-            self.connection, source, ARCHIVE, SnapshotRange(START, END), self.destination
+            self.connection, relation, SOURCE, SnapshotRange(START, END), self.destination
         )
 
     def test_includes_start_and_excludes_end(self):
@@ -57,7 +58,7 @@ class ExportRangeTests(unittest.TestCase):
 
     def test_failed_copy_leaves_no_files(self):
         with self.assertRaises(duckdb.Error):
-            self.export(source="missing_table")
+            self.export(relation="missing_table")
         self.assertEqual(list(Path(self.directory.name).iterdir()), [])
 
 
@@ -94,12 +95,12 @@ class CreateSnapshotTests(unittest.TestCase):
         register_parquet_key(self.connection, TEST_KEY)
         self.storage = FakeStorage()
 
-    def create(self, snapshot_range=None):
+    def create(self, snapshot_range=None, source=SOURCE):
         return create_snapshot(
             self.connection,
             "audit",
             self.storage,
-            ARCHIVE,
+            source,
             snapshot_range or SnapshotRange(START, END),
             NOW,
         )
@@ -165,39 +166,39 @@ class CreateSnapshotTests(unittest.TestCase):
         empty = SnapshotRange(END + dt.timedelta(days=1), END + dt.timedelta(days=2))
         self.assertEqual(self.create(empty).row_count, 0)
 
-
-class ArchiveAuditRangeTests(unittest.TestCase):
-    def test_period_in_progress_fails_before_connecting(self):
-        settings = Settings(
-            api_key="",
-            database=DatabaseSettings("postgres", 5432, "db", "user", "secret"),
-            storage=StorageSettings("http://rustfs:9000", "auditorias", "us-east-1", "a", "b"),
-            archive=ARCHIVE,
+    def test_sources_are_independent_for_the_same_range(self):
+        self.create()
+        other = replace(SOURCE, name="superadmin_events")
+        self.assertEqual(self.create(source=other).row_count, 3)
+        self.assertEqual(
+            sorted(key.split("/")[0] for key in self.storage.objects),
+            ["auditlog", "auditlog", "superadmin_events", "superadmin_events"],
         )
+
+
+class ArchiveRangeTests(unittest.TestCase):
+    SETTINGS = Settings(
+        api_key="",
+        database=DatabaseSettings("postgres", 5432, "db", "user", "secret"),
+        storage=StorageSettings("http://rustfs:9000", "auditorias", "us-east-1", "a", "b"),
+        sources={"auditlog": SOURCE},
+    )
+
+    def assert_fails_before_connecting(self, error, now):
         with (
             mock.patch("app.snapshots.postgres_session") as session,
             mock.patch("app.snapshots.SnapshotStorage") as storage,
         ):
-            with self.assertRaises(ValueError):
-                archive_audit_range(settings, SnapshotRange(START, END), now=START)
+            with self.assertRaises(error):
+                archive_range(self.SETTINGS, SOURCE, SnapshotRange(START, END), now=now)
         session.assert_not_called()
         storage.from_settings.assert_not_called()
+
+    def test_period_in_progress_fails_before_connecting(self):
+        self.assert_fails_before_connecting(ValueError, now=START)
 
     def test_missing_encryption_key_fails_before_connecting(self):
-        settings = Settings(
-            api_key="",
-            database=DatabaseSettings("postgres", 5432, "db", "user", "secret"),
-            storage=StorageSettings("http://rustfs:9000", "auditorias", "us-east-1", "a", "b"),
-            archive=ARCHIVE,
-        )
-        with (
-            mock.patch("app.snapshots.postgres_session") as session,
-            mock.patch("app.snapshots.SnapshotStorage") as storage,
-        ):
-            with self.assertRaises(ConfigurationError):
-                archive_audit_range(settings, SnapshotRange(START, END), now=END)
-        session.assert_not_called()
-        storage.from_settings.assert_not_called()
+        self.assert_fails_before_connecting(ConfigurationError, now=END)
 
 
 class Sha256FileTests(unittest.TestCase):

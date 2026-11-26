@@ -1,4 +1,4 @@
-"""Consulta histórica: auditoría archivada de un rango, leída de sus snapshots."""
+"""Consulta histórica: registros archivados de una fuente en un rango."""
 
 from __future__ import annotations
 
@@ -10,9 +10,10 @@ from typing import Any
 
 import duckdb
 
-from .config import ArchiveSettings, Settings, parquet_encryption_key
+from .config import Settings, SourceSettings, parquet_encryption_key
 from .duckdb_session import (
     ENCRYPTION_CONFIG,
+    quote_identifier,
     register_parquet_key,
     sql_literal,
     timestamp_literal,
@@ -31,11 +32,11 @@ class HistoryPage:
 
 
 def snapshots_for(
-    storage: SnapshotStorage, archive: ArchiveSettings, snapshot_range: SnapshotRange
+    storage: SnapshotStorage, source: SourceSettings, snapshot_range: SnapshotRange
 ) -> list[Manifest]:
     manifests = [
         manifest
-        for manifest in list_manifests(storage, archive)
+        for manifest in list_manifests(storage, source)
         if manifest.range.overlaps(snapshot_range)
     ]
     return sorted(manifests, key=lambda manifest: manifest.range.start)
@@ -65,7 +66,7 @@ def _row_to_json(
 
 def query_history(
     storage: SnapshotStorage,
-    archive: ArchiveSettings,
+    source: SourceSettings,
     snapshot_range: SnapshotRange,
     limit: int,
     offset: int,
@@ -81,7 +82,7 @@ def query_history(
         raise ValueError(f"limit debe estar entre 1 y {MAX_PAGE_SIZE} y offset no ser negativo.")
     files = [
         (file, manifest.encrypted)
-        for manifest in snapshots_for(storage, archive, snapshot_range)
+        for manifest in snapshots_for(storage, source, snapshot_range)
         for file in manifest.files
     ]
     if not files:
@@ -90,7 +91,7 @@ def query_history(
     if needs_key:
         encryption_key = parquet_encryption_key(encryption_key)
 
-    timestamp = f'"{archive.timestamp_column}"'
+    timestamp = quote_identifier(source.timestamp_column)
     where = (
         f"{timestamp} >= {timestamp_literal(snapshot_range.start)} "
         f"AND {timestamp} < {timestamp_literal(snapshot_range.end)}"
@@ -103,18 +104,20 @@ def query_history(
             )
             for index, (file, encrypted) in enumerate(files)
         ]
-        source = "(" + " UNION ALL BY NAME ".join(reads) + ")"
+        relation = "(" + " UNION ALL BY NAME ".join(reads) + ")"
         connection = duckdb.connect()
         try:
             connection.execute("SET TimeZone = 'UTC'")
             if needs_key:
                 register_parquet_key(connection, encryption_key)
-            count = connection.execute(f"SELECT count(*) FROM {source} WHERE {where}").fetchone()[0]
+            count = connection.execute(
+                f"SELECT count(*) FROM {relation} WHERE {where}"
+            ).fetchone()[0]
             # La fecha sale como texto ISO 8601 en UTC, lista para JSON.
             cursor = connection.execute(
                 f"SELECT * REPLACE (strftime({timestamp}, '%Y-%m-%dT%H:%M:%S.%f') || '+00:00' "
-                f"AS {timestamp}) FROM {source} WHERE {where} "
-                f'ORDER BY {timestamp}, "{archive.primary_key}" '
+                f"AS {timestamp}) FROM {relation} WHERE {where} "
+                f"ORDER BY {timestamp}, {quote_identifier(source.primary_key)} "
                 f"LIMIT {int(limit)} OFFSET {int(offset)}"
             )
             columns = [description[0] for description in cursor.description]
@@ -123,14 +126,18 @@ def query_history(
             connection.close()
     return HistoryPage(
         count=count,
-        results=[_row_to_json(columns, row, archive.json_columns) for row in rows],
+        results=[_row_to_json(columns, row, source.json_columns) for row in rows],
     )
 
 
-def read_audit_history(
-    settings: Settings, snapshot_range: SnapshotRange, limit: int, offset: int
+def read_history(
+    settings: Settings,
+    source: SourceSettings,
+    snapshot_range: SnapshotRange,
+    limit: int,
+    offset: int,
 ) -> HistoryPage:
     storage = SnapshotStorage.from_settings(settings.storage)
     return query_history(
-        storage, settings.archive, snapshot_range, limit, offset, settings.encryption_key
+        storage, source, snapshot_range, limit, offset, settings.encryption_key
     )
