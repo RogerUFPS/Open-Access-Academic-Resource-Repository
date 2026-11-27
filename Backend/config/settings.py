@@ -88,6 +88,11 @@ CELERY_BEAT_SCHEDULE = {
         "schedule": crontab(minute="*/15"),
         "kwargs": {"job": "check_failed_links"},
     },
+    # Diario e idempotente: si un día no se ejecuta, el siguiente se pone al día.
+    "audit-archive-daily": {
+        "task": "apps.scheduler.tasks.archive_audit_semesters",
+        "schedule": crontab(minute=0, hour=3),
+    },
 }
 SCHEDULER_API_URL = os.getenv("SCHEDULER_API_URL", "http://backend:8000")
 SCHEDULER_API_TOKEN = os.getenv("SCHEDULER_API_TOKEN", "")
@@ -112,6 +117,10 @@ AUDIT_COMPRESSOR_API_KEY = os.getenv("AUDIT_COMPRESSOR_API_KEY", "").strip()
 AUDIT_COMPRESSOR_TIMEOUT_SECONDS = max(
     5, int(os.getenv("AUDIT_COMPRESSOR_TIMEOUT_SECONDS", "120"))
 )
+# Semestres en hora local: debe coincidir con "timezone" de AuditCompressor/config/config.yaml.
+AUDIT_ARCHIVE_TIMEZONE = os.getenv("AUDIT_ARCHIVE_TIMEZONE", "America/Bogota")
+# Días de espera tras el fin de un semestre antes de comprimirlo.
+AUDIT_ARCHIVE_GRACE_DAYS = max(0, int(os.getenv("AUDIT_ARCHIVE_GRACE_DAYS", "7")))
 
 LOGGING = {
     "version": 1, "disable_existing_loggers": False,
@@ -263,4 +272,4 @@ SPECTACULAR_SETTINGS = {
 }
 
 LANGUAGE_CODE = "es-mx"
-TIME_ZONE = "America/Mexico_City"
+TIME_ZONE = "America/Bogota"

@@ -105,12 +105,14 @@ class BeatScheduleTests(SimpleTestCase):
                 "harvesting-run-due-every-5m",
                 "platforms-check-links-every-4h",
                 "platforms-check-failed-links-every-15m",
+                "audit-archive-daily",
             },
         )
         expected = {
             "harvesting-run-due-every-5m": ("*/5", "*"),
             "platforms-check-links-every-4h": (0, "*/4"),
             "platforms-check-failed-links-every-15m": ("*/15", "*"),
+            "audit-archive-daily": (0, 3),
         }
         for name, (minute, hour) in expected.items():
             with self.subTest(job=name):
