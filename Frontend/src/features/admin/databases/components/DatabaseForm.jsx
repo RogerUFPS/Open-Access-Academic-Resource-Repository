@@ -243,6 +243,7 @@ export default function DatabaseForm({ initialData = null, isEdit = false, publi
   const checklist = buildPlatformChecklist({
     publicUrl: formData.public_url,
     urlStatus: verificationStatus,
+    urlImage: formData.url_image,
     validSintaxis: formData.valid_sintaxis,
     institutions: formData.institutions,
     countries: formData.countries,
@@ -554,7 +555,7 @@ export default function DatabaseForm({ initialData = null, isEdit = false, publi
                   <FieldError field="public_url" message={fieldErrors.public_url} />
                 </div>
                 <div id={fieldAnchorId("url_image")} className={`${cardClass} md:col-span-2`}>
-                  <span className={labelClass}>Imagen (opcional)</span>
+                  <span className={labelClass}>Imagen (requerida para publicar)</span>
                   <ResourceImageUploader
                     value={formData.url_image}
                     alt={`Imagen de ${formData.name || "la plataforma"}`}

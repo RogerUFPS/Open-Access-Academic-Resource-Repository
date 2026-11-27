@@ -192,6 +192,7 @@ export default function DatabaseDetail({ platformId }) {
     ? buildPlatformChecklist({
         publicUrl: platform.public_url,
         urlStatus: verificationStatus,
+        urlImage: platform.url_image,
         validSintaxis: typeof platform.valid_sintaxis === "object" ? platform.valid_sintaxis?.id : platform.valid_sintaxis,
         institutions: platform.institutions,
         countries: platform.countries,

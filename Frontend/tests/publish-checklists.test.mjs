@@ -1,9 +1,36 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-const { buildJournalChecklist, isChecklistComplete } = await import(
+const { buildJournalChecklist, buildPlatformChecklist, isChecklistComplete } = await import(
   "../src/shared/utils/publishChecklists.js"
 );
+
+const platformRequirements = {
+  publicUrl: "https://example.org",
+  urlStatus: "available",
+  validSintaxis: 1,
+  institutions: [1],
+  countries: [1],
+  languages: [1],
+  materialTypes: [1],
+};
+
+test("platform publication checklist requires an image URL", () => {
+  const checklistWithoutImage = buildPlatformChecklist(platformRequirements);
+  const imageRequirement = checklistWithoutImage.find((item) => item.key === "url_image");
+
+  assert.equal(imageRequirement.done, false);
+  assert.equal(isChecklistComplete(checklistWithoutImage), false);
+
+  const checklistWithImage = buildPlatformChecklist({
+    ...platformRequirements,
+    urlImage: "https://example.org/platform.png",
+  });
+  const completedImageRequirement = checklistWithImage.find((item) => item.key === "url_image");
+
+  assert.equal(completedImageRequirement.done, true);
+  assert.equal(isChecklistComplete(checklistWithImage), true);
+});
 
 const journalRequirements = {
   issn: "1234-5678",

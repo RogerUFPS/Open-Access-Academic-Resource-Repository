@@ -13,6 +13,7 @@ const filled = (value) => (typeof value === "string" ? value.trim().length > 0 :
 export function buildPlatformChecklist({
   publicUrl,
   urlStatus,
+  urlImage,
   validSintaxis,
   institutions,
   countries,
@@ -31,6 +32,7 @@ export function buildPlatformChecklist({
 
   const items = [
     { key: "public_url", label: "URL pública registrada y verificada", done: urlVerified, hint: urlHint },
+    { key: "url_image", label: "Imagen de la plataforma", done: filled(urlImage) },
     { key: "valid_sintaxis", label: "Sintaxis de búsqueda seleccionada", done: filled(validSintaxis) },
     { key: "institutions", label: "Al menos una institución", done: count(institutions) > 0 },
     { key: "countries", label: "Al menos un país", done: count(countries) > 0 },
