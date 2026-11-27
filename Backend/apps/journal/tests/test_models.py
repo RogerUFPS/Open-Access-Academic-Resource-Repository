@@ -5,6 +5,7 @@ from django.test import TestCase
 from django.utils import timezone
 
 from apps.account.models import User
+from apps.core.testing import system_user
 from apps.catalog.models import (
     AcademicProgram,
     Country,
@@ -27,37 +28,33 @@ from apps.platforms.models import Platform
 class JournalModelsTests(TestCase):
     @classmethod
     def setUpTestData(cls):
-        cls.system = User.objects.create_user(
-            code=0,
-            full_name="Sistema",
-            email="sistema@test.local",
-        )
+        cls.system = system_user()
 
         cls.language = Language.objects.create(
-            name="Español",
-            abbreviation="es",
+            name="Español prueba",
+            abbreviation="t-es",
             created_by=cls.system,
         )
 
         cls.country = Country.objects.create(
-            name="Colombia",
-            abbreviation="co",
+            name="Colombia prueba",
+            abbreviation="t-co",
             emoji_flag="🇨🇴",
             created_by=cls.system,
         )
 
         cls.knowledge_area = KnowledgeArea.objects.create(
-            name="Ingeniería",
+            name="Ingeniería prueba",
             created_by=cls.system,
         )
 
         cls.material_type = MaterialType.objects.create(
-            name="Artículos",
+            name="Artículos prueba",
             created_by=cls.system,
         )
 
         cls.academic_program = AcademicProgram.objects.create(
-            name="Ingeniería de Sistemas",
+            name="Ingeniería de Sistemas prueba",
             created_by=cls.system,
         )
 

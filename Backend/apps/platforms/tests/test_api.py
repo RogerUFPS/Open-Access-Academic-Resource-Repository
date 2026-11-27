@@ -10,6 +10,7 @@ from rest_framework.response import Response
 from rest_framework.test import APITestCase
 
 from apps.account.models import User
+from apps.core.testing import archive_seeded_journals_and_platforms, satisfy_superadmin_mfa
 from apps.core.storage import StoredImage
 from apps.catalog.models import (
     AcademicProgram,
@@ -29,6 +30,7 @@ class PlatformAPITests(APITestCase):
         cls.system = User.objects.get(code=0)
         cls.system.is_superadmin = True
         cls.system.save(update_fields=["is_superadmin"])
+        archive_seeded_journals_and_platforms()
 
         cls.institution = Institution.objects.create(
             name="UFPS pruebas Platform",
@@ -73,6 +75,7 @@ class PlatformAPITests(APITestCase):
 
     def setUp(self):
         self.client.force_authenticate(user=self.system)
+        satisfy_superadmin_mfa(self.client)
 
     def _get_data(self, response: Any) -> dict[str, Any]:
         """Helper para obtener el payload asegurando el tipado estático."""
@@ -297,6 +300,8 @@ class PlatformAPITests(APITestCase):
 
         self.assertEqual(one_item_response.status_code, 200)
         self.assertEqual(two_item_response.status_code, 200)
+        self.assertEqual(len(one_item_response.data["results"]), 1)
+        self.assertEqual(len(two_item_response.data["results"]), 2)
         self.assertEqual(len(one_item_queries), len(two_item_queries))
 
     def test_public_platform_list_has_shared_cache_policy_for_anonymous_requests(self):

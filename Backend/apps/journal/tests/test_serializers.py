@@ -6,6 +6,7 @@ from django.test import TestCase
 from django.utils import timezone
 
 from apps.account.models import User
+from apps.core.testing import system_user
 from apps.catalog.models import (
     AcademicProgram,
     Country,
@@ -22,52 +23,48 @@ from apps.platforms.models import LinkCheckLog, Platform
 class JournalSerializersTests(TestCase):
     @classmethod
     def setUpTestData(cls):
-        cls.system = User.objects.create_user(
-            code=0,
-            full_name="Sistema",
-            email="sistema@test.local",
-        )
+        cls.system = system_user()
 
         cls.editorial = Editorial.objects.create(
-            name="Springer",
+            name="Springer prueba",
             created_by=cls.system,
         )
 
         cls.language = Language.objects.create(
-            name="Español",
-            abbreviation="es",
+            name="Español prueba",
+            abbreviation="t-es",
             created_by=cls.system,
         )
 
         cls.country = Country.objects.create(
-            name="Colombia",
-            abbreviation="co",
+            name="Colombia prueba",
+            abbreviation="t-co",
             emoji_flag="🇨🇴",
             created_by=cls.system,
         )
 
         cls.knowledge_area = KnowledgeArea.objects.create(
-            name="Ingeniería",
+            name="Ingeniería prueba",
             created_by=cls.system,
         )
 
         cls.material_type = MaterialType.objects.create(
-            name="Artículos",
+            name="Artículos prueba",
             created_by=cls.system,
         )
 
         cls.academic_program = AcademicProgram.objects.create(
-            name="Ingeniería de Sistemas",
+            name="Ingeniería de Sistemas prueba",
             created_by=cls.system,
         )
 
         cls.knowledge_area_secondary = KnowledgeArea.objects.create(
-            name="Tecnología",
+            name="Tecnología prueba",
             created_by=cls.system,
         )
 
         cls.academic_program_secondary = AcademicProgram.objects.create(
-            name="Ingeniería Electrónica",
+            name="Ingeniería Electrónica prueba",
             created_by=cls.system,
         )
 
@@ -142,21 +139,47 @@ class JournalSerializersTests(TestCase):
         self.assertIsNone(journal.validated_by)
         self.assertIsNone(journal.validated_at)
 
-    def test_draft_journal_can_be_created_without_platform_url(self):
+    def test_new_platform_association_requires_journal_url(self):
+        for platform_data in (
+            {"platform": self.platform.pk},
+            {"platform": self.platform.pk, "journal_url": None},
+        ):
+            with self.subTest(platform_data=platform_data):
+                serializer = serializers.JournalSerializer(
+                    data={
+                        "issn": "2020-3030",
+                        "title": "Journal sin URL de plataforma",
+                        "platforms": [platform_data],
+                    },
+                )
+
+                self.assertFalse(serializer.is_valid())
+                self.assertIn("platforms", serializer.errors)
+
+    def test_existing_platform_association_keeps_its_url_when_omitted(self):
         serializer = serializers.JournalSerializer(
             data={
-                "issn": "2020-3030",
-                "title": "Journal pendiente de URL",
-                "platforms": [{"platform": self.platform.pk}],
+                "issn": "2020-3031",
+                "title": "Journal con URL inicial",
+                "platforms": [{
+                    "platform": self.platform.pk,
+                    "journal_url": "https://8.8.8.8/initial",
+                }],
             },
         )
-
         self.assertTrue(serializer.is_valid(), serializer.errors)
         journal = serializer.save(created_by=self.system)
 
-        self.assertFalse(journal.active)
-        self.assertEqual(journal.platform_links.count(), 1)
-        self.assertFalse(journal.platform_links.first().link_check_logs.exists())
+        update = serializers.JournalSerializer(
+            journal,
+            data={"platforms": [{"platform": self.platform.pk, "has_full_text": True}]},
+            partial=True,
+        )
+
+        self.assertTrue(update.is_valid(), update.errors)
+        update.save(updated_by=self.system)
+        link = journal.platform_links.get()
+        self.assertEqual(link.link_check_logs.get().url, "https://8.8.8.8/initial")
 
     def test_journal_serializer_create_with_all_relations(self):
         """
@@ -1066,12 +1089,25 @@ class JournalSerializersTests(TestCase):
             created_by=self.system,
         )
 
-        models.SharedJournalPlatform.objects.create(
+        public_link = models.SharedJournalPlatform.objects.create(
             journal=journal,
             platform=self.platform,
             has_full_text=True,
             created_by=self.system,
         )
+        # Solo se muestran asociaciones con ambos enlaces verificados y disponibles.
+        for journal_platform, url in (
+            (None, "https://8.8.8.8/public"),
+            (public_link, "https://8.8.8.8/public/journal"),
+        ):
+            LinkCheckLog.objects.create(
+                platform=self.platform,
+                journal_platform=journal_platform,
+                url=url,
+                is_active=True,
+                last_check=timezone.now(),
+                created_by=self.system,
+            )
 
         draft_platform = Platform.objects.create(
             name="Draft Platform",
@@ -1136,8 +1172,8 @@ class JournalSerializersTests(TestCase):
             {
                 "id": self.platform.pk,
                 "name": self.platform.name,
-                "public_url": None,
-                "journal_url": None,
+                "public_url": "https://8.8.8.8/public",
+                "journal_url": "https://8.8.8.8/public/journal",
                 "start_period": timezone.localdate(),
                 "finish_period": None,
                 "has_full_text": True,
@@ -1170,6 +1206,7 @@ class JournalSerializersTests(TestCase):
             LinkCheckLog.objects.create(
                 platform=platform,
                 url=public_url,
+                is_active=True,
                 last_check=timezone.now(),
                 created_by=self.system,
             )
@@ -1177,6 +1214,7 @@ class JournalSerializersTests(TestCase):
             platform=self.platform,
             journal_platform=first_link,
             url="https://public.first.test/journal",
+            is_active=True,
             last_check=timezone.now(),
             created_by=self.system,
         )
@@ -1184,6 +1222,7 @@ class JournalSerializersTests(TestCase):
             platform=second_platform,
             journal_platform=second_link,
             url="https://public.second.test/journal",
+            is_active=True,
             last_check=timezone.now(),
             created_by=self.system,
         )

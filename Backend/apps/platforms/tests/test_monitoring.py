@@ -19,6 +19,7 @@ from rest_framework.test import APIClient, APITestCase
 
 from apps.account.email import EmailDeliveryError
 from apps.account.models import AccessPreset, User
+from apps.core.testing import SuperadminEventsFlushMixin, satisfy_superadmin_mfa
 from apps.journal.models import Journal, SharedJournalPlatform
 from apps.platforms import filters, models, notifications, services, tasks
 
@@ -29,9 +30,13 @@ CHECK_PERMISSION = {"platforms": {"platforms": {"check_link": True}}}
 class MonitorFixtures:
     def setUp(self):
         super().setUp()
+        # Las semillas (harvesting/0010) cargan cientos de enlaces DOAJ; el
+        # monitor se prueba solo con los enlaces que crea cada test.
+        models.LinkCheckLog.all_objects.all().delete()
         self.user = User.objects.create_user(
             email="monitor@example.org", is_superadmin=True,
         )
+        satisfy_superadmin_mfa(self.client)
         self.platform = models.Platform.objects.create(name="Monitor", created_by=self.user)
 
     def log(self, platform=None, *, count=0, checked=False, **kwargs):
@@ -1113,7 +1118,7 @@ class NotificationTests(MonitorFixtures, TestCase):
         self.assertIn("pendiente de configuración", html)
 
 
-class MonitorConcurrencyTests(MonitorFixtures, TransactionTestCase):
+class MonitorConcurrencyTests(SuperadminEventsFlushMixin, MonitorFixtures, TransactionTestCase):
     def setUp(self):
         super().setUp()
         self.user.is_superadmin = False

@@ -6,6 +6,7 @@ from django.utils import timezone
 from rest_framework.test import APITestCase
 
 from apps.account.models import User
+from apps.core.testing import archive_seeded_journals_and_platforms, satisfy_superadmin_mfa, system_user
 from apps.catalog.models import (
     AcademicProgram,
     Country,
@@ -14,7 +15,7 @@ from apps.catalog.models import (
     Language,
     MaterialType,
 )
-from apps.platforms.models import Platform
+from apps.platforms.models import LinkCheckLog, Platform
 
 from apps.journal import models
 
@@ -22,41 +23,37 @@ from apps.journal import models
 class JournalFilterTests(APITestCase):
     @classmethod
     def setUpTestData(cls):
-        cls.user = User.objects.create_user(
-            code=0,
-            full_name="Sistema filtros Journal",
-            email="journal-filters@test.local",
-            is_superadmin=True,
-        )
+        cls.user = system_user(is_superadmin=True)
+        archive_seeded_journals_and_platforms()
         cls.editorial = Editorial.objects.create(
-            name="Editorial filtros",
+            name="Editorial filtros prueba",
             created_by=cls.user,
         )
         cls.language = Language.objects.create(
-            name="Idioma filtros",
+            name="Idioma filtros prueba",
             abbreviation="jf",
             created_by=cls.user,
         )
         cls.country = Country.objects.create(
-            name="País filtros",
+            name="País filtros prueba",
             abbreviation="jf",
             emoji_flag="🏳️",
             created_by=cls.user,
         )
         cls.knowledge_area = KnowledgeArea.objects.create(
-            name="Área filtros",
+            name="Área filtros prueba",
             created_by=cls.user,
         )
         cls.material_type = MaterialType.objects.create(
-            name="Material filtros",
+            name="Material filtros prueba",
             created_by=cls.user,
         )
         cls.academic_program = AcademicProgram.objects.create(
-            name="Programa filtros",
+            name="Programa filtros prueba",
             created_by=cls.user,
         )
         cls.license = models.License.objects.create(
-            name="Licencia filtros",
+            name="Licencia filtros prueba",
             created_by=cls.user,
         )
         cls.published_platform = Platform.objects.create(
@@ -120,6 +117,19 @@ class JournalFilterTests(APITestCase):
             platform=cls.published_platform,
             created_by=cls.user,
         )
+        # El filtro público por plataforma exige ambos enlaces verificados y disponibles.
+        for journal_platform, url in (
+            (None, "https://8.8.8.8/published"),
+            (cls.platform_link, "https://8.8.8.8/published/journal"),
+        ):
+            LinkCheckLog.objects.create(
+                platform=cls.published_platform,
+                journal_platform=journal_platform,
+                url=url,
+                is_active=True,
+                last_check=timezone.now(),
+                created_by=cls.user,
+            )
         models.SharedJournalLicense.objects.create(
             journal=cls.public_journal,
             license=cls.license,
@@ -133,6 +143,7 @@ class JournalFilterTests(APITestCase):
 
     def setUp(self):
         self.client.force_authenticate(user=self.user)
+        satisfy_superadmin_mfa(self.client)
 
     @staticmethod
     def _ids(response):
@@ -218,6 +229,8 @@ class JournalFilterTests(APITestCase):
 
         self.assertEqual(one_item_response.status_code, 200)
         self.assertEqual(two_item_response.status_code, 200)
+        self.assertEqual(len(one_item_response.data["results"]), 1)
+        self.assertEqual(len(two_item_response.data["results"]), 2)
         self.assertEqual(len(one_item_queries), len(two_item_queries))
 
     def test_public_journal_list_has_shared_cache_policy_for_anonymous_requests(self):

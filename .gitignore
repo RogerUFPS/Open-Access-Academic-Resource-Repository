@@ -5,3 +5,4 @@ Backend/.agent.env
 ./docker-compose.dev.yml
 ./Agent_N/
 ./guia_implementacion_chat.md
+/Backend/apps/platforms/tests/PRUEBAS.md

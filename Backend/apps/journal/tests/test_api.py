@@ -6,6 +6,7 @@ from django.utils import timezone
 from rest_framework.test import APITestCase
 
 from apps.account.models import User
+from apps.core.testing import archive_seeded_journals_and_platforms, satisfy_superadmin_mfa, system_user
 from apps.core.storage import StoredImage
 from apps.catalog.models import (
     AcademicProgram,
@@ -25,43 +26,39 @@ from apps.platforms.models import Platform
 class JournalAPITests(APITestCase):
     @classmethod
     def setUpTestData(cls):
-        cls.system = User.objects.create_user(
-            code=0,
-            full_name="Sistema",
-            email="sistema@test.local",
-            is_superadmin=True,
-        )
+        cls.system = system_user(is_superadmin=True)
+        archive_seeded_journals_and_platforms()
 
         cls.editorial = Editorial.objects.create(
-            name="Nature Publishing",
+            name="Nature Publishing prueba",
             created_by=cls.system,
         )
 
         cls.language = Language.objects.create(
-            name="Español",
-            abbreviation="es",
+            name="Español prueba",
+            abbreviation="t-es",
             created_by=cls.system,
         )
 
         cls.country = Country.objects.create(
-            name="Colombia",
-            abbreviation="co",
+            name="Colombia prueba",
+            abbreviation="t-co",
             emoji_flag="🇨🇴",
             created_by=cls.system,
         )
 
         cls.knowledge_area = KnowledgeArea.objects.create(
-            name="Ciencias Naturales",
+            name="Ciencias Naturales prueba",
             created_by=cls.system,
         )
 
         cls.material_type = MaterialType.objects.create(
-            name="Artículos",
+            name="Artículos prueba",
             created_by=cls.system,
         )
 
         cls.academic_program = AcademicProgram.objects.create(
-            name="Biología",
+            name="Biología prueba",
             created_by=cls.system,
         )
 
@@ -88,7 +85,7 @@ class JournalAPITests(APITestCase):
             created_by=cls.system,
         )
         section_links = (
-            (platform_models.SharedPlatformSupport, "institution", Institution.objects.create(name="UFPS", created_by=cls.system)),
+            (platform_models.SharedPlatformSupport, "institution", Institution.objects.create(name="UFPS prueba", created_by=cls.system)),
             (platform_models.SharedPlatformLanguage, "language", cls.language),
             (platform_models.SharedPlatformCountry, "country", cls.country),
             (platform_models.SharedPlatformKnowledgeArea, "knowledge_area", cls.knowledge_area),
@@ -108,10 +105,11 @@ class JournalAPITests(APITestCase):
             last_check=timezone.now(),
             created_by=cls.system,
         )
-        cls.license = models.License.objects.create(name="CC BY", created_by=cls.system)
+        cls.license = models.License.objects.create(name="CC BY prueba", created_by=cls.system)
 
     def setUp(self):
         self.client.force_authenticate(user=self.system)
+        satisfy_superadmin_mfa(self.client)
 
     def _get_data(
         self,
@@ -174,6 +172,8 @@ class JournalAPITests(APITestCase):
                     platform=self.platform,
                     journal_platform=relation,
                     url=f"https://example.org/journal/{journal.pk}",
+                    is_active=True,
+                    last_check=timezone.now(),
                     created_by=self.system,
                 )
 
@@ -358,7 +358,7 @@ class JournalAPITests(APITestCase):
 
     def test_create_journal_endpoint_derives_knowledge_areas(self):
         manual_area = KnowledgeArea.objects.create(
-            name="Ecología aplicada",
+            name="Ecología aplicada prueba",
             created_by=self.system,
         )
         response = self.client.post(
@@ -719,7 +719,8 @@ class JournalAPITests(APITestCase):
         )
 
         response = self.client.get(
-            "/api/journals/archived/"
+            "/api/journals/archived/",
+            {"issn": journal.issn},
         )
 
         data = self._get_data(response)
@@ -734,10 +735,7 @@ class JournalAPITests(APITestCase):
             for item in data["results"]
         ]
 
-        self.assertIn(
-            journal.pk,
-            archived_ids,
-        )
+        self.assertEqual(archived_ids, [journal.pk])
 
     def test_restore_action_endpoint(self):
         """
@@ -1055,9 +1053,19 @@ class JournalAPITests(APITestCase):
             validated=True,
         )
 
-        models.SharedJournalPlatform.objects.create(
+        relation = models.SharedJournalPlatform.objects.create(
             journal=journal,
             platform=self.platform,
+            created_by=self.system,
+        )
+        # El filtro público exige que la asociación sirva: la URL pública de
+        # la plataforma ya está verificada en setUpTestData; falta la de la revista.
+        platform_models.LinkCheckLog.objects.create(
+            platform=self.platform,
+            journal_platform=relation,
+            url="https://example.org/journal/platform-filter",
+            is_active=True,
+            last_check=timezone.now(),
             created_by=self.system,
         )
 
@@ -1180,16 +1188,16 @@ class JournalAPITests(APITestCase):
     def test_knowledge_area_catalog_filters_by_journal_origin(self):
         journal = self._create_journal(issn="6060-6060", active=False)
         manual = KnowledgeArea.objects.create(
-            name="Área manual filtro", created_by=self.system
+            name="Área manual filtro prueba", created_by=self.system
         )
         derived = KnowledgeArea.objects.create(
-            name="Área derivada filtro", created_by=self.system
+            name="Área derivada filtro prueba", created_by=self.system
         )
         both = KnowledgeArea.objects.create(
-            name="Área mixta filtro", created_by=self.system
+            name="Área mixta filtro prueba", created_by=self.system
         )
         available = KnowledgeArea.objects.create(
-            name="Área disponible filtro", created_by=self.system
+            name="Área disponible filtro prueba", created_by=self.system
         )
         for area, is_manual, is_derived in (
             (manual, True, False),
