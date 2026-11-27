@@ -20,25 +20,27 @@ export default function AdminDatabaseDetailPage({ params, searchParams }) {
     publishErrors = {};
   }
 
-  const [platformData, setPlatformData] = useState(null);
-  const [loading, setLoading] = useState(isEditMode);
-  const [error, setError] = useState(null);
+  // Resultado de la carga junto con el id que lo produjo: si el id de la URL
+  // cambia, la carga se deriva sin reiniciar estado dentro del efecto.
+  const [loaded, setLoaded] = useState({ id: null, data: null, error: null });
+  const loading = isEditMode && loaded.id !== platformId;
+  const platformData = loaded.data;
+  const error = loaded.id === platformId ? loaded.error : null;
 
   useEffect(() => {
-    if (isEditMode && platformId) {
-      setLoading(true);
-      platformService
-        .getPlatformById(platformId)
-        .then((data) => {
-          setPlatformData(data);
-        })
-        .catch((err) => {
-          setError(err.message);
-        })
-        .finally(() => {
-          setLoading(false);
-        });
-    }
+    if (!(isEditMode && platformId)) return undefined;
+    let active = true;
+    platformService
+      .getPlatformById(platformId)
+      .then((data) => {
+        if (active) setLoaded({ id: platformId, data, error: null });
+      })
+      .catch((err) => {
+        if (active) setLoaded({ id: platformId, data: null, error: err.message });
+      });
+    return () => {
+      active = false;
+    };
   }, [isEditMode, platformId]);
 
   if (isEditMode) {

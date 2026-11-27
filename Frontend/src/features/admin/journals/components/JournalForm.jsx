@@ -22,7 +22,9 @@ import DerivedKnowledgeAreas from "@/shared/components/classification/DerivedKno
 import useDerivedKnowledgeAreas from "@/shared/components/classification/useDerivedKnowledgeAreas";
 import { toFieldErrors } from "@/shared/utils/formErrors";
 import { buildJournalChecklist, isChecklistComplete } from "@/shared/utils/publishChecklists";
-import { ArrowLeft, CheckCircle2, ExternalLink, Globe, Plus, Save, Trash2 } from "lucide-react";
+import { LinkStatusBadge, ServingBadge } from "@/shared/components/LinkStatusBadge";
+import { canDo, useViewer } from "@/shared/hooks/useViewer";
+import { ArrowLeft, CheckCircle2, ExternalLink, Globe, Plus, RefreshCw, Save, Trash2 } from "lucide-react";
 
 function extractIds(list) {
   if (!Array.isArray(list)) return [];
@@ -48,6 +50,40 @@ function emptyPlatformRow() {
   return { _key: `new-${rowSequence}`, platform: "", journal_url: "", has_full_text: true };
 }
 
+// Filas de asociación a partir de `platforms` del Backend (detalle admin o
+// respuesta de check-links). Los estados de verificación son del Backend; se
+// guarda la URL y plataforma confirmadas para saber si la fila cambió.
+function platformRowsFromRecord(platforms) {
+  return (platforms || []).map((p, index) => {
+    const platformId = typeof p.platform === "object" && p.platform !== null ? p.platform.id : p.platform ?? p.id;
+    return {
+      _key: `existing-${p.relation_id ?? p.id ?? index}`,
+      platform: platformId,
+      name: p.name || (typeof p.platform === "object" ? p.platform?.name : ""),
+      status: p.status,
+      is_public: p.is_public,
+      journal_url: p.journal_url || "",
+      start_period: String(p.start_period || "").slice(0, 10),
+      finish_period: String(p.finish_period || "").slice(0, 10),
+      has_full_text: Boolean(p.has_full_text),
+      relation_id: p.relation_id ?? null,
+      public_url_status: p.public_url_status ?? null,
+      journal_url_status: p.journal_url_status ?? null,
+      is_serving: Boolean(p.is_serving),
+      saved: { platform: String(platformId), journal_url: p.journal_url || "" },
+    };
+  });
+}
+
+/** La fila no tiene cambios sin guardar respecto de lo que verificó el Backend. */
+function rowMatchesSaved(row) {
+  return Boolean(
+    row.saved &&
+      row.saved.platform === String(row.platform) &&
+      row.saved.journal_url === String(row.journal_url || "").trim()
+  );
+}
+
 function formFromRecord(record) {
   return {
     issn: record.issn || "",
@@ -61,17 +97,7 @@ function formFromRecord(record) {
     material_types: extractIds(record.material_types),
     academic_programs: extractIds(record.academic_programs), // obligatorio para publicar
     licenses: extractIds(record.licenses),
-    platforms: (record.platforms || []).map((p, index) => ({
-      _key: `existing-${p.relation_id ?? p.id ?? index}`,
-      platform: typeof p.platform === "object" && p.platform !== null ? p.platform.id : p.platform ?? p.id,
-      name: p.name || (typeof p.platform === "object" ? p.platform?.name : ""),
-      status: p.status,
-      is_public: p.is_public,
-      journal_url: p.journal_url || "",
-      start_period: String(p.start_period || "").slice(0, 10),
-      finish_period: String(p.finish_period || "").slice(0, 10),
-      has_full_text: Boolean(p.has_full_text),
-    })),
+    platforms: platformRowsFromRecord(record.platforms),
   };
 }
 
@@ -131,6 +157,9 @@ export default function JournalForm({ initialData = null, isEdit = false, publis
       : null
   );
   const [pendingImage, setPendingImage] = useState(null);
+  const [checkingLinks, setCheckingLinks] = useState(false);
+  const viewer = useViewer();
+  const canCheckLinks = canDo(viewer, "platforms", "platforms", "check_link");
 
   useEffect(() => {
     let cancelled = false;
@@ -187,7 +216,12 @@ export default function JournalForm({ initialData = null, isEdit = false, publis
     countries: formData.countries,
     materialTypes: formData.material_types,
     academicPrograms: formData.academic_programs,
-    platforms: formData.platforms.map((row) => ({ platform: row.platform, published: isRowPublished(row) })),
+    platforms: formData.platforms.map((row) => ({
+      platform: row.platform,
+      published: isRowPublished(row),
+      hasUrl: Boolean(String(row.journal_url || "").trim()),
+      serving: rowMatchesSaved(row) && row.is_serving,
+    })),
     licenses: formData.licenses,
   }).map((item) => ({
     ...item,
@@ -220,6 +254,60 @@ export default function JournalForm({ initialData = null, isEdit = false, publis
 
   const removePlatformRow = (index) =>
     setFormData((current) => ({ ...current, platforms: current.platforms.filter((_, i) => i !== index) }));
+
+  // Aplica la respuesta de check-links: actualiza los estados confirmados de
+  // cada asociación guardada sin descartar cambios que el usuario no guardó.
+  const applyLinkCheck = (result) => {
+    const fresh = new Map(platformRowsFromRecord(result?.platforms).map((row) => [row.relation_id, row]));
+    setRecord((current) => (current ? { ...current, platforms: result?.platforms ?? current.platforms } : current));
+    setFormData((current) => ({
+      ...current,
+      platforms: current.platforms.map((row) => {
+        const checked = row.relation_id != null ? fresh.get(row.relation_id) : null;
+        if (!checked) return row;
+        return {
+          ...row,
+          status: checked.status,
+          is_public: checked.is_public,
+          public_url_status: checked.public_url_status,
+          journal_url_status: checked.journal_url_status,
+          is_serving: checked.is_serving,
+          saved: checked.saved,
+        };
+      }),
+    }));
+  };
+
+  const verifyLinks = async (journalId) => {
+    setCheckingLinks(true);
+    try {
+      const result = await journalService.checkJournalLinks(journalId);
+      applyLinkCheck(result);
+      return result;
+    } finally {
+      setCheckingLinks(false);
+    }
+  };
+
+  const handleVerifyLinks = async () => {
+    if (!recordId) return;
+    try {
+      const result = await verifyLinks(recordId);
+      toast({
+        title: result?.publishable ? "Enlaces verificados" : "Ninguna asociación cuenta para publicar",
+        description: result?.publishable
+          ? "Al menos una plataforma publicada tiene sus dos enlaces disponibles."
+          : "Revisa las URLs marcadas como no disponibles o publica alguna de las plataformas.",
+        variant: result?.publishable ? undefined : "destructive",
+      });
+    } catch (err) {
+      toast({
+        title: "No se pudieron verificar los enlaces",
+        description: err.message || "Inténtalo de nuevo.",
+        variant: "destructive",
+      });
+    }
+  };
 
   const showErrors = (message, errors = {}) => {
     setFieldErrors(errors);
@@ -303,8 +391,17 @@ export default function JournalForm({ initialData = null, isEdit = false, publis
       }
     }
 
-    // 3. Publicar.
+    // 3. Publicar. Antes se verifican los enlaces de las asociaciones: la
+    // publicación exige al menos una plataforma publicada con sus dos URLs
+    // disponibles, y una URL recién guardada todavía no está verificada.
     if (action === "publish" && savedId) {
+      if (canCheckLinks) {
+        try {
+          await verifyLinks(savedId);
+        } catch (err) {
+          console.warn("No se pudieron verificar los enlaces antes de publicar:", err);
+        }
+      }
       try {
         await journalService.publishJournal(savedId);
       } catch (err) {
@@ -367,6 +464,12 @@ export default function JournalForm({ initialData = null, isEdit = false, publis
         <p className="text-xs text-gray-500 mt-1">
           Puedes guardar un borrador incompleto. Para publicar, completa los requisitos del panel lateral.
         </p>
+        {record?.active && (
+          <div role="note" className="mt-3 p-3 rounded-xl bg-amber-50 border border-amber-200 text-amber-900 text-xs leading-relaxed">
+            Esta revista está publicada. Si guardas cualquier cambio (incluida la imagen) quedará
+            <strong> inactiva</strong> hasta publicarla de nuevo con el botón <strong>Publicar</strong>.
+          </div>
+        )}
       </div>
 
       <div className="mb-6">
@@ -455,6 +558,12 @@ export default function JournalForm({ initialData = null, isEdit = false, publis
                   resourceId={recordId}
                   uploadImage={journalService.uploadJournalImage}
                   deleteImage={journalService.deleteJournalImage}
+                  confirmChange={
+                    record?.active
+                      ? "Esta revista está publicada. Cambiar la imagen la deja inactiva hasta publicarla de nuevo. ¿Continuar?"
+                      : undefined
+                  }
+                  onRecordChange={(updated) => updated && setRecord(updated)}
                   onImageChange={(urlImage) => setFormData((current) => ({ ...current, url_image: urlImage || "" }))}
                   onPendingFileChange={setPendingImage}
                 />
@@ -563,17 +672,32 @@ export default function JournalForm({ initialData = null, isEdit = false, publis
             id="journal-platforms"
             number={5}
             title="Plataformas"
-            description="Puedes asociar plataformas sin publicar. Para publicar la revista, al menos una de ellas debe estar publicada."
+            description="Cada plataforma nueva requiere la URL de la revista. Para publicar, al menos una plataforma publicada debe tener disponibles su URL pública y la URL de la revista; los enlaces se verifican al publicar."
             aside={
-              <Button
-                type="button"
-                variant="outline"
-                onClick={addPlatformRow}
-                className="rounded-xl border-[#C8102E] text-[#C8102E] text-xs px-3 py-1.5 font-medium hover:bg-[#C8102E]/5 cursor-pointer gap-1.5"
-              >
-                <Plus className="w-3.5 h-3.5" aria-hidden="true" />
-                Añadir plataforma
-              </Button>
+              <div className="flex flex-wrap gap-2">
+                {recordId && canCheckLinks && (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={handleVerifyLinks}
+                    disabled={checkingLinks || Boolean(submitting)}
+                    title="Verifica las URLs guardadas de todas las asociaciones"
+                    className="rounded-xl border-slate-300 text-slate-700 text-xs px-3 py-1.5 font-medium hover:bg-slate-50 cursor-pointer gap-1.5"
+                  >
+                    <RefreshCw className={`w-3.5 h-3.5 ${checkingLinks ? "animate-spin" : ""}`} aria-hidden="true" />
+                    {checkingLinks ? "Verificando..." : "Verificar enlaces"}
+                  </Button>
+                )}
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={addPlatformRow}
+                  className="rounded-xl border-[#C8102E] text-[#C8102E] text-xs px-3 py-1.5 font-medium hover:bg-[#C8102E]/5 cursor-pointer gap-1.5"
+                >
+                  <Plus className="w-3.5 h-3.5" aria-hidden="true" />
+                  Añadir plataforma
+                </Button>
+              </div>
             }
           >
             <div id={fieldAnchorId("platforms")}>
@@ -614,6 +738,22 @@ export default function JournalForm({ initialData = null, isEdit = false, publis
                           </span>
                         )}
                       </div>
+
+                      {row.platform && (
+                        <div className="flex flex-wrap items-center gap-1.5 mb-4" aria-live="polite">
+                          {rowMatchesSaved(row) ? (
+                            <>
+                              <LinkStatusBadge label="URL pública" status={row.public_url_status} />
+                              <LinkStatusBadge label="URL de la revista" status={row.journal_url_status} />
+                              <ServingBadge serving={row.is_serving} />
+                            </>
+                          ) : (
+                            <span className="text-[10px] font-medium text-slate-500">
+                              Cambios sin guardar: los enlaces se verificarán al guardar y publicar.
+                            </span>
+                          )}
+                        </div>
+                      )}
 
                       <button
                         type="button"

@@ -120,9 +120,17 @@ export default function ResourceDetail({ resource, type, includedDatabases = [] 
           {!isDatabase && (
             <section className="border-t-2 border-[#a3141c] pt-4">
               <h2 className="text-xl font-bold text-[#1f1a1a]">Disponible en</h2>
-              <ul className="mt-3 space-y-3">
-                {(includedDatabases.length ? includedDatabases : resource.platforms ?? []).map((database) => <li key={database.id}><Link className="text-sm font-semibold text-[#7f1218] underline decoration-[#c9a45c] underline-offset-2 hover:text-[#a3141c]" href={`/bases-de-datos/${database.id}`}>{database.name}</Link><span className="mt-1 block text-xs text-[#5c5252]">{database.institution || "Plataforma"}</span></li>)}
-              </ul>
+              {/* El Backend solo devuelve plataformas con enlaces verificados y
+                  disponibles; una revista publicada puede quedar sin ninguna. */}
+              {(includedDatabases.length ? includedDatabases : resource.platforms ?? []).length ? (
+                <ul className="mt-3 space-y-3">
+                  {(includedDatabases.length ? includedDatabases : resource.platforms ?? []).map((database) => <li key={database.id}><Link className="text-sm font-semibold text-[#7f1218] underline decoration-[#c9a45c] underline-offset-2 hover:text-[#a3141c]" href={`/bases-de-datos/${database.id}`}>{database.name}</Link><span className="mt-1 block text-xs text-[#5c5252]">{database.institution || "Plataforma"}</span></li>)}
+                </ul>
+              ) : (
+                <p className="mt-3 text-sm text-[#5c5252]">
+                  Por el momento no hay plataformas disponibles para consultar esta revista.
+                </p>
+              )}
             </section>
           )}
         </aside>

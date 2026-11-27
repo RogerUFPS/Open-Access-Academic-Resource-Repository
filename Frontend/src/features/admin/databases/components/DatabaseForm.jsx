@@ -210,7 +210,10 @@ export default function DatabaseForm({ initialData = null, isEdit = false, publi
 
   const status = String(record?.status || "BORRADOR").toUpperCase();
   const recordId = record?.id ?? null;
-  const canBePublished = status === "BORRADOR";
+  // Editar una plataforma publicada (datos o imagen) la devuelve a borrador en
+  // el Backend; por eso también se ofrece "Guardar y volver a publicar".
+  const isPublished = status === "PUBLICADO";
+  const canBePublished = status === "BORRADOR" || isPublished;
 
   const syncLinkVerificationStatus = useCallback(async (platformId = recordId) => {
     if (!platformId) return "unverified";
@@ -278,6 +281,16 @@ export default function DatabaseForm({ initialData = null, isEdit = false, publi
   const handleSubmit = async (action = "save") => {
     setFormError(null);
     setFieldErrors({});
+
+    if (
+      isPublished &&
+      action !== "publish" &&
+      !window.confirm(
+        "Esta plataforma está publicada. Al guardar cambios volverá a borrador y dejará de mostrarse en el directorio hasta que se publique de nuevo. ¿Deseas continuar?"
+      )
+    ) {
+      return;
+    }
 
     const name = formData.name.trim();
     const publicUrl = formData.public_url.trim();
@@ -495,6 +508,14 @@ export default function DatabaseForm({ initialData = null, isEdit = false, publi
           <p className="text-xs text-gray-500 mt-1">
             Borrador → Publicado → Obsoleto. Para publicar, completa los requisitos del panel lateral.
           </p>
+          {isPublished && (
+            <div role="note" className="mt-3 p-3 rounded-xl bg-amber-50 border border-amber-200 text-amber-900 text-xs leading-relaxed">
+              Esta plataforma está publicada. Si guardas cualquier cambio (incluida la imagen) volverá a
+              <strong> borrador</strong> y dejará de mostrarse hasta publicarla de nuevo. Usa
+              <strong> Guardar y volver a publicar</strong> para hacerlo en un solo paso. Si cambias la URL
+              pública, la nueva URL debe verificarse antes de publicar.
+            </div>
+          )}
         </div>
 
         <div className="mb-6">
@@ -561,6 +582,12 @@ export default function DatabaseForm({ initialData = null, isEdit = false, publi
                     resourceId={recordId}
                     uploadImage={platformService.uploadPlatformImage}
                     deleteImage={platformService.deletePlatformImage}
+                    confirmChange={
+                      isPublished
+                        ? "Esta plataforma está publicada. Cambiar la imagen la devuelve a borrador hasta publicarla de nuevo. ¿Continuar?"
+                        : undefined
+                    }
+                    onRecordChange={(updated) => updated && setRecord(updated)}
                     onImageChange={(urlImage) => setFormData((current) => ({ ...current, url_image: urlImage || "" }))}
                     onPendingFileChange={setPendingImage}
                   />
@@ -816,7 +843,7 @@ export default function DatabaseForm({ initialData = null, isEdit = false, publi
               description={
                 canBePublished
                   ? "Programas académicos y áreas no son obligatorios para publicar."
-                  : `La plataforma está en estado ${STATUS_LABELS[status] || status}; solo un borrador se puede publicar.`
+                  : `La plataforma está en estado ${STATUS_LABELS[status] || status}; solo un borrador (o una plataforma publicada que se vuelve a publicar) se puede publicar.`
               }
             />
           </aside>
@@ -852,7 +879,7 @@ export default function DatabaseForm({ initialData = null, isEdit = false, publi
                 className="rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs px-5 py-2 font-medium cursor-pointer gap-1.5 disabled:bg-gray-300 disabled:text-gray-600"
               >
                 <CheckCircle2 className="w-3.5 h-3.5" aria-hidden="true" />
-                {submitting === "publish" ? "Publicando..." : "Publicar"}
+                {submitting === "publish" ? "Publicando..." : isPublished ? "Guardar y volver a publicar" : "Publicar"}
               </Button>
             )}
           </div>

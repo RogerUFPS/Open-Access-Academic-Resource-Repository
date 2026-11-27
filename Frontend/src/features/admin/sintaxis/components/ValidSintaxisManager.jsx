@@ -29,7 +29,16 @@ export default function ValidSintaxisManager() {
     catch (err) { setError(getErrorMessage(err)); }
     finally { setLoading(false); }
   };
-  useEffect(() => { reload(); }, []);
+  // Carga inicial: `loading` ya arranca en true y solo se actualiza al responder.
+  useEffect(() => {
+    let active = true;
+    platformService
+      .getValidSintaxisList()
+      .then((list) => { if (active) setItems(list); })
+      .catch((err) => { if (active) setError(getErrorMessage(err)); })
+      .finally(() => { if (active) setLoading(false); });
+    return () => { active = false; };
+  }, []);
 
   const startEdit = (item) => {
     const sourceFields = item.fields || {};

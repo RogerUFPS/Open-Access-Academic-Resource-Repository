@@ -103,48 +103,73 @@ export default function DatabaseDetail({ platformId }) {
     }
   };
 
-  // Fetch Detail Data & Catalogs
+  // Obtiene plataforma, catálogos y nombres de auditoría sin tocar el estado.
+  const fetchDetailData = async () => {
+    const [data, catData] = await Promise.all([
+      platformService.getPlatformById(platformId),
+      platformService.loadFormCatalogs(),
+    ]);
+
+    const auditUserIds = [...new Set(
+      ["created_by", "updated_by", "validated_by", "deleted_by"]
+        .map((field) => data[field])
+        .filter((value) => value !== null && value !== undefined && value !== "" && typeof value !== "object")
+    )];
+    const resolvedUsers = await Promise.all(
+      auditUserIds.map(async (id) => {
+        try {
+          return [String(id), getUserDisplayName(await userService.getUserById(id))];
+        } catch {
+          return [String(id), "—"];
+        }
+      })
+    );
+    return { data, catData, userNames: Object.fromEntries(resolvedUsers) };
+  };
+
+  const applyDetail = ({ data, catData, userNames: names }) => {
+    setError(null);
+    setPlatform(data);
+    setUserNames(names);
+    setCatalogs(catData);
+    return loadLinkState();
+  };
+
+  const applyDetailError = (err) => {
+    console.error("Error loading platform detail:", err);
+    setError(err.message || "No se pudo cargar la información de la plataforma.");
+  };
+
+  // Recarga explícita tras una acción: muestra el estado de carga.
   const loadDetail = async () => {
     setLoading(true);
     setError(null);
     try {
-      const [data, catData] = await Promise.all([
-        platformService.getPlatformById(platformId),
-        platformService.loadFormCatalogs(),
-      ]);
-
-      const auditUserIds = [...new Set(
-        ["created_by", "updated_by", "validated_by", "deleted_by"]
-          .map((field) => data[field])
-          .filter((value) => value !== null && value !== undefined && value !== "" && typeof value !== "object")
-      )];
-      const resolvedUsers = await Promise.all(
-        auditUserIds.map(async (id) => {
-          try {
-            return [String(id), getUserDisplayName(await userService.getUserById(id))];
-          } catch {
-            return [String(id), "—"];
-          }
-        })
-      );
-
-      setPlatform(data);
-      setUserNames(Object.fromEntries(resolvedUsers));
-      setCatalogs(catData);
-
-      await loadLinkState();
+      await applyDetail(await fetchDetailData());
     } catch (err) {
-      console.error("Error loading platform detail:", err);
-      setError(err.message || "No se pudo cargar la información de la plataforma.");
+      applyDetailError(err);
     } finally {
       setLoading(false);
     }
   };
 
+  // Carga inicial (`loading` arranca en true): el estado solo se actualiza
+  // dentro de los callbacks de la petición.
   useEffect(() => {
-    if (platformId) {
-      loadDetail();
-    }
+    if (!platformId) return undefined;
+    let active = true;
+    fetchDetailData()
+      .then((result) => (active ? applyDetail(result) : undefined))
+      .catch((err) => {
+        if (active) applyDetailError(err);
+      })
+      .finally(() => {
+        if (active) setLoading(false);
+      });
+    return () => {
+      active = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [platformId]);
 
   const showToast = (msg) => {

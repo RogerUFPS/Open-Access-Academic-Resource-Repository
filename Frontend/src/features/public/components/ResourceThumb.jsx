@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 
 function getImageUrl(url) {
   if (!url || typeof url !== "string") return "";
@@ -28,11 +28,9 @@ export default function ResourceThumb({
   loading,
 }) {
   const imageUrl = getImageUrl(thumbnailSrc) || getImageUrl(src);
+  // Guarda la URL que falló: si cambia la imagen deja de coincidir, así que no
+  // hace falta reiniciar el estado.
   const [failedSrc, setFailedSrc] = useState("");
-
-  useEffect(() => {
-    setFailedSrc("");
-  }, [imageUrl]);
 
   if (!imageUrl || failedSrc === imageUrl) {
     return (

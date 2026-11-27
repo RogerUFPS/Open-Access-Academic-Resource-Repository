@@ -7,9 +7,11 @@ import { Button } from "@/components/ui/button";
 import { PublishChecklist } from "@/shared/components/forms/FormParts";
 import { errorSummary, toFieldErrors } from "@/shared/utils/formErrors";
 import { buildJournalChecklist, isChecklistComplete } from "@/shared/utils/publishChecklists";
+import { LinkStatusBadge, ServingBadge } from "@/shared/components/LinkStatusBadge";
+import { canDo, useViewer } from "@/shared/hooks/useViewer";
 import { CheckCircle2, X, AlertCircle } from "lucide-react";
 
-function journalChecklist(journal) {
+function journalChecklist(journal, platforms) {
   return buildJournalChecklist({
     issn: journal.issn,
     title: journal.title,
@@ -20,9 +22,11 @@ function journalChecklist(journal) {
     countries: journal.countries,
     materialTypes: journal.material_types,
     academicPrograms: journal.academic_programs,
-    platforms: (journal.platforms || []).map((entry) => ({
+    platforms: platforms.map((entry) => ({
       platform: entry.platform ?? entry.id,
       published: entry.is_public === true || String(entry.status || "").toUpperCase() === "PUBLICADO",
+      hasUrl: Boolean(entry.journal_url),
+      serving: entry.is_serving === true,
     })),
     licenses: journal.licenses,
   });
@@ -31,22 +35,41 @@ function journalChecklist(journal) {
 export default function PublishJournalModal({ journal, isOpen, onClose, onSuccess }) {
   const [publishing, setPublishing] = useState(false);
   const [publicationErrors, setPublicationErrors] = useState({ fields: {}, message: null });
+  // Resultado de la última verificación (POST /api/journals/{id}/check-links/).
+  const [checkedPlatforms, setCheckedPlatforms] = useState(null);
+  const [step, setStep] = useState(null); // null | "checking" | "publishing"
+  const viewer = useViewer();
+  const canCheckLinks = canDo(viewer, "platforms", "platforms", "check_link");
 
   if (!isOpen || !journal) return null;
 
-  const checklist = journalChecklist(journal);
+  const platforms = checkedPlatforms ?? journal.platforms ?? [];
+  const checklist = journalChecklist(journal, platforms);
   const checklistComplete = isChecklistComplete(checklist);
   const summary = errorSummary(publicationErrors.fields);
   const hasErrors = summary.length > 0 || Boolean(publicationErrors.message);
 
   const handleClose = () => {
     setPublicationErrors({ fields: {}, message: null });
+    setCheckedPlatforms(null);
     onClose();
   };
 
   const handleConfirmPublish = async () => {
     setPublishing(true);
     setPublicationErrors({ fields: {}, message: null });
+    // Primero se verifican los enlaces de las asociaciones: publicar exige al
+    // menos una plataforma publicada con sus dos URLs disponibles.
+    if (canCheckLinks) {
+      setStep("checking");
+      try {
+        const result = await journalService.checkJournalLinks(journal.id);
+        setCheckedPlatforms(result?.platforms ?? []);
+      } catch (err) {
+        console.warn("No se pudieron verificar los enlaces antes de publicar:", err);
+      }
+    }
+    setStep("publishing");
     try {
       await journalService.publishJournal(journal.id);
       onSuccess?.(`Revista "${journal.title}" publicada exitosamente.`);
@@ -59,6 +82,7 @@ export default function PublishJournalModal({ journal, isOpen, onClose, onSucces
       });
     } finally {
       setPublishing(false);
+      setStep(null);
     }
   };
 
@@ -102,6 +126,29 @@ export default function PublishJournalModal({ journal, isOpen, onClose, onSucces
           <PublishChecklist items={checklist} />
         </div>
 
+        {platforms.length > 0 && (
+          <div className="mt-4 rounded-2xl border border-gray-200 p-3 space-y-2">
+            <p className="text-xs font-bold uppercase tracking-wide text-gray-700">Enlaces por plataforma</p>
+            <ul className="space-y-2">
+              {platforms.map((entry) => (
+                <li key={entry.relation_id ?? entry.platform ?? entry.id} className="text-xs space-y-1">
+                  <span className="font-semibold text-gray-800">{entry.name}</span>
+                  <div className="flex flex-wrap gap-1.5">
+                    <LinkStatusBadge label="Pública" status={entry.public_url_status} />
+                    <LinkStatusBadge label="Revista" status={entry.journal_url_status} />
+                    <ServingBadge serving={entry.is_serving === true} />
+                  </div>
+                </li>
+              ))}
+            </ul>
+            <p className="text-[10px] text-gray-500">
+              {canCheckLinks
+                ? "Al publicar se verifican de nuevo todos los enlaces."
+                : "No tienes permiso para verificar enlaces: se publicará con el último estado verificado."}
+            </p>
+          </div>
+        )}
+
         {hasErrors && (
           <div role="alert" className="mt-4 p-3 rounded-xl bg-rose-50 border border-rose-200 text-rose-700 text-xs flex items-start gap-2">
             <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
@@ -135,7 +182,7 @@ export default function PublishJournalModal({ journal, isOpen, onClose, onSucces
             title={checklistComplete ? undefined : "Completa los requisitos de publicación"}
             className="bg-emerald-600 hover:bg-emerald-700 text-white"
           >
-            {publishing ? "Publicando..." : "Publicar"}
+            {step === "checking" ? "Verificando enlaces..." : publishing ? "Publicando..." : "Publicar"}
           </Button>
         </div>
       </div>
