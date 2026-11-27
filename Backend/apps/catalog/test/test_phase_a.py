@@ -2,7 +2,7 @@ from django.db import IntegrityError, transaction
 from django.test import TestCase
 from rest_framework.test import APIClient
 
-from apps.account.models import User
+from apps.core.testing import satisfy_superadmin_mfa, system_user
 from apps.catalog.models import (
     AcademicProgram,
     Country,
@@ -16,21 +16,17 @@ from apps.catalog.models import (
 class PhaseATests(TestCase):
     @classmethod
     def setUpTestData(cls):
-        cls.system = User.objects.create_user(
-            code=0,
-            full_name="Sistema",
-            email="sistema@test.local",
-            is_superadmin=True,
-        )
+        cls.system = system_user(is_superadmin=True)
 
     def setUp(self):
         self.client = APIClient()
         self.client.force_authenticate(user=self.system)
+        satisfy_superadmin_mfa(self.client)
 
     def test_catalog_create_uses_system_user(self):
         response = self.client.post(
             "/api/catalog/languages/",
-            {"abbreviation": "es", "name": "Español"},
+            {"abbreviation": "phase-a", "name": "Idioma PhaseA prueba"},
             format="json",
         )
 
@@ -49,18 +45,18 @@ class PhaseATests(TestCase):
 
     def test_catalog_name_is_case_insensitive_for_uniqueness(self):
         country = Country.objects.create(
-            name="colombia",
-            abbreviation="co",
+            name="país phasea prueba",
+            abbreviation="pa-a",
             emoji_flag="🇨🇴",
             created_by=self.system,
         )
-        Country.all_objects.filter(pk=country.pk).update(name="Colombia")
+        Country.all_objects.filter(pk=country.pk).update(name="País PhaseA Prueba")
 
         response = self.client.post(
             "/api/catalog/countries/",
             {
-                "name": "Colombia",
-                "abbreviation": "co-2",
+                "name": "PAÍS PHASEA PRUEBA",
+                "abbreviation": "pa-a-2",
                 "emoji_flag": "🇨🇴",
             },
             format="json",
@@ -71,8 +67,8 @@ class PhaseATests(TestCase):
 
     def test_database_constraint_rejects_case_insensitive_duplicate(self):
         Country.objects.create(
-            name="colombia",
-            abbreviation="co",
+            name="país phasea prueba",
+            abbreviation="pa-a",
             emoji_flag="🇨🇴",
             created_by=self.system,
         )
@@ -80,22 +76,22 @@ class PhaseATests(TestCase):
         with self.assertRaises(IntegrityError):
             with transaction.atomic():
                 Country.objects.create(
-                    name="COLOMBIA",
-                    abbreviation="co-2",
+                    name="PAÍS PHASEA PRUEBA",
+                    abbreviation="pa-a-2",
                     emoji_flag="🇨🇴",
                     created_by=self.system,
                 )
 
     def test_catalog_update_sets_updated_fields(self):
         language = Language.objects.create(
-            abbreviation="es",
-            name="Español",
+            abbreviation="phase-a",
+            name="Idioma PhaseA prueba",
             created_by=self.system,
         )
 
         response = self.client.patch(
             f"/api/catalog/languages/{language.pk}/",
-            {"name": "Castellano"},
+            {"name": "Idioma PhaseA actualizado"},
             format="json",
         )
 
@@ -218,7 +214,9 @@ class PhaseATests(TestCase):
             created_by=self.system,
         )
 
-        response = self.client.get("/api/catalog/editorials/archived/")
+        response = self.client.get(
+            "/api/catalog/editorials/archived/", {"search": archived.name},
+        )
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.data["total_items"], 1)

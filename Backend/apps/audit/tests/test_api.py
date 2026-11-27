@@ -2,20 +2,16 @@ from django.contrib.contenttypes.models import ContentType
 from rest_framework import status
 from rest_framework.test import APITestCase
 from auditlog.models import LogEntry
-from apps.account.models import User
+from apps.core.testing import satisfy_superadmin_mfa, system_user
 from apps.audit.models import AuditLog
 from apps.catalog.models import Institution, Language
 
 
 class AuditAPITests(APITestCase):
     def setUp(self):
-        self.user = User.objects.create(
-            code=0,
-            full_name="Sistema",
-            email="sistema@example.com",
-            is_superadmin=True,
-        )
+        self.user = system_user(full_name="Sistema", is_superadmin=True)
         self.client.force_authenticate(user=self.user)
+        satisfy_superadmin_mfa(self.client)
         AuditLog.objects.all().delete()
         self.inst_ct = ContentType.objects.get_for_model(Institution)
         self.lang_ct = ContentType.objects.get_for_model(Language)

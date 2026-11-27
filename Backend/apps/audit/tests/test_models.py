@@ -2,18 +2,14 @@ from django.contrib.contenttypes.models import ContentType
 from django.core.exceptions import PermissionDenied
 from django.test import TestCase
 from auditlog.models import LogEntry
-from apps.account.models import User
+from apps.core.testing import system_user
 from apps.audit.models import AuditLog
 from apps.catalog.models import Institution
 
 
 class AuditLogModelTests(TestCase):
     def setUp(self):
-        self.user = User.objects.create(
-            code=0,
-            full_name="Sistema",
-            email="sistema@example.com",
-        )
+        self.user = system_user()
         self.institution_ct = ContentType.objects.get_for_model(Institution)
 
     def test_audit_log_creation_and_properties(self):

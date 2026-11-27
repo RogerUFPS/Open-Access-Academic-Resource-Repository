@@ -6,12 +6,14 @@ from rest_framework.test import APIClient
 
 from apps.account.models import User
 from apps.catalog.models import KnowledgeArea
+from apps.core.testing import archive_seeded_journals_and_platforms
 from apps.journal.models import Journal, SharedJournalKnowledgeArea
 
 
 class IndicatorsApiTests(TestCase):
     @classmethod
     def setUpTestData(cls):
+        archive_seeded_journals_and_platforms()
         cls.user = User.objects.create_user(
             email="indicators@example.org",
             password="test-password",

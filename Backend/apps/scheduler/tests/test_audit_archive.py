@@ -42,7 +42,7 @@ def semester(year, half):
 
 
 class FakeAuditCompressor:
-    """Mismo contrato que AuditCompressorOrchestrator; borra con el ORM como el servicio."""
+    """Contrato de AuditCompressor, incluida su política de fuentes inmutables."""
 
     def __init__(self):
         self.calls = []
@@ -50,7 +50,9 @@ class FakeAuditCompressor:
         self.offloaded = set()
         self.failing_archives = set()
         self.unavailable_sources = set()
-        self.offload_policy = {"auditlog": True, "superadmin_events": True}
+        # Coincide con AuditCompressor/config/config.yaml: estos eventos
+        # se archivan, pero su trigger impide eliminarlos de PostgreSQL.
+        self.offload_policy = {"auditlog": True, "superadmin_events": False}
 
     def sources(self):
         return dict(self.offload_policy)
@@ -65,6 +67,8 @@ class FakeAuditCompressor:
 
     def archive(self, source, semester_):
         self.calls.append(("archive", source, semester_.label))
+        if source in self.unavailable_sources:
+            raise ArchiveServiceError("caído")
         if semester_.snapshot_id in self.failing_archives:
             raise SemesterArchiveError("fallo del semestre", 502)
         if (source, semester_.snapshot_id) in self.archived_ids:
@@ -75,6 +79,8 @@ class FakeAuditCompressor:
 
     def offload(self, source, snapshot_id):
         self.calls.append(("offload", source, snapshot_id))
+        if not self.offload_policy[source]:
+            raise AssertionError(f"No se permite offload para {source}.")
         if source in self.unavailable_sources:
             raise ArchiveServiceError("caído")
         key = (source, snapshot_id)
@@ -120,7 +126,6 @@ class SemesterTests(SimpleTestCase):
 class RunAuditArchiveTests(TestCase):
     def setUp(self):
         LogEntry.objects.all().delete()
-        SuperadminAuditEvent.objects.all().delete()
         self.content_type = ContentType.objects.get_for_model(User)
         self.archive = FakeAuditCompressor()
         self.report = new_report()
@@ -170,10 +175,21 @@ class RunAuditArchiveTests(TestCase):
         self.assertEqual(self.report, new_report())
 
     def test_superadmin_events_are_archived_too(self):
-        SuperadminAuditEvent.objects.create(action="login_succeeded", timestamp=local(2026, 3))
+        event = SuperadminAuditEvent.objects.create(
+            action="login_succeeded", timestamp=local(2026, 3),
+        )
+        snapshot_id = semester(2026, 1).snapshot_id
         self.run_archive()
         self.assertEqual(self.archived("superadmin_events"), ["2026-I"])
-        self.assertFalse(SuperadminAuditEvent.objects.exists())
+        self.assertEqual(
+            self.archive.archived_ids[("superadmin_events", snapshot_id)],
+            {event.pk},
+        )
+        self.assertTrue(SuperadminAuditEvent.objects.filter(pk=event.pk).exists())
+        self.assertNotIn(
+            ("offload", "superadmin_events", snapshot_id),
+            self.archive.calls,
+        )
 
     def test_anomaly_deletes_duplicates_and_leaves_new_records_for_the_user(self):
         closed = semester(2026, 1)

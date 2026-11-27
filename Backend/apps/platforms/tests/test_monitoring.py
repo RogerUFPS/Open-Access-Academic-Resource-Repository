@@ -1164,9 +1164,12 @@ class MonitorConcurrencyTests(SuperadminEventsFlushMixin, MonitorFixtures, Trans
 
         with (
             patch("apps.platforms.views._existing_link_check_run", side_effect=synchronized_lookup),
-            patch("apps.platforms.views.dispatch_link_checks.delay") as enqueue,
+            # Reemplazar el proxy de Celery en la vista: su tarea concreta
+            # puede resolverse contra una app distinta en cada hilo.
+            patch("apps.platforms.views.dispatch_link_checks") as dispatch_task,
             ThreadPoolExecutor(max_workers=2) as pool,
         ):
+            enqueue = dispatch_task.delay
             enqueue.return_value.id = "concurrent-task"
             responses = [future.result(timeout=30) for future in (
                 pool.submit(post_trigger),
@@ -1200,9 +1203,10 @@ class MonitorConcurrencyTests(SuperadminEventsFlushMixin, MonitorFixtures, Trans
 
         with (
             patch("apps.platforms.views._dispatch_link_check_run", side_effect=synchronized_dispatch),
-            patch("apps.platforms.views.dispatch_link_checks.delay") as enqueue,
+            patch("apps.platforms.views.dispatch_link_checks") as dispatch_task,
             ThreadPoolExecutor(max_workers=2) as pool,
         ):
+            enqueue = dispatch_task.delay
             enqueue.return_value.id = "concurrently-recovered-task"
             futures = [pool.submit(self.in_thread, request) for _ in range(2)]
             responses = [future.result(timeout=30) for future in futures]
