@@ -14,7 +14,7 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
-LOCAL_ROOT = Path(__file__).resolve().parents[2]
+LOCAL_ROOT = Path("/app") if Path("/app/SKILL.md").is_file() else Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(LOCAL_ROOT))
 
 import modal
@@ -50,6 +50,7 @@ server_image = (
     .env(
         {
             **deployment_environment(MODEL),
+            "AGENT_CLASSIFICATION_MODE": os.getenv("AGENT_CLASSIFICATION_MODE", "stable"),
             "HF_HOME": MODEL_CACHE,
             "AGENT_VLLM_BASE_URL": f"http://127.0.0.1:{VLLM_PORT}/v1",
             "AGENT_VLLM_API_KEY": "local-loopback",

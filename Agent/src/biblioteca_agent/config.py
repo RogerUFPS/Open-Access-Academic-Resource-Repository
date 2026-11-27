@@ -25,6 +25,13 @@ def _csv(name: str) -> tuple[str, ...]:
     return tuple(value.strip() for value in os.getenv(name, "").split(",") if value.strip())
 
 
+def _classification_mode():
+    value = os.getenv('AGENT_CLASSIFICATION_MODE', 'stable').strip()
+    if value not in {'stable', 'facets'}:
+        raise RuntimeError('AGENT_CLASSIFICATION_MODE debe ser stable o facets')
+    return value
+
+
 def _json_object(name: str) -> dict[str, Any]:
     raw = os.getenv(name, "{}").strip() or "{}"
     try:
@@ -38,6 +45,7 @@ def _json_object(name: str) -> dict[str, Any]:
 
 @dataclass(frozen=True, slots=True)
 class Settings:
+    classification_mode: str
     api_key: str
     model_name: str
     model_aliases: tuple[str, ...]
@@ -57,6 +65,7 @@ class Settings:
     @classmethod
     def from_env(cls) -> "Settings":
         return cls(
+            classification_mode=_classification_mode(),
             api_key=os.getenv("AGENT_API_KEY", ""),
             model_name=os.getenv("AGENT_MODEL_NAME", "qwen").strip(),
             model_aliases=_csv("AGENT_MODEL_ALIASES"),

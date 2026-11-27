@@ -6,5 +6,6 @@ db.sqlite3
 context.md
 pyrefly.toml
 docs/*
+!docs/guia_implementacion_chat.md
 *.sqlite3
 cloudflare/

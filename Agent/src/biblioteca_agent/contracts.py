@@ -52,7 +52,7 @@ class UnappliedFilter(BaseModel):
 
 class RecommendationResponse(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    estado: Literal["ok", "fuera_de_tema", "informacion_insuficiente", "error_sistema"]
+    estado: Literal["ok", "informacion_catalogo", "fuera_de_tema", "informacion_insuficiente", "error_sistema"]
     mensaje: str | None
     programas_seleccionados: list[ProgramSelection]
     busquedas: list[SearchResult]

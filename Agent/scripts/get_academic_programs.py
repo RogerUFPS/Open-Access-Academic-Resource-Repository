@@ -7,7 +7,7 @@ from biblioteca_agent.text import normalize_text
 def handler(_args):
     programs = load_snapshot()["programas"]
     return {"programas": [
-        {"id": item["id"], "nombre": item["nombre"], "nombre_normalizado": normalize_text(item["nombre"])}
+        {"id": item["id"], "nombre": item["nombre"], "nombre_normalizado": normalize_text(item["nombre"]), "areas": item.get("areas", [])}
         for item in programs
     ]}
 

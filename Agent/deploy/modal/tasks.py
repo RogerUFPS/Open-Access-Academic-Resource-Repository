@@ -6,7 +6,9 @@ from pathlib import Path
 import os
 import sys
 
-LOCAL_ROOT = Path(__file__).resolve().parents[2]
+LOCAL_ROOT = (Path("/root") if Path("/root/deploy/model_config.py").is_file()
+              else Path("/app") if Path("/app/deploy/model_config.py").is_file()
+              else Path(__file__).resolve().parents[2])
 sys.path.insert(0, str(LOCAL_ROOT))
 
 import modal

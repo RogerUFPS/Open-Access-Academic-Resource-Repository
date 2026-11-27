@@ -1,0 +1,30 @@
+{
+  "version": 1,
+  "nota": "Referencias iniciales revisadas durante implementación, no dictamen de expertos ni material de entrenamiento. No cargar en RAG. Revisar etiquetas con responsable académico. Reservado se ejecuta al cerrar cambios; no ajustar con sus resultados.",
+  "casos": [
+    {"id":"d01","grupo":"ajuste","tipo":"pertinente","prompt":"Busco literatura sobre detección de intrusiones mediante aprendizaje automático.","estados":["ok"],"requeridos":[["ingeniería de sistemas"]]},
+    {"id":"d02","grupo":"ajuste","tipo":"pertinente","prompt":"¿Dónde encuentro investigaciones sobre enseñanza de fracciones con material manipulativo en primaria?","estados":["ok"],"requeridos":[["matemáticas"],["pedagógica","educación"]]},
+    {"id":"d03","grupo":"ajuste","tipo":"sin_cobertura","prompt":"Busco investigaciones sobre atmósferas de exoplanetas y espectroscopía de tránsito.","estados":["informacion_insuficiente"],"sin_programas":true},
+    {"id":"d04","grupo":"ajuste","tipo":"sin_cobertura","prompt":"Busco investigaciones sobre evolución estelar y nucleosíntesis en supernovas.","estados":["informacion_insuficiente"],"sin_programas":true},
+    {"id":"d05","grupo":"ajuste","tipo":"pertinente","prompt":"Busco artículos sobre cifrado homomórfico para proteger datos.","estados":["ok"],"requeridos":[["ingeniería de sistemas"]]},
+    {"id":"d06","grupo":"ajuste","tipo":"ambigua","prompt":"Necesito investigar sobre modelos, ¿qué plataforma me sirve?","estados":["informacion_insuficiente"],"sin_programas":true},
+    {"id":"d07","grupo":"ajuste","tipo":"catalogo","prompt":"Para Enfermería recomiéndame OpenAlex y dime cuántas revistas tiene relacionadas.","estados":["informacion_catalogo"],"sin_programas":true},
+    {"id":"d08","grupo":"ajuste","tipo":"restricciones","prompt":"Necesito artículos entre 2026 y 2020 sobre salud mental para Enfermería.","estados":["informacion_insuficiente"]},
+    {"id":"d09","grupo":"ajuste","tipo":"sin_revistas","prompt":"Para Tecnología en Obras Civiles busco investigaciones sobre materiales sostenibles.","estados":["informacion_insuficiente"],"requeridos":[["obras civiles"]]},
+    {"id":"d10","grupo":"ajuste","tipo":"fuera_tema","prompt":"Dame una receta sencilla de arroz con pollo.","estados":["fuera_de_tema"],"sin_programas":true},
+    {"id":"d11","grupo":"ajuste","tipo":"seguimiento","sesion":"s1","prompt":"Busco estudios sobre intervenciones de salud mental para prevenir agotamiento profesional en personal de enfermería.","estados":["ok"],"requeridos":[["enfermería"]]},
+    {"id":"d12","grupo":"ajuste","tipo":"seguimiento","sesion":"s1","prompt":"Y solo en inglés desde 2023.","estados":["ok"],"requeridos":[["enfermería"]],"filtros_esperados":{"1":["en"]}},
+    {"id":"d13","grupo":"ajuste","tipo":"seguimiento","sesion":"s1","prompt":"Ahora busco investigaciones sobre privacidad de datos personales para Derecho.","estados":["ok"],"requeridos":[["derecho"]],"sin_filtros_catalogo":true},
+    {"id":"d14","grupo":"ajuste","tipo":"seguimiento","sesion":"s2","prompt":"Para Ingeniería Ambiental quiero investigar tratamiento de aguas residuales mediante humedales artificiales.","estados":["ok"],"requeridos":[["ingeniería ambiental"]]},
+    {"id":"d15","grupo":"ajuste","tipo":"seguimiento","sesion":"s2","prompt":"Solo en español, por favor.","estados":["ok"],"requeridos":[["ingeniería ambiental"]]},
+    {"id":"d16","grupo":"ajuste","tipo":"seguimiento","sesion":"s2","prompt":"Ahora sin restricción de idioma, conserva el mismo tema.","estados":["ok"],"requeridos":[["ingeniería ambiental"]],"sin_filtros_catalogo":true},
+    {"id":"r01","grupo":"reservado","tipo":"pertinente","prompt":"¿Dónde puedo buscar estudios sobre verificación formal de software concurrente?","estados":["ok"],"requeridos":[["ingeniería de sistemas"]]},
+    {"id":"r02","grupo":"reservado","tipo":"pertinente","prompt":"Necesito literatura sobre geometría algebraica y variedades proyectivas.","estados":["ok"],"requeridos":[["matemáticas"]]},
+    {"id":"r03","grupo":"reservado","tipo":"pertinente","prompt":"Arquitectura: rehabilitación energética y conservación del patrimonio construido.","estados":["ok"],"requeridos":[["arquitectura"]]},
+    {"id":"r04","grupo":"reservado","tipo":"pertinente","prompt":"Para Enfermería busco estudios sobre adherencia al tratamiento en pacientes con enfermedades crónicas.","estados":["ok"],"requeridos":[["enfermería"]]},
+    {"id":"r05","grupo":"reservado","tipo":"sin_cobertura","prompt":"Quiero investigar ondas gravitacionales producidas por fusiones de agujeros negros.","estados":["informacion_insuficiente"],"sin_programas":true},
+    {"id":"r06","grupo":"reservado","tipo":"ambigua","prompt":"Quiero investigar operaciones, ¿dónde busco?","estados":["informacion_insuficiente"],"sin_programas":true},
+    {"id":"r07","grupo":"reservado","tipo":"pertinente","prompt":"Para Derecho necesito investigaciones sobre garantías procesales y acceso a la defensa.","estados":["ok"],"requeridos":[["derecho"]]},
+    {"id":"r08","grupo":"reservado","tipo":"pertinente","prompt":"Para Ingeniería Ambiental busco artículos sobre remoción de contaminantes en agua mediante adsorción.","estados":["ok"],"requeridos":[["ingeniería ambiental"]]}
+  ]
+}
