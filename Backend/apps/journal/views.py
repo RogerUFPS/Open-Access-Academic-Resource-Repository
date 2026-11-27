@@ -24,8 +24,10 @@ from apps.core.viewsets import (
 )
 
 from . import filters, models, serializers, services
+from .permissions import JournalLinkVerificationPermission
 from apps.platforms.classification import recalculate_platforms
 from apps.platforms import models as platform_models
+from apps.platforms import notifications
 from .classification import related_platform_ids
 
 
@@ -356,6 +358,55 @@ class JournalViewSet(ResourceImageMixin, AuditableViewSet):
             serializers._represent_journal_platform(link, include_relation_key=True)
             for link in links.order_by("platform__name")
         ])
+
+    @extend_schema(
+        summary="Verificar los enlaces de las asociaciones de una revista",
+        description=(
+            "Verifica, para cada asociación vigente de la revista, la URL pública "
+            "de la plataforma y la URL de la revista en esa plataforma, con el "
+            "mismo contador e historial que las demás verificaciones (manual y "
+            "automático comparten fail_count). Una asociación sin URL no se "
+            "verifica. La respuesta indica si cada asociación sirve (is_serving: "
+            "plataforma publicada y ambas URLs disponibles) y si la revista es "
+            "publicable (al menos una asociación sirve). Tras persistir solicita "
+            "la notificación de caídas confirmadas pendientes. Requiere "
+            "platforms.platforms.check_link."
+        ),
+        request=None,
+        responses={200: inline_serializer(
+            name="JournalLinksCheckResponse",
+            fields={
+                "journal": drf_serializers.IntegerField(),
+                "publishable": drf_serializers.BooleanField(),
+                "platforms": serializers.JournalPlatformRelationSerializer(many=True),
+            },
+        )},
+        tags=["Revistas - Administración"],
+    )
+    @action(
+        detail=True,
+        methods=["post"],
+        url_path="check-links",
+        permission_classes=[JournalLinkVerificationPermission],
+    )
+    def check_links(self, request, pk=None):
+        # Sin transaction.atomic: cada verificación hace HTTP fuera de la
+        # transacción y persiste su propio evento.
+        journal = self.get_object()
+        links = services.check_journal_links(
+            journal=journal,
+            user=get_acting_user(request),
+        )
+        notifications.enqueue_pending_link_failure_notification()
+        platforms = [
+            serializers._represent_journal_platform(link, include_relation_key=True)
+            for link in links
+        ]
+        return Response({
+            "journal": journal.pk,
+            "publishable": any(item["is_serving"] for item in platforms),
+            "platforms": platforms,
+        })
 
     @extend_schema(
         summary="Desactivar revista",

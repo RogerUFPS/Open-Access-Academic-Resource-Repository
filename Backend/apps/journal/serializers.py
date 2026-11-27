@@ -105,6 +105,20 @@ def _represent_journal_platform(link, *, include_relation_key=False):
         data["status"] = link.platform.status
         data["is_public"] = link.platform.status == Platform.Status.PUBLICADO
         data["is_current"] = not link.is_deleted and link.finish_period is None
+        # Estado de verificación de cada URL (None si no hay URL registrada) y
+        # si la asociación cuenta para publicar: plataforma publicada y ambas
+        # URLs verificadas y disponibles.
+        data["public_url_status"] = (
+            platform_services.link_verification_status(public_log) if public_log else None
+        )
+        data["journal_url_status"] = (
+            platform_services.link_verification_status(journal_log) if journal_log else None
+        )
+        data["is_serving"] = (
+            data["is_public"]
+            and platform_services.link_is_serving(public_log)
+            and platform_services.link_is_serving(journal_log)
+        )
     return data
 
 
@@ -209,6 +223,25 @@ class JournalPlatformRelationSerializer(
     )
 
     public_url = serializers.URLField(read_only=True, allow_null=True)
+    public_url_status = serializers.ChoiceField(
+        choices=("unverified", "available", "unavailable"),
+        read_only=True,
+        allow_null=True,
+        help_text="Verificación de la URL pública de la plataforma (null: sin URL).",
+    )
+    journal_url_status = serializers.ChoiceField(
+        choices=("unverified", "available", "unavailable"),
+        read_only=True,
+        allow_null=True,
+        help_text="Verificación de la URL de la revista en la plataforma (null: sin URL).",
+    )
+    is_serving = serializers.BooleanField(
+        read_only=True,
+        help_text=(
+            "La asociación cuenta para publicar: plataforma publicada y ambas "
+            "URLs verificadas y disponibles."
+        ),
+    )
     journal_url = serializers.URLField(
         required=False,
         allow_null=True,

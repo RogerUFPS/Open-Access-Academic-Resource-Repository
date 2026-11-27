@@ -151,6 +151,42 @@ def validate_journal_for_publication(journal: models.Journal) -> None:
         raise ValidationError(errors)
 
 
+def check_journal_links(*, journal: models.Journal, user) -> list:
+    """Verifica los enlaces de todas las asociaciones vigentes de una revista.
+
+    Por cada asociación verifica la URL pública de la plataforma (una vez por
+    plataforma) y la URL de la revista en esa plataforma, con la misma lógica,
+    contador e historial que el resto de verificaciones (``check_link_context``).
+    Un contexto sin URL no se puede verificar y queda como está.
+
+    Devuelve las asociaciones vigentes con su estado actualizado.
+    """
+    if journal.is_deleted:
+        raise ValidationError({"detail": "No se puede verificar una revista eliminada."})
+    links = list(
+        models.SharedJournalPlatform.objects.filter(
+            journal=journal,
+            platform__deleted_at__isnull=True,
+        ).select_related("platform", "journal").order_by("platform__name")
+    )
+    checked_platforms = set()
+    for link in links:
+        contexts = [] if link.platform_id in checked_platforms else [None]
+        contexts.append(link)
+        checked_platforms.add(link.platform_id)
+        for journal_platform in contexts:
+            try:
+                platform_services.check_link_context(
+                    platform=link.platform,
+                    journal_platform=journal_platform,
+                    user=user,
+                )
+            except ValidationError:
+                # Sin URL registrada: no hay nada que verificar en ese contexto.
+                continue
+    return links
+
+
 def validate_platform_for_journal_association(
     platform: Platform,
     *,
