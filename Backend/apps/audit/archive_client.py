@@ -19,6 +19,10 @@ class ArchiveIntegrityError(Exception):
     """Un snapshot del rango no superó la verificación de integridad."""
 
 
+class ArchiveConflict(Exception):
+    """AuditCompressor rechazó la operación por el estado actual (p. ej. la cantidad cambió)."""
+
+
 @dataclass(frozen=True)
 class ArchivePage:
     count: int
@@ -70,4 +74,43 @@ class AuditArchiveClient:
             data = response.json()
             return ArchivePage(count=int(data["count"]), results=list(data["results"]))
         except (ValueError, KeyError, TypeError) as exc:
+            raise ArchiveUnavailable("AuditCompressor devolvió una respuesta inválida.") from exc
+
+    def closed_snapshots(self, source: str) -> list[dict]:
+        """Semestres ya comprimidos y borrados de PostgreSQL (no descarga archivos)."""
+        data = self._json(self._send("GET", f"/sources/{source}/closed-snapshots"))
+        return list(data["snapshots"])
+
+    def resolve_leftovers(
+        self, source: str, snapshot_id: str, action: str, expected_rows: int
+    ) -> dict:
+        """Comprime dentro del semestre o elimina los registros nuevos de una anomalía."""
+        response = self._send(
+            "POST",
+            f"/sources/{source}/snapshots/{snapshot_id}/leftovers/{action}",
+            json={"expected_rows": expected_rows},
+        )
+        return self._json(response)
+
+    def _send(self, method: str, path: str, **kwargs) -> httpx.Response:
+        try:
+            return self._http.request(method, path, **kwargs)
+        except httpx.HTTPError as exc:
+            raise ArchiveUnavailable("No se pudo contactar a AuditCompressor.") from exc
+
+    @staticmethod
+    def _json(response: httpx.Response) -> dict:
+        if response.status_code == 502:
+            raise ArchiveIntegrityError("Un snapshot no superó la verificación.")
+        if response.status_code in {404, 409}:
+            try:
+                detail = response.json().get("detail", "")
+            except ValueError:
+                detail = ""
+            raise ArchiveConflict(detail or "La operación no es válida en el estado actual.")
+        if response.status_code != 200:
+            raise ArchiveUnavailable(f"AuditCompressor respondió HTTP {response.status_code}.")
+        try:
+            return response.json()
+        except ValueError as exc:
             raise ArchiveUnavailable("AuditCompressor devolvió una respuesta inválida.") from exc

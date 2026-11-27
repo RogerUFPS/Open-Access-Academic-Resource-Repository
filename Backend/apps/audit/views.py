@@ -1,5 +1,7 @@
+import datetime as dt
 import ipaddress
 import math
+import re
 
 from auditlog.models import LogEntry
 from auditlog.registry import auditlog
@@ -16,16 +18,25 @@ from rest_framework.views import APIView
 from apps.account.models import SuperadminAuditEvent
 from apps.account.session_security import client_ip
 from apps.core.pagination import CustomPageNumberPagination
-from .archive_client import ArchiveIntegrityError, ArchiveUnavailable, AuditArchiveClient
+from .archive_client import (
+    ArchiveConflict,
+    ArchiveIntegrityError,
+    ArchiveUnavailable,
+    AuditArchiveClient,
+)
 from .filters import AuditLogFilter
 from .models import AuditLog
+from .permissions import ArchiveAnomalyPermission
 from .serializers import (
+    ArchiveAnomalySerializer,
     ArchivedAuditPageSerializer,
     ArchivedAuditQuerySerializer,
     AuditActionSerializer,
     AuditLogDetailSerializer,
     AuditLogListSerializer,
     AuditResourceSerializer,
+    ResolveArchiveAnomalySerializer,
+    SuperadminEventSerializer,
 )
 
 
@@ -129,6 +140,31 @@ class ArchiveIntegrityFailed(APIException):
     default_code = "archive_integrity_error"
 
 
+class ArchiveStateConflict(APIException):
+    status_code = status.HTTP_409_CONFLICT
+    default_detail = "La anomalía cambió; vuelva a revisarla."
+    default_code = "archive_state_conflict"
+
+
+def record_archive_event(request, *, action, audited_model, object_pk, object_repr, data):
+    """Deja en la auditoría general quién hizo qué sobre el archivo; nunca los registros."""
+    address = client_ip(request)
+    try:
+        ipaddress.ip_address(address)
+    except ValueError:
+        address = None
+    AuditLog.objects.create(
+        action=action,
+        content_type=ContentType.objects.get_for_model(audited_model),
+        object_pk=object_pk,
+        object_repr=object_repr,
+        actor=request.user,
+        actor_email=request.user.email,
+        remote_addr=address,
+        additional_data=data,
+    )
+
+
 class ArchivedAuditView(APIView):
     """Consulta paginada de auditoría archivada en AuditCompressor.
 
@@ -191,22 +227,14 @@ class ArchivedAuditView(APIView):
         }
 
     def _record_access(self, request, params, outcome, total_items=None):
-        """Registra quién consultó qué período; nunca los registros devueltos."""
-        address = client_ip(request)
-        try:
-            ipaddress.ip_address(address)
-        except ValueError:
-            address = None
         start, end = params["start_date"].isoformat(), params["end_date"].isoformat()
-        AuditLog.objects.create(
+        record_archive_event(
+            request,
             action=LogEntry.Action.ACCESS,
-            content_type=ContentType.objects.get_for_model(self.audited_model),
+            audited_model=self.audited_model,
             object_pk=self.archive_source,
             object_repr=f"Consulta de auditoría archivada {start} → {end}",
-            actor=request.user,
-            actor_email=request.user.email,
-            remote_addr=address,
-            additional_data={
+            data={
                 "archive_source": self.archive_source,
                 "start_date": start,
                 "end_date": end,
@@ -229,9 +257,10 @@ _ARCHIVED_SCHEMA = {
     summary="Consultar auditoría general archivada",
     description=(
         "Registros de auditoría general ya archivados en AuditCompressor para el período "
-        "[start_date, end_date) en días UTC, combinando todos los archivos del período. "
-        "Requiere el permiso audit.archived-logs.view. Cada consulta queda registrada "
-        "como acceso en la auditoría general."
+        "[start_date, end_date) en días completos de la zona de la institución, combinando "
+        "todos los archivos del período. Los registros con late_addition=true llegaron "
+        "después como anomalía y se comprimieron por decisión del usuario. Requiere el "
+        "permiso audit.archived-logs.view. Cada consulta queda registrada en la auditoría."
     ),
     **_ARCHIVED_SCHEMA,
 )
@@ -244,12 +273,137 @@ class ArchivedAuditLogView(ArchivedAuditView):
     summary="Consultar eventos de superadmin archivados",
     description=(
         "Eventos de seguridad del superadmin ya archivados en AuditCompressor para el "
-        "período [start_date, end_date) en días UTC. Requiere el permiso "
-        "audit.archived-superadmin-events.view. Cada consulta queda registrada como "
-        "acceso en la auditoría general."
+        "período [start_date, end_date) en días completos de la zona de la institución. "
+        "Requiere el permiso audit.archived-superadmin-events.view. Cada consulta queda "
+        "registrada en la auditoría."
     ),
     **_ARCHIVED_SCHEMA,
 )
 class ArchivedSuperadminEventView(ArchivedAuditView):
     archive_source = "superadmin_events"
     audited_model = SuperadminAuditEvent
+
+
+# Fuente de AuditCompressor → (consulta de sus registros en la base, serializer).
+ANOMALY_SOURCES = {
+    "auditlog": (
+        lambda: AuditLog.objects.select_related("actor", "content_type"),
+        AuditLogListSerializer,
+    ),
+    "superadmin_events": (lambda: SuperadminAuditEvent.objects.all(), SuperadminEventSerializer),
+}
+_SNAPSHOT_ID = re.compile(r"^(\d{8}T\d{6}Z)_(\d{8}T\d{6}Z)$")
+
+
+def snapshot_bounds(snapshot_id):
+    """Inicio y fin UTC de un snapshot a partir de su identificador."""
+    match = _SNAPSHOT_ID.fullmatch(snapshot_id)
+    if not match:
+        raise NotFound("Identificador de semestre inválido.")
+    return tuple(
+        dt.datetime.strptime(part, "%Y%m%dT%H%M%SZ").replace(tzinfo=dt.timezone.utc)
+        for part in match.groups()
+    )
+
+
+def anomaly_records(source, snapshot_id):
+    """Registros que siguen en PostgreSQL dentro de un semestre (consulta indexada)."""
+    if source not in ANOMALY_SOURCES:
+        raise NotFound("Fuente de auditoría desconocida.")
+    start, end = snapshot_bounds(snapshot_id)
+    queryset, _ = ANOMALY_SOURCES[source]
+    return queryset().filter(timestamp__gte=start, timestamp__lt=end)
+
+
+@extend_schema(
+    tags=["Auditoría"],
+    summary="Listar anomalías de archivado",
+    description=(
+        "Semestres ya comprimidos que tienen registros en la base de datos, probablemente "
+        "insertados de forma manual. Solo cuenta registros: no descarga archivos. Requiere "
+        "audit.archive-anomalies.view."
+    ),
+    responses={200: ArchiveAnomalySerializer(many=True)},
+)
+class ArchiveAnomalyListView(APIView):
+    permission_classes = [ArchiveAnomalyPermission]
+
+    def get(self, request):
+        anomalies = []
+        try:
+            with AuditArchiveClient() as client:
+                for source in ANOMALY_SOURCES:
+                    for snapshot in client.closed_snapshots(source):
+                        records = anomaly_records(source, snapshot["snapshot_id"]).count()
+                        if records:
+                            anomalies.append({**snapshot, "source": source, "records": records})
+        except ArchiveUnavailable as exc:
+            raise ArchiveServiceUnavailable() from exc
+        return Response(anomalies)
+
+
+@extend_schema(
+    tags=["Auditoría"],
+    summary="Ver los registros de una anomalía de archivado",
+    description=(
+        "Registros de la base de datos dentro de un semestre ya comprimido, para revisarlos "
+        "antes de decidir. Paginado. Requiere audit.archive-anomalies.view."
+    ),
+)
+class ArchiveAnomalyRecordsView(APIView):
+    permission_classes = [ArchiveAnomalyPermission]
+
+    def get(self, request, source, snapshot_id):
+        records = anomaly_records(source, snapshot_id).order_by("timestamp", "pk")
+        paginator = CustomPageNumberPagination()
+        page = paginator.paginate_queryset(records, request, view=self)
+        _, serializer_class = ANOMALY_SOURCES[source]
+        return paginator.get_paginated_response(serializer_class(page, many=True).data)
+
+
+@extend_schema(
+    tags=["Auditoría"],
+    summary="Resolver una anomalía de archivado",
+    description=(
+        "compress: comprime los registros nuevos dentro del semestre (los ya archivados se "
+        "descartan y se conserva la versión archivada). delete: los elimina sin archivar. "
+        "expected_rows debe ser la cantidad revisada; si cambió, no se ejecuta nada (409). "
+        "Requiere audit.archive-anomalies.resolve. La decisión queda en la auditoría."
+    ),
+    request=ResolveArchiveAnomalySerializer,
+)
+class ResolveArchiveAnomalyView(APIView):
+    permission_classes = [ArchiveAnomalyPermission]
+
+    def post(self, request):
+        body = ResolveArchiveAnomalySerializer(data=request.data)
+        body.is_valid(raise_exception=True)
+        params = body.validated_data
+        try:
+            with AuditArchiveClient() as client:
+                result = client.resolve_leftovers(
+                    params["source"],
+                    params["snapshot_id"],
+                    params["action"],
+                    params["expected_rows"],
+                )
+        except ArchiveConflict as exc:
+            raise ArchiveStateConflict(str(exc)) from exc
+        except ArchiveIntegrityError as exc:
+            raise ArchiveIntegrityFailed() from exc
+        except ArchiveUnavailable as exc:
+            raise ArchiveServiceUnavailable() from exc
+
+        compress = params["action"] == "compress"
+        record_archive_event(
+            request,
+            action=LogEntry.Action.UPDATE if compress else LogEntry.Action.DELETE,
+            audited_model=LogEntry if params["source"] == "auditlog" else SuperadminAuditEvent,
+            object_pk=params["snapshot_id"],
+            object_repr=(
+                f"Anomalía de archivado {params['source']} {params['snapshot_id']}: "
+                f"{'comprimida' if compress else 'eliminada'}"
+            ),
+            data={**params, **result},
+        )
+        return Response(result)

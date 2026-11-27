@@ -14,6 +14,8 @@ PERMISSION_MATRIX = {
         # Auditoría archivada en AuditCompressor; solo consulta.
         "archived-logs": {"view": True},
         "archived-superadmin-events": {"view": True},
+        # Registros en semestres ya comprimidos: ver y decidir (comprimir o eliminar).
+        "archive-anomalies": {"view": True, "resolve": True},
     },
     "catalog": {
         resource: {action: True for action in CRUD}

@@ -1,6 +1,6 @@
 from drf_spectacular.utils import extend_schema_field
 from rest_framework import serializers
-from apps.account.models import User
+from apps.account.models import SuperadminAuditEvent, User
 from .models import AuditLog
 
 
@@ -104,6 +104,42 @@ class ArchivedAuditQuerySerializer(serializers.Serializer):
                 {"end_date": "Debe ser posterior a start_date."}
             )
         return attrs
+
+
+class SuperadminEventSerializer(serializers.ModelSerializer):
+    """Evento de seguridad del superadmin tal como está en la base."""
+
+    class Meta:
+        model = SuperadminAuditEvent
+        fields = [
+            "id",
+            "timestamp",
+            "action",
+            "actor",
+            "actor_email",
+            "target",
+            "target_email",
+            "details",
+        ]
+        read_only_fields = fields
+
+
+class ArchiveAnomalySerializer(serializers.Serializer):
+    """Semestre ya comprimido con registros que esperan decisión."""
+
+    source = serializers.CharField()
+    snapshot_id = serializers.CharField()
+    start = serializers.DateTimeField()
+    end = serializers.DateTimeField()
+    records = serializers.IntegerField()
+
+
+class ResolveArchiveAnomalySerializer(serializers.Serializer):
+    source = serializers.ChoiceField(choices=["auditlog", "superadmin_events"])
+    snapshot_id = serializers.RegexField(r"^\d{8}T\d{6}Z_\d{8}T\d{6}Z$")
+    action = serializers.ChoiceField(choices=["compress", "delete"])
+    # Cantidad que el usuario vio: si cambió, no se ejecuta nada.
+    expected_rows = serializers.IntegerField(min_value=1)
 
 
 class ArchivedAuditPageSerializer(serializers.Serializer):

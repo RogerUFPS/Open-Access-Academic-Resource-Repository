@@ -15,5 +15,21 @@ urlpatterns = [
         views.ArchivedSuperadminEventView.as_view(),
         name="audit-archived-superadmin-events",
     ),
+    # Recurso de permiso: audit.archive-anomalies (view / resolve).
+    path(
+        "archive-anomalies/",
+        views.ArchiveAnomalyListView.as_view(),
+        name="audit-archive-anomalies",
+    ),
+    path(
+        "archive-anomalies/resolve/",
+        views.ResolveArchiveAnomalyView.as_view(),
+        name="audit-archive-anomalies-resolve",
+    ),
+    path(
+        "archive-anomalies/<str:source>/<str:snapshot_id>/records/",
+        views.ArchiveAnomalyRecordsView.as_view(),
+        name="audit-archive-anomaly-records",
+    ),
     *router.urls,
 ]
