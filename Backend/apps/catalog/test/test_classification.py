@@ -1,20 +1,18 @@
 from django.test import TestCase
 
-from apps.account.models import User
+from apps.core.testing import system_user
 from apps.catalog import models, serializers
 
 
 class AcademicProgramClassificationSerializerTests(TestCase):
     @classmethod
     def setUpTestData(cls):
-        cls.user = User.objects.create_user(
-            code=0, full_name="Sistema", email="catalog-classification@test.local"
-        )
+        cls.user = system_user()
         cls.area = models.KnowledgeArea.objects.create(
-            name="ingenieria", created_by=cls.user
+            name="Área clasificación catálogo prueba", created_by=cls.user
         )
         cls.program = models.AcademicProgram.objects.create(
-            name="sistemas", created_by=cls.user
+            name="Programa clasificación catálogo prueba", created_by=cls.user
         )
         models.SharedAcademicProgramKnowledgeArea.objects.create(
             academic_program=cls.program,

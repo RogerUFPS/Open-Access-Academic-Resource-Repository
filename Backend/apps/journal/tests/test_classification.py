@@ -2,6 +2,7 @@ from django.test import TestCase
 from django.utils import timezone
 
 from apps.account.models import User
+from apps.core.testing import system_user
 from apps.catalog.models import (
     AcademicProgram,
     KnowledgeArea,
@@ -18,13 +19,11 @@ from apps.journal.classification import (
 class JournalClassificationTests(TestCase):
     @classmethod
     def setUpTestData(cls):
-        cls.user = User.objects.create_user(
-            code=0, full_name="Sistema", email="journal-classification@test.local"
-        )
-        cls.area_a = KnowledgeArea.objects.create(name="area a", created_by=cls.user)
-        cls.area_b = KnowledgeArea.objects.create(name="area b", created_by=cls.user)
-        cls.program_a = AcademicProgram.objects.create(name="programa a", created_by=cls.user)
-        cls.program_b = AcademicProgram.objects.create(name="programa b", created_by=cls.user)
+        cls.user = system_user()
+        cls.area_a = KnowledgeArea.objects.create(name="area a prueba", created_by=cls.user)
+        cls.area_b = KnowledgeArea.objects.create(name="area b prueba", created_by=cls.user)
+        cls.program_a = AcademicProgram.objects.create(name="programa a prueba", created_by=cls.user)
+        cls.program_b = AcademicProgram.objects.create(name="programa b prueba", created_by=cls.user)
         for program, area in (
             (cls.program_a, cls.area_a),
             (cls.program_a, cls.area_b),

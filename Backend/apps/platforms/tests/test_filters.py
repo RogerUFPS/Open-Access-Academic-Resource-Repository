@@ -1,6 +1,7 @@
 from rest_framework.test import APITestCase
 
 from apps.account.models import User
+from apps.core.testing import archive_seeded_journals_and_platforms, satisfy_superadmin_mfa
 from apps.catalog.models import (
     AcademicProgram,
     Country,
@@ -19,6 +20,7 @@ class PlatformFilterTests(APITestCase):
         cls.user = User.objects.get(code=0)
         cls.user.is_superadmin = True
         cls.user.save(update_fields=["is_superadmin"])
+        archive_seeded_journals_and_platforms()
         cls.institution = Institution.objects.create(
             name="Institución filtros",
             created_by=cls.user,
@@ -110,6 +112,7 @@ class PlatformFilterTests(APITestCase):
 
     def setUp(self):
         self.client.force_authenticate(user=self.user)
+        satisfy_superadmin_mfa(self.client)
 
     @staticmethod
     def _ids(response):

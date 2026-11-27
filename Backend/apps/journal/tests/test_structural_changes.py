@@ -7,6 +7,7 @@ from rest_framework.exceptions import ValidationError
 from rest_framework.test import APITestCase
 
 from apps.account.models import User
+from apps.core.testing import satisfy_superadmin_mfa, system_user
 from apps.journal import models, services
 from apps.platforms.models import LinkCheckLog, Platform
 
@@ -14,9 +15,7 @@ from apps.platforms.models import LinkCheckLog, Platform
 class JournalStructuralModelTests(TestCase):
     @classmethod
     def setUpTestData(cls):
-        cls.user = User.objects.create_user(
-            code=0, full_name="Sistema estructural", email="structural@test.local"
-        )
+        cls.user = system_user()
 
     def test_journal_uses_publication_date_not_global_periods(self):
         self.assertIsNotNone(models.Journal._meta.get_field("publication_date"))
@@ -28,8 +27,8 @@ class JournalStructuralModelTests(TestCase):
         journal = models.Journal.objects.create(
             issn="9191-9191", title="Journal", created_by=self.user
         )
-        first = models.License.objects.create(name="CC BY", created_by=self.user)
-        second = models.License.objects.create(name="CC0", created_by=self.user)
+        first = models.License.objects.create(name="CC BY prueba", created_by=self.user)
+        second = models.License.objects.create(name="CC0 prueba", created_by=self.user)
         models.SharedJournalLicense.objects.create(
             journal=journal, license=first, created_by=self.user
         )
@@ -84,21 +83,17 @@ class JournalStructuralModelTests(TestCase):
 class JournalStructuralAPITests(APITestCase):
     @classmethod
     def setUpTestData(cls):
-        cls.user = User.objects.create_user(
-            code=0,
-            full_name="Sistema API",
-            email="structural-api@test.local",
-            is_superadmin=True,
-        )
+        cls.user = system_user(is_superadmin=True)
         cls.platform = Platform.objects.create(
             name="API estructural",
             created_by=cls.user,
         )
-        cls.license_a = models.License.objects.create(name="CC BY", created_by=cls.user)
-        cls.license_b = models.License.objects.create(name="CC0", created_by=cls.user)
+        cls.license_a = models.License.objects.create(name="CC BY prueba", created_by=cls.user)
+        cls.license_b = models.License.objects.create(name="CC0 prueba", created_by=cls.user)
 
     def setUp(self):
         self.client.force_authenticate(user=self.user)
+        satisfy_superadmin_mfa(self.client)
 
     def test_new_journal_can_be_incomplete_but_new_platform_link_requires_url(self):
         response = self.client.post(

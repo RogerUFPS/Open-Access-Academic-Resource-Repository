@@ -19,6 +19,7 @@ from auditlog.models import LogEntry
 from apps.account.models import User
 from apps.audit.models import AuditLog
 from apps.catalog.models import Country, Institution
+from apps.core.testing import satisfy_superadmin_mfa, system_user
 
 
 # ---------------------------------------------------------------------------
@@ -58,7 +59,7 @@ class AuditActorIsolationTests(TestCase):
         """
         with set_actor(self.roger):
             inst = Institution.objects.create(
-                name="universidad francisco de paula santander",
+                name="institución aislamiento actor auditoría",
                 created_by=self.roger,
             )
 
@@ -114,6 +115,7 @@ class AuditActorIsolationTests(TestCase):
         Verifica que el log capture al usuario autenticado en esa peticion."""
         client = Client(enforce_csrf_checks=False)
         client.force_login(self.roger)
+        satisfy_superadmin_mfa(client)
 
         response = client.post(
             "/api/catalog/institutions/",
@@ -139,8 +141,8 @@ class AuditActorIsolationTests(TestCase):
         se autentica despues."""
         with set_actor(self.roger):
             country = Country.objects.create(
-                name="colombia",
-                abbreviation="CO",
+                name="país aislamiento actor auditoría",
+                abbreviation="audit-act",
                 emoji_flag="CO",
                 created_by=self.roger,
             )
@@ -284,6 +286,7 @@ class PublicEndpointAuditSuppressTests(TestCase):
 
         client = Client(enforce_csrf_checks=False)
         client.force_login(user)
+        satisfy_superadmin_mfa(client)
 
         resp = client.post(
             "/api/catalog/institutions/",
@@ -348,17 +351,13 @@ class AuditTrackingRegressionTests(TestCase):
     creacion, actualizacion y eliminacion de registros auditados."""
 
     def setUp(self):
-        self.user = User.objects.create(
-            code=0,
-            full_name="Sistema",
-            email="sistema@example.com",
-        )
+        self.user = system_user()
         AuditLog.objects.all().delete()
 
     def test_create_records_audit_log_with_user(self):
         with set_actor(self.user):
             inst = Institution.objects.create(
-                name="Universidad Francisco de Paula Santander",
+                name="Institución regresión creación auditoría",
                 created_by=self.user,
             )
 
@@ -376,8 +375,8 @@ class AuditTrackingRegressionTests(TestCase):
         """Cambios realizados fuera de un contexto HTTP autenticado (scripts de
         gestion) deben almacenarse con actor=None."""
         country = Country.objects.create(
-            name="Colombia",
-            abbreviation="CO",
+            name="País regresión creación auditoría",
+            abbreviation="audit-reg",
             emoji_flag="CO",
             created_by=self.user,
         )
@@ -389,17 +388,9 @@ class AuditTrackingRegressionTests(TestCase):
         ).first()
 
         self.assertIsNotNone(log)
-        # En senales directas sin middleware, auditlog toma None si no hay contexto
-        log_null = AuditLog.objects.create(
-            action=LogEntry.Action.CREATE,
-            content_type=log.content_type,
-            object_pk="999",
-            object_repr="Entidad Anonima",
-            actor=None,
-            changes={"nombre": ["", "anonimo"]},
-        )
-        self.assertIsNone(log_null.actor)
-        self.assertIsNone(log_null.actor_id)
+        # Comprobar el evento real generado por las señales, sin crear otro.
+        self.assertIsNone(log.actor)
+        self.assertIsNone(log.actor_id)
 
     def test_update_records_delta_in_changes(self):
         inst = Institution.objects.create(
@@ -454,6 +445,6 @@ class AuditTrackingRegressionTests(TestCase):
             content_type__model="user",
         ).first()
 
-        if user_log:
-            self.assertNotIn("password", user_log.changes)
-            self.assertNotIn("session_key", user_log.changes)
+        self.assertIsNotNone(user_log)
+        self.assertNotIn("password", user_log.changes)
+        self.assertNotIn("session_key", user_log.changes)

@@ -4,7 +4,7 @@ from django.test import TestCase
 from django.utils import timezone
 from rest_framework.exceptions import ValidationError
 
-from apps.account.models import User
+from apps.core.testing import system_user
 from apps.catalog.models import (
     AcademicProgram,
     Country,
@@ -18,64 +18,42 @@ from apps.journal import models, services as journal_services
 from apps.platforms.models import Platform
 
 
-class _JournalServicesTestAdapter:
-    """Adapta casos históricos al contrato contextual de create_journal."""
-
-    @staticmethod
-    def create_journal(**kwargs):
-        kwargs.pop("license", None)
-        kwargs.pop("active", None)
-        kwargs.pop("start_period", None)
-        kwargs.pop("finish_period", None)
-        kwargs.setdefault("platform_id", Platform.objects.first().pk)
-        compact_issn = str(kwargs.get("issn", "journal")).replace("-", "")
-        kwargs.setdefault("journal_url", f"https://8.8.8.8/{compact_issn}")
-        return journal_services.create_journal(**kwargs)
-
-
-services = _JournalServicesTestAdapter()
-
-
 class JournalServicesTests(TestCase):
 
     @classmethod
     def setUpTestData(cls):
-        cls.system = User.objects.create_user(
-            code=0,
-            full_name="Sistema",
-            email="sistema@test.local",
-        )
+        cls.system = system_user()
 
         cls.editorial = Editorial.objects.create(
-            name="Elsevier",
+            name="Elsevier prueba",
             created_by=cls.system,
         )
 
         cls.language = Language.objects.create(
-            name="Español",
-            abbreviation="es",
+            name="Español prueba",
+            abbreviation="t-es",
             created_by=cls.system,
         )
 
         cls.country = Country.objects.create(
-            name="Colombia",
-            abbreviation="co",
+            name="Colombia prueba",
+            abbreviation="t-co",
             emoji_flag="🇨🇴",
             created_by=cls.system,
         )
 
         cls.knowledge_area = KnowledgeArea.objects.create(
-            name="Ingeniería",
+            name="Ingeniería prueba",
             created_by=cls.system,
         )
 
         cls.material_type = MaterialType.objects.create(
-            name="Artículos",
+            name="Artículos prueba",
             created_by=cls.system,
         )
 
         cls.academic_program = AcademicProgram.objects.create(
-            name="Ingeniería de Sistemas",
+            name="Ingeniería de Sistemas prueba",
             created_by=cls.system,
         )
 
@@ -101,14 +79,13 @@ class JournalServicesTests(TestCase):
         """
         Verifica la creación exitosa de una revista mediante el servicio.
         """
-        journal = services.create_journal(
+        journal = journal_services.create_journal(
+            platform_id=self.platform.pk,
+            journal_url="https://8.8.8.8/journal-service-test",
             issn="1234-5678",
             title="IEEE Transactions on Neural Networks",
             editorial_id=self.editorial.pk,
-            license="CC BY",
             has_apc=False,
-            active=True,
-            start_period=date(2020, 1, 1),
             language_ids=[self.language.pk],
             country_ids=[self.country.pk],
             material_type_ids=[self.material_type.pk],
@@ -130,9 +107,9 @@ class JournalServicesTests(TestCase):
         )
 
         self.assertEqual(
-    journal.title,
-    "IEEE Transactions on Neural Networks",
-)
+            journal.title,
+            "IEEE Transactions on Neural Networks",
+        )
 
         self.assertEqual(
             journal.editorial_id,
@@ -181,7 +158,7 @@ class JournalServicesTests(TestCase):
 
         self.assertIn("platforms", context.exception.detail)
         self.assertIn(
-            "URL pública registrada",
+            "verificadas y disponibles",
             str(context.exception.detail["platforms"]),
         )
 
@@ -205,7 +182,9 @@ class JournalServicesTests(TestCase):
         """
         El ISSN se normaliza al formato XXXX-XXXX.
         """
-        journal = services.create_journal(
+        journal = journal_services.create_journal(
+            platform_id=self.platform.pk,
+            journal_url="https://8.8.8.8/journal-service-test",
             issn=" 1234 567x ",
             title="Journal ISSN",
             user=self.system,
@@ -221,7 +200,9 @@ class JournalServicesTests(TestCase):
         Rechaza un ISSN con formato inválido.
         """
         with self.assertRaises(ValidationError) as context:
-            services.create_journal(
+            journal_services.create_journal(
+                platform_id=self.platform.pk,
+                journal_url="https://8.8.8.8/journal-service-test",
                 issn="1234-56AB",
                 title="ISSN Inválido",
                 user=self.system,
@@ -237,7 +218,9 @@ class JournalServicesTests(TestCase):
         El ISSN es obligatorio.
         """
         with self.assertRaises(ValidationError) as context:
-            services.create_journal(
+            journal_services.create_journal(
+                platform_id=self.platform.pk,
+                journal_url="https://8.8.8.8/journal-service-test",
                 issn="",
                 title="Journal Sin ISSN",
                 user=self.system,
@@ -257,7 +240,9 @@ class JournalServicesTests(TestCase):
         Si el ISSN ya existe, no crea otra revista:
         actualiza el registro existente.
         """
-        journal = services.create_journal(
+        journal = journal_services.create_journal(
+            platform_id=self.platform.pk,
+            journal_url="https://8.8.8.8/journal-service-test",
             issn="2233-4455",
             title="Journal Original",
             user=self.system,
@@ -265,10 +250,11 @@ class JournalServicesTests(TestCase):
 
         original_pk = journal.pk
 
-        updated = services.create_journal(
+        updated = journal_services.create_journal(
+            platform_id=self.platform.pk,
+            journal_url="https://8.8.8.8/journal-service-test",
             issn="2233 4455",
             title="Journal Actualizado",
-            license="CC BY",
             user=self.system,
         )
 
@@ -285,9 +271,9 @@ class JournalServicesTests(TestCase):
         )
 
         self.assertEqual(
-    updated.title,
-    "Journal Actualizado",
-)
+            updated.title,
+            "Journal Actualizado",
+        )
 
     # ==========================================================================
     # RESTAURACIÓN
@@ -298,7 +284,9 @@ class JournalServicesTests(TestCase):
         Si existe una revista eliminada con el mismo ISSN,
         el servicio la restaura en lugar de crear otra.
         """
-        journal = services.create_journal(
+        journal = journal_services.create_journal(
+            platform_id=self.platform.pk,
+            journal_url="https://8.8.8.8/journal-service-test",
             issn="3344-5566",
             title="Journal Para Archivar",
             user=self.system,
@@ -311,7 +299,9 @@ class JournalServicesTests(TestCase):
             explanation="Eliminada para prueba",
         )
 
-        restored = services.create_journal(
+        restored = journal_services.create_journal(
+            platform_id=self.platform.pk,
+            journal_url="https://8.8.8.8/journal-service-test",
             issn="3344-5566",
             title="Journal Restaurado",
             user=self.system,
@@ -336,7 +326,9 @@ class JournalServicesTests(TestCase):
         Una revista restaurada pierde su estado de validación
         para requerir una nueva validación.
         """
-        journal = services.create_journal(
+        journal = journal_services.create_journal(
+            platform_id=self.platform.pk,
+            journal_url="https://8.8.8.8/journal-service-test",
             issn="4455-6677",
             title="Journal Validado",
             user=self.system,
@@ -359,7 +351,9 @@ class JournalServicesTests(TestCase):
             explanation="Eliminada para prueba",
         )
 
-        restored = services.create_journal(
+        restored = journal_services.create_journal(
+            platform_id=self.platform.pk,
+            journal_url="https://8.8.8.8/journal-service-test",
             issn="4455-6677",
             title="Journal Restaurado",
             user=self.system,
@@ -385,7 +379,9 @@ class JournalServicesTests(TestCase):
         """
         Sincroniza correctamente las cinco relaciones simples.
         """
-        journal = services.create_journal(
+        journal = journal_services.create_journal(
+            platform_id=self.platform.pk,
+            journal_url="https://8.8.8.8/journal-service-test",
             issn="5566-7788",
             title="Journal Relaciones",
             language_ids=[
@@ -429,7 +425,9 @@ class JournalServicesTests(TestCase):
         )
 
     def test_create_journal_derives_knowledge_areas_from_academic_programs(self):
-        journal = services.create_journal(
+        journal = journal_services.create_journal(
+            platform_id=self.platform.pk,
+            journal_url="https://8.8.8.8/journal-service-test",
             issn="6767-8989",
             title="Journal Derivación",
             academic_program_ids=[self.academic_program.pk],
@@ -447,14 +445,18 @@ class JournalServicesTests(TestCase):
         )
 
     def test_empty_academic_programs_clears_derived_knowledge_areas(self):
-        journal = services.create_journal(
+        journal = journal_services.create_journal(
+            platform_id=self.platform.pk,
+            journal_url="https://8.8.8.8/journal-service-test",
             issn="6969-0101",
             title="Journal Clear Derived",
             academic_program_ids=[self.academic_program.pk],
             user=self.system,
         )
 
-        services.create_journal(
+        journal_services.create_journal(
+            platform_id=self.platform.pk,
+            journal_url="https://8.8.8.8/journal-service-test",
             issn="6969-0101",
             title="Journal Clear Derived",
             academic_program_ids=[],
@@ -468,7 +470,9 @@ class JournalServicesTests(TestCase):
         """
         IDs repetidos no generan relaciones duplicadas.
         """
-        journal = services.create_journal(
+        journal = journal_services.create_journal(
+            platform_id=self.platform.pk,
+            journal_url="https://8.8.8.8/journal-service-test",
             issn="6677-8899",
             title="Journal Duplicados",
             language_ids=[
@@ -489,7 +493,9 @@ class JournalServicesTests(TestCase):
         Una lista vacía elimina todas las relaciones
         de ese tipo mediante Soft Delete.
         """
-        journal = services.create_journal(
+        journal = journal_services.create_journal(
+            platform_id=self.platform.pk,
+            journal_url="https://8.8.8.8/journal-service-test",
             issn="7788-9900",
             title="Journal Soft Delete",
             language_ids=[
@@ -503,7 +509,9 @@ class JournalServicesTests(TestCase):
             1,
         )
 
-        services.create_journal(
+        journal_services.create_journal(
+            platform_id=self.platform.pk,
+            journal_url="https://8.8.8.8/journal-service-test",
             issn="7788-9900",
             title="Journal Soft Delete",
             language_ids=[],
@@ -526,7 +534,9 @@ class JournalServicesTests(TestCase):
         """
         None significa que la relación no debe modificarse.
         """
-        journal = services.create_journal(
+        journal = journal_services.create_journal(
+            platform_id=self.platform.pk,
+            journal_url="https://8.8.8.8/journal-service-test",
             issn="8899-0011",
             title="Journal None",
             language_ids=[
@@ -535,7 +545,9 @@ class JournalServicesTests(TestCase):
             user=self.system,
         )
 
-        services.create_journal(
+        journal_services.create_journal(
+            platform_id=self.platform.pk,
+            journal_url="https://8.8.8.8/journal-service-test",
             issn="8899-0011",
             title="Journal None Actualizado",
             user=self.system,
@@ -562,7 +574,9 @@ class JournalServicesTests(TestCase):
         Rechaza IDs de relaciones que no existen.
         """
         with self.assertRaises(ValidationError) as context:
-            services.create_journal(
+            journal_services.create_journal(
+                platform_id=self.platform.pk,
+                journal_url="https://8.8.8.8/journal-service-test",
                 issn="9900-1122",
                 title="Journal Invalid Relation",
                 language_ids=[999999],
@@ -579,7 +593,9 @@ class JournalServicesTests(TestCase):
         Rechaza una editorial inexistente o eliminada.
         """
         with self.assertRaises(ValidationError) as context:
-            services.create_journal(
+            journal_services.create_journal(
+                platform_id=self.platform.pk,
+                journal_url="https://8.8.8.8/journal-service-test",
                 issn="1010-2233",
                 title="Journal Editorial",
                 editorial_id=999999,
@@ -615,7 +631,8 @@ class JournalServicesTests(TestCase):
         Crea correctamente la relación Journal <-> Platform
         con sus atributos propios.
         """
-        journal = services.create_journal(
+        journal = journal_services.create_journal(
+            journal_url="https://8.8.8.8/journal-service-test",
             issn="2233-4455",
             title="Journal Platform",
             platform_id=self.platform.pk,
@@ -650,7 +667,8 @@ class JournalServicesTests(TestCase):
         Actualiza los atributos de una relación
         Journal <-> Platform existente.
         """
-        journal = services.create_journal(
+        journal = journal_services.create_journal(
+            journal_url="https://8.8.8.8/journal-service-test",
             issn="3344-5566",
             title="Journal Platform Update",
             platform_id=self.platform.pk,
@@ -658,7 +676,8 @@ class JournalServicesTests(TestCase):
             user=self.system,
         )
 
-        services.create_journal(
+        journal_services.create_journal(
+            journal_url="https://8.8.8.8/journal-service-test",
             issn="3344-5566",
             title="Journal Platform Update",
             platform_id=self.platform.pk,
@@ -689,7 +708,8 @@ class JournalServicesTests(TestCase):
         Restaura una relación Journal <-> Platform
         previamente eliminada.
         """
-        journal = services.create_journal(
+        journal = journal_services.create_journal(
+            journal_url="https://8.8.8.8/journal-service-test",
             issn="4455-6677",
             title="Journal Restore Platform",
             platform_id=self.platform.pk,
@@ -713,7 +733,8 @@ class JournalServicesTests(TestCase):
             update_fields=["status", "validated_by", "validated_at"]
         )
 
-        services.create_journal(
+        journal_services.create_journal(
+            journal_url="https://8.8.8.8/journal-service-test",
             issn="4455-6677",
             title="Journal Restore Platform",
             platform_id=self.platform.pk,
@@ -759,7 +780,8 @@ class JournalServicesTests(TestCase):
         Rechaza una plataforma inexistente.
         """
         with self.assertRaises(ValidationError) as context:
-            services.create_journal(
+            journal_services.create_journal(
+                journal_url="https://8.8.8.8/journal-service-test",
                 issn="6677-8899",
                 title="Journal Invalid Platform",
                 platform_id=999999,
@@ -778,7 +800,8 @@ class JournalServicesTests(TestCase):
             created_by=self.system,
         )
 
-        journal = services.create_journal(
+        journal = journal_services.create_journal(
+            journal_url="https://8.8.8.8/journal-service-test",
             issn="7070-1212",
             title="Journal Draft Platform",
             platform_id=draft_platform.pk,
@@ -803,7 +826,8 @@ class JournalServicesTests(TestCase):
             created_by=self.system,
         )
 
-        journal = services.create_journal(
+        journal = journal_services.create_journal(
+            journal_url="https://8.8.8.8/journal-service-test",
             issn="7171-2323",
             title="Journal Obsolete Platform",
             platform_id=obsolete_platform.pk,
@@ -830,7 +854,8 @@ class JournalServicesTests(TestCase):
         )
 
         with self.assertRaises(ValidationError) as context:
-            services.create_journal(
+            journal_services.create_journal(
+                journal_url="https://8.8.8.8/journal-service-test",
                 issn="7272-3434",
                 title="Journal Deleted Platform",
                 platform_id=deleted_platform.pk,

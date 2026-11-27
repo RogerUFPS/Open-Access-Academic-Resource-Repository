@@ -1,5 +1,4 @@
 from django.db import transaction
-from django.db.models import Prefetch
 from rest_framework import serializers
 
 from drf_spectacular.utils import extend_schema_field
@@ -18,11 +17,12 @@ from apps.core.serializers import (
 )
 from apps.core.viewsets import ArchivedNameMixin
 from apps.platforms import services as platform_services
-from apps.platforms.models import LinkCheckLog, Platform
+from apps.platforms.models import Platform
 
 from . import models
 from .services import (
     validate_platform_for_journal_association,
+    with_latest_platform_links,
 )
 
 
@@ -77,27 +77,9 @@ def _journal_platform_links(instance, *, published_only=False):
             if link.platform.status == Platform.Status.PUBLICADO
         ]
 
-    queryset = (
-        models.SharedJournalPlatform.objects
-        .filter(journal=instance, platform__deleted_at__isnull=True)
-        .select_related("platform")
-        .prefetch_related(
-            Prefetch(
-                "platform__link_check_logs",
-                queryset=(
-                    LinkCheckLog.objects
-                    .filter(journal_platform__isnull=True)
-                    .order_by(*platform_services.LINK_LOG_ORDERING)
-                ),
-                to_attr="_public_link_logs",
-            ),
-            Prefetch(
-                "link_check_logs",
-                queryset=LinkCheckLog.objects.order_by(
-                    *platform_services.LINK_LOG_ORDERING
-                ),
-                to_attr="_journal_link_logs",
-            ),
+    queryset = with_latest_platform_links(
+        models.SharedJournalPlatform.objects.filter(
+            journal=instance, platform__deleted_at__isnull=True,
         )
     )
     if published_only:
@@ -496,6 +478,13 @@ class JournalSerializer(
                     platform,
                     field_name="platform",
                 )
+                # Una asociación nueva sin URL nunca podría verificarse ni
+                # publicarse; las existentes conservan su URL vigente.
+                if not item.get("journal_url"):
+                    raise serializers.ValidationError(
+                        "Cada plataforma nueva debe incluir journal_url "
+                        "(URL de la revista en esa plataforma)."
+                    )
         return value
 
     def _prepare_relation_data(self, validated_data):
@@ -947,7 +936,9 @@ class JournalPublicSerializer(
         JournalPublicPlatformSchemaSerializer(many=True)
     )
     def get_platforms(self, obj):
+        # Solo asociaciones cuyos dos enlaces están verificados y disponibles.
         return [
             _represent_journal_platform(link)
             for link in _journal_platform_links(obj, published_only=True)
+            if platform_services.journal_platform_is_serving(link)
         ]

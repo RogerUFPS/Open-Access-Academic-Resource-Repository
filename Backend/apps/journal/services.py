@@ -1,6 +1,7 @@
 from datetime import date
 
 from django.db import IntegrityError, transaction
+from django.db.models import Prefetch
 from django.utils import timezone
 from rest_framework.exceptions import ValidationError
 
@@ -12,7 +13,7 @@ from apps.catalog.models import (
     MaterialType,
     SharedAcademicProgramKnowledgeArea,
 )
-from apps.platforms.models import Platform
+from apps.platforms.models import LinkCheckLog, Platform
 from apps.platforms import services as platform_services
 
 from . import models
@@ -57,6 +58,31 @@ JOURNAL_RELATION_CONFIG = (
 )
 
 
+def with_latest_platform_links(queryset):
+    """Carga plataformas y un solo evento vigente por contexto de enlace.
+
+    Django limita cada prefetch por su FK mediante funciones de ventana.
+    Se conserva el mismo orden que utilizan las consultas individuales.
+    """
+    return queryset.select_related("platform").prefetch_related(
+        Prefetch(
+            "platform__link_check_logs",
+            queryset=(
+                LinkCheckLog.objects.filter(journal_platform__isnull=True)
+                .order_by(*platform_services.LINK_LOG_ORDERING)[:1]
+            ),
+            to_attr="_public_link_logs",
+        ),
+        Prefetch(
+            "link_check_logs",
+            queryset=LinkCheckLog.objects.order_by(
+                *platform_services.LINK_LOG_ORDERING
+            )[:1],
+            to_attr="_journal_link_logs",
+        ),
+    )
+
+
 def validate_journal_for_publication(journal: models.Journal) -> None:
     """Valida el conjunto final de datos que hace publicable una Journal."""
     errors = {}
@@ -90,23 +116,30 @@ def validate_journal_for_publication(journal: models.Journal) -> None:
         if not relation_query.exists():
             errors[field] = "La revista debe tener al menos un valor vigente."
 
-    platform_links = models.SharedJournalPlatform.objects.filter(
-        journal=journal,
-        platform__deleted_at__isnull=True,
+    # Basta una asociación que sirva: plataforma publicada y, verificadas y
+    # disponibles, su URL pública y la URL de la revista en esa plataforma.
+    platform_links = list(
+        with_latest_platform_links(
+            models.SharedJournalPlatform.objects.filter(
+                journal=journal,
+                platform__deleted_at__isnull=True,
+            )
+        )
     )
-    if not platform_links.exists():
+    if not platform_links:
         errors["platforms"] = "La revista no tiene plataformas asociadas."
-    elif not platform_links.filter(platform__status=Platform.Status.PUBLICADO).exists():
+    elif not any(
+        link.platform.status == Platform.Status.PUBLICADO for link in platform_links
+    ):
         errors["platforms"] = (
             "La revista tiene plataformas asociadas, pero ninguna se encuentra publicada."
         )
-    elif any(
-        platform_services.latest_journal_link_log(link) is None
-        for link in platform_links
+    elif not any(
+        platform_services.journal_platform_is_serving(link) for link in platform_links
     ):
         errors["platforms"] = (
-            "Cada plataforma asociada debe tener una URL pública registrada "
-            "antes de publicar la revista."
+            "La revista debe tener al menos una plataforma publicada cuya URL "
+            "pública y cuya URL de la revista estén verificadas y disponibles."
         )
 
     if not models.SharedJournalLicense.objects.filter(

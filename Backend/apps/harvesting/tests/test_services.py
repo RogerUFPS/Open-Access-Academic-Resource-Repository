@@ -8,6 +8,7 @@ from django.utils import timezone
 import httpx
 
 from apps.account.models import User
+from apps.core.testing import SuperadminEventsFlushMixin
 from apps.catalog.models import Country, Language, MaterialType
 from apps.harvesting.models import Harvest, HarvestJournal, Schedule, ScheduleEvent
 from apps.harvesting.services import (
@@ -927,7 +928,9 @@ class HarvestingServicesTestCase(TestCase):
         self.assertEqual(march, timezone.make_aware(datetime(2024, 3, 31, 9, 0)))
 
 
-class HarvestingScheduleConcurrencyTests(TransactionTestCase):
+class HarvestingScheduleConcurrencyTests(
+    SuperadminEventsFlushMixin, TransactionTestCase,
+):
     def setUp(self):
         self.user = User.objects.create_user(
             email="concurrent-harvest@example.org",

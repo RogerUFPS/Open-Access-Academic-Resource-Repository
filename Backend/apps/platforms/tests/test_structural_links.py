@@ -3,6 +3,7 @@ from unittest.mock import patch
 from rest_framework.test import APITestCase
 
 from apps.account.models import User
+from apps.core.testing import satisfy_superadmin_mfa
 from apps.journal.models import Journal, SharedJournalPlatform
 from apps.platforms.models import LinkCheckLog, Platform
 from apps.platforms.services import register_link_url
@@ -17,6 +18,7 @@ class PlatformStructuralLinksTests(APITestCase):
 
     def setUp(self):
         self.client.force_authenticate(user=self.user)
+        satisfy_superadmin_mfa(self.client)
 
     def test_platform_draft_creation_without_public_url_does_not_create_link_log(self):
         response = self.client.post(

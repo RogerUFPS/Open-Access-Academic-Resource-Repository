@@ -143,6 +143,16 @@ services:
     command: ["celery", "-A", "project", "worker", "--loglevel=WARNING",
               "--queues=agent-control", "--concurrency=1", "--hostname=agent-control@%h"]
 
+  audit-compressor:
+    # Solo red interna: el Backend lo consultará como http://audit-compressor:8000.
+    <<: *service
+    build: ./AuditCompressor
+    image: audit-compressor
+    pull_policy: never
+    env_file:
+      - path: ./AuditCompressor/.env
+        required: false
+
   frontend:
     <<: *service
     build:
@@ -209,6 +219,7 @@ services:
       - |
         rc alias set local http://rustfs:9000 "$$RUSTFS_ACCESS_KEY" "$$RUSTFS_SECRET_KEY" --region us-east-1 --bucket-lookup path
         rc bucket create local/imagenes --ignore-existing
+        rc bucket create local/auditorias --ignore-existing
         rc anonymous set download local/imagenes
 
 networks:

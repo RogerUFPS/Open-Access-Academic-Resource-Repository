@@ -6,6 +6,7 @@ from django.utils import timezone
 from rest_framework.test import APITestCase
 
 from apps.account.models import User
+from apps.core.testing import archive_seeded_journals_and_platforms, satisfy_superadmin_mfa
 from apps.catalog.models import (
     AcademicProgram,
     Country,
@@ -21,6 +22,7 @@ class PlatformAdminQueryTests(APITestCase):
     @classmethod
     def setUpTestData(cls):
         cls.user = User.objects.create_user(email="platform-query@example.org", is_superadmin=True)
+        archive_seeded_journals_and_platforms()
         cls.institution = Institution.objects.create(name="Institución rendimiento Platform", created_by=cls.user)
         cls.language = Language.objects.create(
             name="Idioma rendimiento Platform", abbreviation="qp", created_by=cls.user,
@@ -55,6 +57,7 @@ class PlatformAdminQueryTests(APITestCase):
 
     def setUp(self):
         self.client.force_authenticate(self.user)
+        satisfy_superadmin_mfa(self.client)
 
     def test_admin_list_query_count_does_not_grow_per_platform(self):
         with CaptureQueriesContext(connection) as single:

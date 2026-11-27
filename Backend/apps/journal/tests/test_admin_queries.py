@@ -1,13 +1,15 @@
 """Consultas constantes y contrato del listado administrativo de revistas."""
 
-import time
-
 from django.db import connection
 from django.test.utils import CaptureQueriesContext
 from django.utils import timezone
 from rest_framework.test import APITestCase
 
 from apps.account.models import User
+from apps.core.testing import (
+    archive_seeded_journals_and_platforms,
+    satisfy_superadmin_mfa,
+)
 from apps.catalog.models import (
     AcademicProgram,
     Country,
@@ -23,6 +25,7 @@ class JournalAdminQueryTests(APITestCase):
     @classmethod
     def setUpTestData(cls):
         cls.user = User.objects.create_user(email="journal-query@example.org", is_superadmin=True)
+        archive_seeded_journals_and_platforms()
         cls.language = Language.objects.create(name="Idioma rendimiento Journal", abbreviation="qj", created_by=cls.user)
         cls.country = Country.objects.create(
             name="País rendimiento Journal", abbreviation="qj", emoji_flag="🏳️", created_by=cls.user,
@@ -30,8 +33,8 @@ class JournalAdminQueryTests(APITestCase):
         cls.area = KnowledgeArea.objects.create(name="Área rendimiento Journal", created_by=cls.user)
         cls.material = MaterialType.objects.create(name="Material rendimiento Journal", created_by=cls.user)
         cls.program = AcademicProgram.objects.create(name="Programa rendimiento Journal", created_by=cls.user)
-        cls.license_z = models.License.objects.create(name="Z licencia rendimiento", created_by=cls.user)
-        cls.license_a = models.License.objects.create(name="A licencia rendimiento", created_by=cls.user)
+        cls.license_z = models.License.objects.create(name="Z licencia rendimiento prueba", created_by=cls.user)
+        cls.license_a = models.License.objects.create(name="A licencia rendimiento prueba", created_by=cls.user)
         cls.platforms = [
             Platform.objects.create(name="A rendimiento Journal", status=Platform.Status.PUBLICADO, created_by=cls.user),
             Platform.objects.create(name="Z rendimiento Journal", created_by=cls.user),
@@ -73,10 +76,7 @@ class JournalAdminQueryTests(APITestCase):
 
     def setUp(self):
         self.client.force_authenticate(self.user)
-        session = self.client.session
-        session["superadmin_mfa_satisfied"] = True
-        session["_session_renewed_at"] = int(time.time())
-        session.save()
+        satisfy_superadmin_mfa(self.client)
 
     def test_admin_list_query_count_does_not_grow_per_journal(self):
         with CaptureQueriesContext(connection) as single:
