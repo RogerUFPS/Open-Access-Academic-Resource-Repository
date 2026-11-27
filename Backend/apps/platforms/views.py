@@ -519,6 +519,10 @@ class PlatformViewSet(ResourceImageMixin, AuditableViewSet):
     serializer_class = serializers.PlatformSerializer
     image_folder = "platforms"
 
+    def image_changed(self, instance, request):
+        """Cambiar la imagen es editar la ficha: PUBLICADO vuelve a BORRADOR."""
+        serializers.PlatformSerializer._clear_validation(instance)
+
     def get_queryset(self):
         queryset = super().get_queryset()
         if getattr(self, "action", None) == "list":
@@ -656,6 +660,7 @@ class PlatformViewSet(ResourceImageMixin, AuditableViewSet):
             "``DELETE`` quita la imagen. Si fue subida por este backend, "
             "también se elimina de RustFS; las URLs externas solo se "
             "desasocian."
+            " Una plataforma PUBLICADO vuelve a BORRADOR."
         ),
         request=ImageUploadSerializer,
         responses={

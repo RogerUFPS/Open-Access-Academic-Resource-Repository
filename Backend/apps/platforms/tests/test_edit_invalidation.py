@@ -1,9 +1,13 @@
 """Editar una plataforma publicada la devuelve a BORRADOR (misma regla que Journal)."""
 
+from unittest.mock import patch
+
+from django.core.files.uploadedfile import SimpleUploadedFile
 from django.utils import timezone
 from rest_framework.test import APITestCase
 
 from apps.account.models import User
+from apps.core.storage import StoredImage
 from apps.core.testing import satisfy_superadmin_mfa
 from apps.platforms import services
 from apps.platforms.models import LinkCheckLog, Platform
@@ -41,7 +45,7 @@ class PlatformEditInvalidationTests(APITestCase):
         )
         return platform
 
-    def patch(self, platform, data):
+    def patch_platform(self, platform, data):
         response = self.client.patch(f"/api/platforms/{platform.pk}/", data, format="json")
         self.assertEqual(response.status_code, 200, response.data)
         platform.refresh_from_db()
@@ -50,7 +54,7 @@ class PlatformEditInvalidationTests(APITestCase):
     def test_editing_any_field_of_a_published_platform_returns_it_to_draft(self):
         platform = self.platform(Platform.Status.PUBLICADO)
 
-        response = self.patch(platform, {"name": "Edición renombrada"})
+        response = self.patch_platform(platform, {"name": "Edición renombrada"})
 
         self.assertEqual(response.data["status"], Platform.Status.BORRADOR)
         self.assertEqual(platform.status, Platform.Status.BORRADOR)
@@ -60,18 +64,52 @@ class PlatformEditInvalidationTests(APITestCase):
     def test_new_public_url_returns_to_draft_and_must_be_verified_again(self):
         platform = self.platform(Platform.Status.PUBLICADO)
 
-        self.patch(platform, {"public_url": "https://8.8.4.4/nueva"})
+        self.patch_platform(platform, {"public_url": "https://8.8.4.4/nueva"})
 
         self.assertEqual(platform.status, Platform.Status.BORRADOR)
         current = services.latest_platform_link_log(platform)
         self.assertEqual(current.url, "https://8.8.4.4/nueva")
         self.assertFalse(services.link_is_serving(current))
 
+    @patch("apps.core.viewsets.upload_image")
+    def test_uploading_an_image_returns_a_published_platform_to_draft(self, upload_image):
+        upload_image.return_value = StoredImage(
+            key="platforms/nuevo.png",
+            url="http://localhost:9000/imagenes/platforms/nuevo.png",
+            content_type="image/png",
+            size=40,
+            thumbnail_key="platforms/nuevo.thumbnail.webp",
+            thumbnail_url="http://localhost:9000/imagenes/platforms/nuevo.thumbnail.webp",
+        )
+        platform = self.platform(Platform.Status.PUBLICADO)
+
+        response = self.client.post(
+            f"/api/platforms/{platform.pk}/image/",
+            {"image": SimpleUploadedFile("nuevo.png", b"\x89PNG\r\n\x1a\n" + b"\x00" * 32, "image/png")},
+            format="multipart",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["status"], Platform.Status.BORRADOR)
+        platform.refresh_from_db()
+        self.assertEqual(platform.status, Platform.Status.BORRADOR)
+        self.assertIsNone(platform.validated_at)
+
+    @patch("apps.core.viewsets.delete_image_by_url")
+    def test_deleting_the_image_returns_a_published_platform_to_draft(self, delete_image_by_url):
+        platform = self.platform(Platform.Status.PUBLICADO)
+
+        response = self.client.delete(f"/api/platforms/{platform.pk}/image/")
+
+        self.assertEqual(response.status_code, 200)
+        platform.refresh_from_db()
+        self.assertEqual(platform.status, Platform.Status.BORRADOR)
+
     def test_draft_and_obsolete_platforms_keep_their_status(self):
         for status in (Platform.Status.BORRADOR, Platform.Status.OBSOLETO):
             with self.subTest(status=status):
                 platform = self.platform(status)
 
-                self.patch(platform, {"name": f"Edición {status} renombrada"})
+                self.patch_platform(platform, {"name": f"Edición {status} renombrada"})
 
                 self.assertEqual(platform.status, status)

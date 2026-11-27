@@ -359,6 +359,15 @@ class JournalViewSet(ResourceImageMixin, AuditableViewSet):
             for link in links.order_by("platform__name")
         ])
 
+    def image_changed(self, instance, request):
+        """Cambiar la imagen es editar la ficha: debe validarse de nuevo."""
+        was_published = instance.active or instance.validated_at is not None
+        serializers.JournalSerializer()._clear_validation(instance)
+        if was_published:
+            recalculate_platforms(
+                related_platform_ids([instance.pk]), user=get_acting_user(request),
+            )
+
     @extend_schema(
         summary="Verificar los enlaces de las asociaciones de una revista",
         description=(
@@ -459,6 +468,7 @@ class JournalViewSet(ResourceImageMixin, AuditableViewSet):
             "``DELETE`` quita la imagen. Si fue subida por este backend, "
             "también se elimina de RustFS; las URLs externas solo se "
             "desasocian."
+            " Una revista publicada queda inactiva y debe publicarse de nuevo."
         ),
         request=ImageUploadSerializer,
         responses={
