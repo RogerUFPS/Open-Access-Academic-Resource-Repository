@@ -49,6 +49,16 @@ class AnonymousChatTests(APITestCase):
         self.assertEqual(history["Cache-Control"], "private, no-store")
         self.assertNotIn("Set-Cookie", history)
 
+    def test_catalog_information_is_valid_and_not_an_unclear_answer(self):
+        from apps.agent.chat_serializers import AgentResultSerializer
+        result = {'estado': 'informacion_catalogo', 'mensaje': 'Plataforma: 0 revistas asociadas.',
+            'programas_seleccionados': [], 'busquedas': [], 'filtros_no_aplicados': []}
+        serializer = AgentResultSerializer(data=result)
+        self.assertTrue(serializer.is_valid(), serializer.errors)
+        submitted = self.submit()
+        finish_turn(submitted.data['id'], result)
+        self.assertFalse(ChatTurn.objects.get(pk=submitted.data['id']).unclear)
+
     def test_no_user_relation_and_redaction_even_with_logged_in_account(self):
         self.client.force_login(self.admin)
         self.client.credentials(HTTP_X_FORWARDED_FOR="198.51.100.42", HTTP_USER_AGENT="private-browser")

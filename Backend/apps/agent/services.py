@@ -31,7 +31,7 @@ def finish_turn(turn_id, response, analysis=None):
             return
         turn.response = redact(response)
         turn.analysis = redact(analysis or {})
-        turn.unclear = response["estado"] != "ok" or bool(response.get("filtros_no_aplicados"))
+        turn.unclear = response["estado"] not in {"ok", "informacion_catalogo"} or bool(response.get("filtros_no_aplicados"))
         turn.status = "failed" if response["estado"] == "error_sistema" else "completed"
         turn.finished_at = timezone.now()
         turn.save(update_fields=["response", "analysis", "unclear", "status", "finished_at"])

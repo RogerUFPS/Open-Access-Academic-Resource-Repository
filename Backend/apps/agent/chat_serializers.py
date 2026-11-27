@@ -69,7 +69,7 @@ class UnappliedSerializer(serializers.Serializer):
 
 
 class AgentResultSerializer(serializers.Serializer):
-    estado = serializers.ChoiceField(choices=["ok", "fuera_de_tema", "informacion_insuficiente", "error_sistema"])
+    estado = serializers.ChoiceField(choices=["ok", "informacion_catalogo", "fuera_de_tema", "informacion_insuficiente", "error_sistema"])
     mensaje = serializers.CharField(allow_null=True, max_length=4000)
     programas_seleccionados = SelectedProgramSerializer(many=True)
     busquedas = SearchSerializer(many=True)
