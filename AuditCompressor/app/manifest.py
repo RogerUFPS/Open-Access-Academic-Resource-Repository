@@ -34,11 +34,13 @@ class SnapshotRange:
         object.__setattr__(self, "end", self.end.astimezone(dt.timezone.utc))
 
     @classmethod
-    def from_dates(cls, start: dt.date, end: dt.date) -> "SnapshotRange":
-        """Rango desde la medianoche UTC de start hasta la medianoche UTC de end."""
+    def from_dates(
+        cls, start: dt.date, end: dt.date, timezone: dt.tzinfo = dt.timezone.utc
+    ) -> "SnapshotRange":
+        """Rango desde la medianoche de start hasta la medianoche de end en ``timezone``."""
         return cls(
-            start=dt.datetime.combine(start, dt.time.min, tzinfo=dt.timezone.utc),
-            end=dt.datetime.combine(end, dt.time.min, tzinfo=dt.timezone.utc),
+            start=dt.datetime.combine(start, dt.time.min, tzinfo=timezone),
+            end=dt.datetime.combine(end, dt.time.min, tzinfo=timezone),
         )
 
     @property

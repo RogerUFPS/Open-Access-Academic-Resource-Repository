@@ -43,6 +43,11 @@ class OffloadVerificationError(RuntimeError):
     """La copia archivada no respalda el borrado; PostgreSQL no se modificó."""
 
 
+class OffloadDisabledError(RuntimeError):
+    """La fuente está configurada con offload: false; nunca se borra de PostgreSQL."""
+
+
+
 @dataclass(frozen=True, slots=True)
 class OffloadReceipt:
     """Constancia de que los registros del snapshot ya no están en PostgreSQL."""
@@ -75,6 +80,7 @@ class OffloadReceipt:
 class OffloadResult:
     receipt: OffloadReceipt
     already_offloaded: bool
+
 
 
 def _verify_and_delete(
@@ -164,6 +170,8 @@ def offload_snapshot(
     """
     if not is_snapshot_id(snapshot_id):
         raise ValueError(f"Identificador de snapshot inválido: {snapshot_id!r}.")
+    if not source.offload:
+        raise OffloadDisabledError(f"La fuente {source.name} no permite offload.")
     keys = set(storage.list_keys(f"{source.prefix}/{snapshot_id}/"))
     receipt_key = snapshot_key(source, snapshot_id, OFFLOAD_NAME)
     if receipt_key in keys:

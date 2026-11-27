@@ -12,6 +12,7 @@ from app.config import (
     StorageSettings,
     UnknownSourceError,
     load_sources,
+    load_timezone,
     parquet_encryption_key,
 )
 from tests.support import SOURCE, TEST_KEY
@@ -31,6 +32,15 @@ class SourceSettingsTests(unittest.TestCase):
         self.assertEqual(events.qualified_table, "public.account_superadminauditevent")
         self.assertEqual((events.timestamp_column, events.primary_key), ("timestamp", "id"))
         self.assertEqual(events.json_columns, ("details",))
+
+    def test_superadmin_events_are_archived_without_offload(self):
+        sources = load_sources(CONFIG_PATH)
+        self.assertTrue(sources["auditlog"].offload)
+        self.assertFalse(sources["superadmin_events"].offload)
+
+    def test_offload_flag_must_be_boolean(self):
+        with self.assertRaises(ConfigurationError):
+            replace(SOURCE, offload="no")
 
     def test_source_name_is_its_storage_prefix(self):
         self.assertEqual(SOURCE.prefix, "auditlog")
@@ -65,6 +75,18 @@ class SourceSettingsTests(unittest.TestCase):
                 with self.subTest(content=content), self.assertRaises(ConfigurationError):
                     path.write_text(content, encoding="utf-8")
                     load_sources(path)
+
+
+class TimezoneTests(unittest.TestCase):
+    def test_repository_config_uses_colombia(self):
+        self.assertEqual(str(load_timezone(CONFIG_PATH)), "America/Bogota")
+
+    def test_unknown_time_zone_is_reported(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "config.yaml"
+            path.write_text("timezone: Marte/Olympus\n", encoding="utf-8")
+            with self.assertRaises(ConfigurationError):
+                load_timezone(path)
 
 
 class SettingsSourceTests(unittest.TestCase):

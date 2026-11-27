@@ -1,10 +1,12 @@
 import base64
 import datetime as dt
 import unittest
+from dataclasses import replace
 
 from app.duckdb_session import register_parquet_key
 from app.manifest import SnapshotRange
 from app.offload import (
+    OffloadDisabledError,
     OffloadReceipt,
     OffloadVerificationError,
     SnapshotNotFoundError,
@@ -20,7 +22,7 @@ ALL_IDS = [1, 2, 3, 4, 5]
 OUTSIDE_SNAPSHOT = [1, 5]
 
 
-class OffloadSnapshotTests(unittest.TestCase):
+class SnapshotTestCase(unittest.TestCase):
     """El snapshot contiene los ids 2, 3 y 4; 1 y 5 están fuera de su rango."""
 
     def setUp(self):
@@ -45,6 +47,8 @@ class OffloadSnapshotTests(unittest.TestCase):
         self.assertEqual(self.remaining_ids(connection), ALL_IDS)
         self.assertNotIn(f"{PREFIX}/offload.json", self.storage.objects)
 
+
+class OffloadSnapshotTests(SnapshotTestCase):
     def test_deletes_only_the_archived_rows_and_leaves_a_receipt(self):
         result = self.offload()
 
@@ -105,6 +109,15 @@ class OffloadSnapshotTests(unittest.TestCase):
         with self.assertRaises(OffloadVerificationError):
             self.offload()
         self.assertEqual(self.remaining_ids(), [*ALL_IDS, 6])
+
+    def test_source_without_offload_never_deletes(self):
+        no_offload = replace(SOURCE, offload=False)
+        with self.assertRaises(OffloadDisabledError):
+            offload_snapshot(
+                self.connection, "audit", "audit", self.storage, no_offload, SNAPSHOT.snapshot_id, NOW
+            )
+        self.assertEqual(self.remaining_ids(), ALL_IDS)
+        self.assertNotIn(f"{PREFIX}/offload.json", self.storage.objects)
 
     def test_rejects_identifiers_that_are_not_snapshot_ids(self):
         for snapshot_id in ("../auditlog", "20250101_20250701", ""):

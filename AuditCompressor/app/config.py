@@ -4,11 +4,13 @@ from __future__ import annotations
 
 import base64
 import binascii
+import datetime as dt
 import os
 import re
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import yaml
 
@@ -116,10 +118,14 @@ class SourceSettings:
     primary_key: str
     compression: str
     json_columns: tuple[str, ...] = ()
+    # False: se comprime pero nunca se borra de PostgreSQL (ni anomalías).
+    offload: bool = True
 
     def __post_init__(self) -> None:
         if not isinstance(self.name, str) or not _SOURCE_NAME.match(self.name):
             raise ConfigurationError(f"Nombre de fuente inválido en config.yaml: {self.name!r}.")
+        if not isinstance(self.offload, bool):
+            raise ConfigurationError(f"offload debe ser true o false en la fuente {self.name!r}.")
         # Los identificadores se interpolan en SQL: solo nombres simples.
         identifiers = (self.schema, self.table, self.timestamp_column, self.primary_key)
         for value in (*identifiers, *self.json_columns):
@@ -153,6 +159,7 @@ def load_sources(path: Path) -> dict[str, SourceSettings]:
                 primary_key=source["primary_key"],
                 compression=compression,
                 json_columns=tuple(source.get("json_columns", ())),
+                offload=source.get("offload", True),
             )
             for name, source in declared.items()
         }
@@ -162,6 +169,17 @@ def load_sources(path: Path) -> dict[str, SourceSettings]:
         raise ConfigurationError(f"config.yaml incompleto o mal formado: {exc}") from exc
 
 
+def load_timezone(path: Path) -> dt.tzinfo:
+    """Zona en la que empiezan y terminan los semestres (UTC si no se declara)."""
+    try:
+        name = (yaml.safe_load(path.read_text(encoding="utf-8")) or {}).get("timezone", "UTC")
+        return ZoneInfo(name)
+    except (ZoneInfoNotFoundError, TypeError, ValueError) as exc:
+        raise ConfigurationError(f"timezone inválida en config.yaml: {exc}") from exc
+    except FileNotFoundError as exc:
+        raise ConfigurationError(f"No existe el archivo de configuración {path}.") from exc
+
+
 @dataclass(frozen=True, slots=True)
 class Settings:
     api_key: str
@@ -169,6 +187,7 @@ class Settings:
     storage: StorageSettings
     sources: dict[str, SourceSettings]
     encryption_key: str = ""
+    timezone: dt.tzinfo = dt.timezone.utc
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -178,6 +197,7 @@ class Settings:
             storage=StorageSettings.from_env(),
             sources=load_sources(CONFIG_PATH),
             encryption_key=os.getenv("AUDIT_ENCRYPTION_KEY", "").strip(),
+            timezone=load_timezone(CONFIG_PATH),
         )
 
     def source(self, name: str) -> SourceSettings:

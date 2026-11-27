@@ -1,5 +1,6 @@
 import datetime as dt
 import unittest
+from zoneinfo import ZoneInfo
 
 from app.manifest import Manifest, SnapshotFile, SnapshotRange
 from tests.support import END, MICROSECOND, START
@@ -18,6 +19,12 @@ class SnapshotRangeTests(unittest.TestCase):
     def test_rejects_naive_datetimes(self):
         with self.assertRaises(ValueError):
             SnapshotRange(dt.datetime(2025, 1, 1), END)
+
+    def test_dates_are_midnight_in_the_configured_time_zone(self):
+        bogota = ZoneInfo("America/Bogota")
+        snapshot_range = SnapshotRange.from_dates(dt.date(2026, 1, 1), dt.date(2026, 7, 1), bogota)
+        self.assertEqual(snapshot_range.start, dt.datetime(2026, 1, 1, 5, tzinfo=dt.timezone.utc))
+        self.assertEqual(snapshot_range.snapshot_id, "20260101T050000Z_20260701T050000Z")
 
     def test_other_time_zones_are_normalized_to_utc(self):
         bogota = dt.timezone(dt.timedelta(hours=-5))

@@ -6,10 +6,17 @@ from unittest import mock
 from fastapi.testclient import TestClient
 
 from app import main
+from app.anomalies import (
+    DuplicatePurge,
+    ExpectedRowsMismatchError,
+    LeftoverResolution,
+    SnapshotNotOffloadedError,
+)
 from app.config import ConfigurationError, DatabaseSettings, Settings, StorageSettings, get_settings
 from app.history import HistoryPage
 from app.manifest import Manifest, SnapshotFile, SnapshotRange
 from app.offload import (
+    OffloadDisabledError,
     OffloadReceipt,
     OffloadResult,
     OffloadVerificationError,
@@ -60,6 +67,16 @@ class SnapshotEndpointTests(EndpointTestCase):
 
     def post(self, body=BODY, headers=HEADERS, source="auditlog"):
         return self.client.post(f"/sources/{source}/snapshots", json=body, headers=headers)
+
+    def test_lists_sources_with_their_offload_policy(self):
+        self.settings = replace(SETTINGS, sources={"auditlog": SOURCE, "superadmin_events": replace(EVENTS, offload=False)})
+        response = self.client.get("/sources", headers=HEADERS)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            response.json()["sources"],
+            [{"name": "auditlog", "offload": True}, {"name": "superadmin_events", "offload": False}],
+        )
+        self.assertEqual(self.client.get("/sources").status_code, 401)
 
     def test_health_does_not_require_api_key(self):
         response = self.client.get("/health")
@@ -170,6 +187,7 @@ class OffloadEndpointTests(EndpointTestCase):
     def test_errors_map_to_http_statuses(self):
         for error, expected in (
             (SnapshotNotFoundError("no existe"), 404),
+            (OffloadDisabledError("sin offload"), 409),
             (OffloadVerificationError("no coincide"), 409),
             (SnapshotIntegrityError("hash distinto"), 502),
             (ConfigurationError("Faltan variables de entorno: AUDIT_ENCRYPTION_KEY."), 503),
@@ -185,6 +203,84 @@ class OffloadEndpointTests(EndpointTestCase):
         finally:
             main._archive_lock.release()
         self.offload.assert_not_called()
+
+
+class AnomalyEndpointTests(EndpointTestCase):
+    SNAPSHOT_ID = MANIFEST.snapshot_id
+
+    def setUp(self):
+        super().setUp()
+        self.closed = self.patch("closed_snapshots", return_value=[MANIFEST])
+        self.duplicates = self.patch(
+            "remove_duplicates",
+            return_value=DuplicatePurge(self.SNAPSHOT_ID, deleted_rows=1, sample_ids=[3]),
+        )
+        self.resolve = self.patch(
+            "resolve_leftovers",
+            return_value=LeftoverResolution(self.SNAPSHOT_ID, "compress", 1, 2),
+        )
+
+    def leftovers(self, action="compress", body=None, headers=HEADERS):
+        return self.client.post(
+            f"/sources/auditlog/snapshots/{self.SNAPSHOT_ID}/leftovers/{action}",
+            json={"expected_rows": 2} if body is None else body,
+            headers=headers,
+        )
+
+    def test_lists_closed_snapshots(self):
+        response = self.client.get("/sources/auditlog/closed-snapshots", headers=HEADERS)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            response.json()["snapshots"],
+            [{
+                "snapshot_id": self.SNAPSHOT_ID,
+                "start": START.isoformat(),
+                "end": END.isoformat(),
+            }],
+        )
+
+    def test_purges_duplicates(self):
+        response = self.client.post(
+            f"/sources/auditlog/snapshots/{self.SNAPSHOT_ID}/purge-duplicates", headers=HEADERS
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["deleted_rows"], 1)
+
+    def test_resolves_leftovers_with_the_reviewed_count(self):
+        for action in ("compress", "delete"):
+            with self.subTest(action=action):
+                self.assertEqual(self.leftovers(action).status_code, 200)
+                _, source, snapshot_id, called_action, expected = self.resolve.call_args.args
+                self.assertEqual((source, snapshot_id, called_action, expected),
+                                 (SOURCE, self.SNAPSHOT_ID, action, 2))
+
+    def test_rejects_invalid_requests(self):
+        self.assertEqual(self.leftovers(headers={}).status_code, 401)
+        self.assertEqual(self.leftovers(action="archive").status_code, 422)
+        self.assertEqual(self.leftovers(body={}).status_code, 422)
+        self.assertEqual(self.leftovers(body={"expected_rows": -1}).status_code, 422)
+        self.resolve.assert_not_called()
+
+    def test_errors_map_to_http_statuses(self):
+        for error, expected in (
+            (SnapshotNotFoundError("no existe"), 404),
+            (SnapshotNotOffloadedError("sin offload"), 409),
+            (ExpectedRowsMismatchError("cambió"), 409),
+            (OffloadVerificationError("no coincide"), 409),
+            (SnapshotIntegrityError("hash distinto"), 502),
+            (ConfigurationError("Faltan variables de entorno: S3_BUCKET."), 503),
+        ):
+            with self.subTest(error=type(error).__name__):
+                self.resolve.side_effect = error
+                self.assertEqual(self.leftovers().status_code, expected)
+
+    def test_shares_the_lock_with_archiving(self):
+        self.assertTrue(main._archive_lock.acquire(blocking=False))
+        try:
+            self.assertEqual(self.leftovers().status_code, 409)
+        finally:
+            main._archive_lock.release()
+        self.resolve.assert_not_called()
 
 
 class HistoryEndpointTests(EndpointTestCase):

@@ -106,16 +106,33 @@ def export_range(
     Escribe primero en un archivo temporal para no dejar un Parquet incompleto
     con el nombre definitivo si la copia falla.
     """
+    query = (
+        f"SELECT * FROM {relation} WHERE {range_condition(source, snapshot_range)} "
+        f"ORDER BY {quote_identifier(source.primary_key)}"
+    )
+    return write_parquet(connection, query, source, destination, encrypted)
+
+
+def range_condition(source: SourceSettings, snapshot_range: SnapshotRange) -> str:
+    """Condición SQL [start, end) sobre la columna temporal de la fuente."""
+    column = quote_identifier(source.timestamp_column)
+    return (
+        f"{column} >= {timestamp_literal(snapshot_range.start)} "
+        f"AND {column} < {timestamp_literal(snapshot_range.end)}"
+    )
+
+
+def write_parquet(
+    connection: duckdb.DuckDBPyConnection,
+    query: str,
+    source: SourceSettings,
+    destination: Path,
+    encrypted: bool,
+) -> int:
+    """Escribe el resultado de ``query`` en Parquet y devuelve cuántas filas tiene."""
     if destination.exists():
         raise FileExistsError(f"El destino ya existe: {destination}")
     partial = destination.with_name(f"{destination.name}.partial")
-    column = quote_identifier(source.timestamp_column)
-    query = (
-        f"SELECT * FROM {relation} "
-        f"WHERE {column} >= {timestamp_literal(snapshot_range.start)} "
-        f"AND {column} < {timestamp_literal(snapshot_range.end)} "
-        f"ORDER BY {quote_identifier(source.primary_key)}"
-    )
     copy_options = f"FORMAT parquet, COMPRESSION {source.compression}"
     read_options = ""
     if encrypted:

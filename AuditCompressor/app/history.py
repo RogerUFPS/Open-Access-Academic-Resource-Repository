@@ -66,14 +66,16 @@ def query_history(
     """
     if not 1 <= limit <= MAX_PAGE_SIZE or offset < 0:
         raise ValueError(f"limit debe estar entre 1 y {MAX_PAGE_SIZE} y offset no ser negativo.")
+    # La primera parte es el semestre original; las siguientes son registros
+    # que llegaron después como anomalía y el usuario decidió comprimir.
     files = [
-        (file, manifest.encrypted)
+        (file, manifest.encrypted, position > 0)
         for manifest in snapshots_for(storage, source, snapshot_range)
-        for file in manifest.files
+        for position, file in enumerate(manifest.files)
     ]
     if not files:
         return HistoryPage(count=0, results=[])
-    needs_key = any(encrypted for _, encrypted in files)
+    needs_key = any(encrypted for _, encrypted, _ in files)
     if needs_key:
         encryption_key = parquet_encryption_key(encryption_key)
 
@@ -84,11 +86,13 @@ def query_history(
     )
     with tempfile.TemporaryDirectory(prefix="audit-history-") as directory:
         reads = [
-            read_parquet_sql(
+            f"SELECT *, {str(late).upper()} AS late_addition FROM ("
+            + read_parquet_sql(
                 download_verified(storage, file, Path(directory) / f"{index:04d}.parquet"),
                 encrypted,
             )
-            for index, (file, encrypted) in enumerate(files)
+            + ")"
+            for index, (file, encrypted, late) in enumerate(files)
         ]
         relation = "(" + " UNION ALL BY NAME ".join(reads) + ")"
         connection = duckdb.connect()
