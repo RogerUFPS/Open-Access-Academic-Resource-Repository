@@ -1,9 +1,13 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { apiClient } from "@/shared/services/apiClient";
 import { clampPage, sanitizePageValue } from "@/shared/utils/pagination";
 import AuditChangeDetails, { summarizeAuditValue } from "./AuditChangeDetails";
+import { Field, Modal, control, fmtDate, focus, primary, secondary } from "./auditUi";
+import ArchivedAuditLog from "./ArchivedAuditLog";
+import ArchiveAnomalies from "./ArchiveAnomalies";
+import { canDo, useViewer } from "@/shared/hooks/useViewer";
 
 /* ───────────── Cliente del API de auditoría (solo lectura) ───────────── */
 const AUDIT = "/api/audit/logs";
@@ -13,18 +17,8 @@ async function request(path, options = {}) {
   return apiClient.get(path, {}, { signal, ...rest });
 }
 
-/* ───────────── Utilidades y estilos ───────────── */
-const MESES = ["ene", "feb", "mar", "abr", "may", "jun", "jul", "ago", "sep", "oct", "nov", "dic"];
-const pad = (n) => String(n).padStart(2, "0");
+/* ───────────── Utilidades ───────────── */
 const label = (s) => (s ? s.charAt(0).toUpperCase() + s.slice(1) : s);
-
-function fmtDate(iso, withSeconds = false) {
-  const d = new Date(iso);
-  if (isNaN(d)) return iso ?? "";
-  const base = `${pad(d.getDate())} ${MESES[d.getMonth()]} ${d.getFullYear()} · ${pad(d.getHours())}:${pad(d.getMinutes())}`;
-  return withSeconds ? `${base}:${pad(d.getSeconds())}` : base;
-}
-
 const pairOf = (v) => (Array.isArray(v) ? v : ["", v]);
 
 function fmtVal(v) {
@@ -96,77 +90,18 @@ const FALLBACK_ACTIONS = [
   { action: 3, name: "access", label: "Acceso" },
 ];
 
-const focus =
-  "focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#7f1218]";
-const control = `w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm ${focus}`;
-const primary = `rounded-md bg-[#7f1218] px-4 py-2 text-sm font-semibold text-white hover:bg-[#6a0f14] disabled:opacity-50 ${focus}`;
-const secondary = `rounded-md border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50 ${focus}`;
-
 const EMPTY_FILTERS = { search: "", action: "", resource: "", actor: "", objectId: "", range: "30d", from: "", to: "" };
 const PAGE_SIZE = 10;
 
 /* ───────────── Componentes ───────────── */
-function Modal({ title, subtitle, onClose, children }) {
-  const ref = useRef(null);
-
-  useEffect(() => {
-    ref.current?.querySelector("button")?.focus();
-  }, []);
-
-  useEffect(() => {
-    const onKey = (e) => e.key === "Escape" && onClose();
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [onClose]);
-
-  return (
-    <div className="fixed inset-0 z-50 flex justify-end">
-      <div className="absolute inset-0 bg-slate-900/40" onClick={onClose} aria-hidden />
-      <div
-        ref={ref}
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="modal-title"
-        className="relative flex h-full w-full max-w-xl flex-col bg-white shadow-xl"
-      >
-        <div className="flex items-start justify-between gap-4 border-b border-slate-200 px-6 py-5">
-          <div className="min-w-0">
-            <h2 id="modal-title" className="text-lg font-bold">{title}</h2>
-            {subtitle && <p className="mt-1 break-words text-sm text-slate-600">{subtitle}</p>}
-          </div>
-          <button
-            type="button"
-            onClick={onClose}
-            aria-label="Cerrar"
-            className={`rounded-md px-2 py-1 text-xl leading-none text-slate-600 hover:bg-slate-100 ${focus}`}
-          >
-            ×
-          </button>
-        </div>
-        {children}
-      </div>
-    </div>
-  );
-}
-
-function Field({ name, children }) {
-  return (
-    <div className="grid gap-1 sm:grid-cols-[150px_1fr] sm:gap-4">
-      <dt className="text-sm text-slate-600">{name}</dt>
-      <dd className="min-w-0 break-words text-sm">{children}</dd>
-    </div>
-  );
-}
-
 /* Detalle de un registro: GET /api/audit/logs/{id}/ */
 function DetailDrawer({ row, onClose, onHistory }) {
   const [detail, setDetail] = useState(null);
   const [error, setError] = useState("");
 
+  // El drawer se monta con key={row.id}: el estado inicial ya está limpio.
   useEffect(() => {
     const ctl = new AbortController();
-    setDetail(null);
-    setError("");
     request(`${AUDIT}/${row.id}/`, { signal: ctl.signal })
       .then(setDetail)
       .catch((err) => err.name !== "AbortError" && setError(err.message));
@@ -237,8 +172,8 @@ function DetailDrawer({ row, onClose, onHistory }) {
   );
 }
 
-/* ───────────── Página ───────────── */
-export default function Page() {
+/* ───────────── Pestaña: auditoría reciente (en PostgreSQL) ───────────── */
+function RecentAuditLog() {
   const [filters, setFilters] = useState(EMPTY_FILTERS);
   const [searchText, setSearchText] = useState("");
   const [ordering, setOrdering] = useState("-timestamp");
@@ -247,8 +182,9 @@ export default function Page() {
   const [refresh, setRefresh] = useState(0);
 
   const [data, setData] = useState(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState("");
+  // Petición que ya respondió (y su error): `loading` y `error` se derivan de
+  // ella, así el efecto no actualiza estado antes de que responda el servidor.
+  const [settled, setSettled] = useState({ key: null, error: "" });
 
   const [resources, setResources] = useState([]);
   const [actions, setActions] = useState(FALLBACK_ACTIONS);
@@ -295,10 +231,11 @@ export default function Page() {
   }, [filters, dates, ordering, page]);
 
   // Listado paginado en el servidor
+  const requestKey = `${query}#${refresh}`;
+  const loading = settled.key !== requestKey;
+  const error = settled.key === requestKey ? settled.error : "";
   useEffect(() => {
     const ctl = new AbortController();
-    setLoading(true);
-    setError("");
     request(`${AUDIT}/?${query}`, { signal: ctl.signal })
       .then((d) => {
         setData(d);
@@ -308,12 +245,11 @@ export default function Page() {
           (d.results ?? []).forEach((r) => r.actor != null && map.set(r.actor, r.actor_name || `Usuario ${r.actor}`));
           return [...map].map(([id, name]) => ({ id, name })).sort((a, b) => a.name.localeCompare(b.name, "es"));
         });
-        setLoading(false);
+        setSettled({ key: `${query}#${refresh}`, error: "" });
       })
       .catch((err) => {
         if (err.name === "AbortError") return;
-        setError(err.message);
-        setLoading(false);
+        setSettled({ key: `${query}#${refresh}`, error: err.message });
       });
     return () => ctl.abort();
   }, [query, refresh]);
@@ -594,7 +530,64 @@ export default function Page() {
         )}
       </main>
 
-      {selected && <DetailDrawer row={selected} onClose={closeDetail} onHistory={showHistory} />}
+      {selected && <DetailDrawer key={selected.id} row={selected} onClose={closeDetail} onHistory={showHistory} />}
+    </div>
+  );
+}
+
+/* ───────────── Página: pestañas según permisos ───────────── */
+const TABS = [
+  { key: "recent", label: "Recientes", visible: () => true },
+  {
+    key: "archived",
+    label: "Archivada",
+    visible: (user) =>
+      canDo(user, "audit", "archived-logs", "view") || canDo(user, "audit", "archived-superadmin-events", "view"),
+  },
+  { key: "anomalies", label: "Anomalías de archivado", visible: (user) => canDo(user, "audit", "archive-anomalies", "view") },
+];
+
+export default function Page() {
+  const viewer = useViewer();
+  const [tab, setTab] = useState("recent");
+  const tabs = TABS.filter((item) => item.visible(viewer));
+  const active = tabs.some((item) => item.key === tab) ? tab : "recent";
+
+  return (
+    <div>
+      {tabs.length > 1 && (
+        <div role="tablist" aria-label="Vistas de la bitácora" className="mb-6 flex flex-wrap gap-2 border-b border-slate-200">
+          {tabs.map((item) => (
+            <button
+              key={item.key}
+              type="button"
+              role="tab"
+              id={`bitacora-tab-${item.key}`}
+              aria-selected={active === item.key}
+              aria-controls={`bitacora-panel-${item.key}`}
+              onClick={() => setTab(item.key)}
+              className={`-mb-px border-b-2 px-4 py-2 text-sm font-semibold ${focus} ${
+                active === item.key
+                  ? "border-[#7f1218] text-[#7f1218]"
+                  : "border-transparent text-slate-600 hover:text-slate-900"
+              }`}
+            >
+              {item.label}
+            </button>
+          ))}
+        </div>
+      )}
+      <div
+        role={tabs.length > 1 ? "tabpanel" : undefined}
+        id={`bitacora-panel-${active}`}
+        aria-labelledby={tabs.length > 1 ? `bitacora-tab-${active}` : undefined}
+      >
+        {active === "recent" && <RecentAuditLog />}
+        {active === "archived" && <ArchivedAuditLog viewer={viewer} />}
+        {active === "anomalies" && (
+          <ArchiveAnomalies canResolve={canDo(viewer, "audit", "archive-anomalies", "resolve")} />
+        )}
+      </div>
     </div>
   );
 }
