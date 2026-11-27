@@ -138,6 +138,36 @@ def link_verification_status(link_log) -> str:
     return "available" if link_log.is_active else "unavailable"
 
 
+def link_is_serving(link_log) -> bool:
+    """URL vigente verificada y disponible (``available``)."""
+    return (
+        link_log is not None
+        and link_log.last_check is not None
+        and link_log.is_active
+    )
+
+
+def journal_platform_is_serving(journal_platform) -> bool:
+    """Una asociación Journal–Platform es publicable y visible si la
+    plataforma está publicada y tanto su URL pública como la URL de la
+    revista en esa plataforma están verificadas y disponibles.
+
+    Reutiliza los logs precargados (``_public_link_logs`` /
+    ``_journal_link_logs``) cuando existen.
+    """
+    platform = journal_platform.platform
+    return (
+        platform.status == models.Platform.Status.PUBLICADO
+        and link_is_serving(latest_platform_link_log(platform))
+        and link_is_serving(latest_journal_link_log(journal_platform))
+    )
+
+
+def serving_link_logs():
+    """Logs vigentes verificados y disponibles (mismo criterio en SQL)."""
+    return current_link_logs().filter(last_check__isnull=False, is_active=True)
+
+
 @transaction.atomic
 def register_link_url(
     *,

@@ -26,7 +26,6 @@ from apps.core.viewsets import (
 from . import filters, models, serializers, services
 from apps.platforms.classification import recalculate_platforms
 from apps.platforms import models as platform_models
-from apps.platforms import services as platform_services
 from .classification import related_platform_ids
 
 
@@ -51,31 +50,11 @@ class LicenseViewSet(AuditableViewSet):
 
 def with_platform_urls(queryset, *, published_only=False):
     """Prefetch platform URLs and their latest link-check logs for journals."""
-    platform_links = (
-        models.SharedJournalPlatform.objects
-        .filter(platform__deleted_at__isnull=True)
-        .select_related("platform")
-        .prefetch_related(
-            Prefetch(
-                "platform__link_check_logs",
-                queryset=(
-                    platform_models.LinkCheckLog.objects
-                    .filter(journal_platform__isnull=True)
-                    .order_by(*platform_services.LINK_LOG_ORDERING)
-                ),
-                to_attr="_public_link_logs",
-            ),
-            Prefetch(
-                "link_check_logs",
-                queryset=(
-                    platform_models.LinkCheckLog.objects
-                    .order_by(*platform_services.LINK_LOG_ORDERING)
-                ),
-                to_attr="_journal_link_logs",
-            ),
+    platform_links = services.with_latest_platform_links(
+        models.SharedJournalPlatform.objects.filter(
+            platform__deleted_at__isnull=True,
         )
-        .order_by("platform__name")
-    )
+    ).order_by("platform__name")
     if published_only:
         platform_links = platform_links.filter(
             platform__status=platform_models.Platform.Status.PUBLICADO
@@ -295,7 +274,10 @@ class JournalViewSet(ResourceImageMixin, AuditableViewSet):
         summary="Validar y publicar revista",
         description=(
             "Valida explícitamente la ficha de una revista "
-            "y la habilita para consulta pública."
+            "y la habilita para consulta pública. Exige al menos una "
+            "plataforma publicada cuya URL pública y cuya URL de la revista "
+            "estén verificadas y disponibles (verification_status=available). "
+            "La ficha pública solo muestra las plataformas que cumplen esa regla."
         ),
         request=serializers.JournalPublishSerializer,
         responses={

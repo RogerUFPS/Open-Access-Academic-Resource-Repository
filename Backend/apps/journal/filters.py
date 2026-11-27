@@ -2,6 +2,7 @@ import django_filters  # type: ignore[import-untyped]
 
 from django.db.models import Q
 
+from apps.platforms import services as platform_services
 from apps.platforms.models import Platform
 
 from . import models
@@ -151,9 +152,18 @@ class JournalBaseFilter(django_filters.FilterSet):
             "platform_links__platform__deleted_at__isnull": True,
         }
         if self.published_platforms_only:
+            # Igual que la ficha pública: solo asociaciones cuyos dos enlaces
+            # (plataforma y revista en la plataforma) sirven.
+            serving = platform_services.serving_link_logs().filter(platform_id=value)
             filters["platform_links__platform__status"] = (
                 Platform.Status.PUBLICADO
             )
+            filters["platform_links__platform_id__in"] = serving.filter(
+                journal_platform__isnull=True,
+            ).values("platform_id")
+            filters["platform_links__pk__in"] = serving.filter(
+                journal_platform__isnull=False,
+            ).values("journal_platform_id")
 
         return queryset.filter(**filters).distinct()
 

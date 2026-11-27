@@ -118,7 +118,7 @@ def _with_public_link_logs(queryset):
             queryset=(
                 models.LinkCheckLog.objects
                 .filter(journal_platform__isnull=True)
-                .order_by(*services.LINK_LOG_ORDERING)
+                .order_by(*services.LINK_LOG_ORDERING)[:1]
             ),
             to_attr="_public_link_logs",
         )
@@ -455,6 +455,8 @@ class LinkCheckLogViewSet(viewsets.ReadOnlyModelViewSet):
         summary="Actualizar plataforma",
         description=(
             "Actualiza completamente la información de una plataforma."
+            " Si la plataforma está PUBLICADO vuelve a BORRADOR y debe "
+            "validarse y publicarse de nuevo."
         ),
         request=serializers.PlatformSerializer,
         responses={
@@ -466,6 +468,8 @@ class LinkCheckLogViewSet(viewsets.ReadOnlyModelViewSet):
         summary="Actualizar parcialmente una plataforma",
         description=(
             "Actualiza uno o varios campos de una plataforma."
+            " Si la plataforma está PUBLICADO vuelve a BORRADOR y debe "
+            "validarse y publicarse de nuevo."
         ),
         request=serializers.PlatformSerializer,
         responses={

@@ -678,6 +678,27 @@ class PlatformSerializer(
 
         return platform
 
+    @staticmethod
+    def _clear_validation(platform):
+        """
+        Igual que Journal: una plataforma publicada que se edita vuelve a
+        BORRADOR y debe validarse y publicarse de nuevo (incluida la nueva
+        verificación de su URL pública si cambió).
+        """
+        if platform.status != models.Platform.Status.PUBLICADO:
+            return
+
+        platform.status = models.Platform.Status.BORRADOR
+        platform.validated_by = None
+        platform.validated_at = None
+        platform.save(
+            update_fields=[
+                "status",
+                "validated_by",
+                "validated_at",
+            ]
+        )
+
     @transaction.atomic
     def update(
         self,
@@ -736,6 +757,8 @@ class PlatformSerializer(
                 url=public_url,
                 user=platform.updated_by or platform.created_by,
             )
+
+        self._clear_validation(platform)
 
         classification.recalculate_platforms(
             [platform.pk], user=platform.updated_by or platform.created_by,
