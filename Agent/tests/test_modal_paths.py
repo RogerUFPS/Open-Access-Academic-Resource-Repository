@@ -6,6 +6,17 @@ from unittest.mock import patch
 
 
 class ModalPathTests(unittest.TestCase):
+    def test_gpu_fallbacks_are_ordered_and_budget_bounded(self):
+        from deploy.modal.profile import load_cloud_gpus
+        with patch.dict("os.environ", {}, clear=True):
+            self.assertEqual(load_cloud_gpus(), ["L4", "A10", "L40S"])
+        with patch.dict("os.environ", {"MODAL_GPU": " A10,L4,A10 "}):
+            self.assertEqual(load_cloud_gpus(), ["A10", "L4"])
+        for value in ("", "H100", "any", "L4:3"):
+            with patch.dict("os.environ", {"MODAL_GPU": value}):
+                with self.assertRaises(ValueError):
+                    load_cloud_gpus()
+
     def root_for(self, name, remote_file, existing):
         path = Path(__file__).resolve().parents[1] / "deploy/modal" / name
         tree = ast.parse(path.read_text())

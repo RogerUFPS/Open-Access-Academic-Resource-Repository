@@ -20,7 +20,7 @@ sys.path.insert(0, str(LOCAL_ROOT))
 import modal
 
 from deploy.model_config import build_vllm_command, deployment_environment
-from deploy.modal.profile import load_cloud_model
+from deploy.modal.profile import load_cloud_gpus, load_cloud_model
 
 
 MODEL = load_cloud_model(LOCAL_ROOT)
@@ -86,7 +86,7 @@ def _wait_for_http(url: str, process: subprocess.Popen[bytes], timeout: int) -> 
     image=server_image,
     cpu=4,
     memory=16384,
-    gpu=os.getenv("MODAL_GPU") or "L4",
+    gpu=load_cloud_gpus(),
     secrets=[modal.Secret.from_name(os.environ["MODAL_HF_SECRET"])] if os.getenv("MODAL_HF_SECRET") else [],
     volumes={"/models": model_volume},
     port=AGENT_PORT,
