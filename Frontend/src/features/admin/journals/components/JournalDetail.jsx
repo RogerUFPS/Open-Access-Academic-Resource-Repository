@@ -9,10 +9,13 @@ import { capitalizeWords } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import PublishJournalModal from "./PublishJournalModal";
+import { LinkStatusBadge, ServingBadge } from "@/shared/components/LinkStatusBadge";
+import { canDo, useViewer } from "@/shared/hooks/useViewer";
 import OriginBadge, { originOf } from "@/shared/components/classification/OriginBadge";
 import {
   ArrowLeft,
   Edit3,
+  RefreshCw,
   Globe,
   CheckCircle2,
   AlertTriangle,
@@ -69,87 +72,142 @@ export default function JournalDetail({ journalId }) {
   const [actionMessage, setActionMessage] = useState(null);
   const [actionBusy, setActionBusy] = useState(false);
   const [publishModalOpen, setPublishModalOpen] = useState(false);
+  const [checkingLinks, setCheckingLinks] = useState(false);
+  const [linkCheckError, setLinkCheckError] = useState(null);
+  const viewer = useViewer();
+  const canCheckLinks = canDo(viewer, "platforms", "platforms", "check_link");
   const [userNames, setUserNames] = useState({});
   const [editorialName, setEditorialName] = useState("");
   const [editorialError, setEditorialError] = useState(null);
 
+  // Obtiene revista, catálogos, editorial y nombres de auditoría sin tocar el estado.
+  const fetchDetailData = async () => {
+    const [data, catData, licData] = await Promise.all([
+      journalService.getJournalById(journalId),
+      journalService.loadFormCatalogs(),
+      journalService.getLicenses().catch(() => []),
+    ]);
+
+    const editorialId =
+      typeof data.editorial === "object" && data.editorial !== null
+        ? data.editorial.id ?? data.editorial.pk
+        : data.editorial;
+    let resolvedEditorialName = "";
+    let editorialRequestError = null;
+
+    if (editorialId !== null && editorialId !== undefined && editorialId !== "") {
+      try {
+        const editorialData = await journalService.getEditorialById(editorialId);
+        resolvedEditorialName =
+          typeof editorialData?.name === "string" ? editorialData.name.trim() : "";
+
+        if (!resolvedEditorialName) {
+          editorialRequestError =
+            "La respuesta de la editorial no contiene un nombre válido.";
+        }
+      } catch (editorialErr) {
+        console.error("[JournalDetail] Editorial request failed:", editorialErr);
+        editorialRequestError =
+          editorialErr?.message || "No se pudo cargar el nombre de la editorial.";
+      }
+    }
+
+    const auditUserIds = [...new Set(
+      ["created_by", "updated_by", "validated_by", "deleted_by"]
+        .map((field) => data[field])
+        .filter((value) => value !== null && value !== undefined && value !== "" && typeof value !== "object")
+    )];
+    const resolvedUsers = await Promise.all(
+      auditUserIds.map(async (id) => {
+        try {
+          return [String(id), getUserDisplayName(await userService.getUserById(id))];
+        } catch {
+          return [String(id), "—"];
+        }
+      })
+    );
+
+    return {
+      data,
+      editorialName: resolvedEditorialName,
+      editorialError: editorialRequestError,
+      userNames: Object.fromEntries(resolvedUsers),
+      catalogs: { ...catData, licenses: Array.isArray(licData) ? licData : [] },
+    };
+  };
+
+  const applyDetail = (result) => {
+    setError(null);
+    setJournal(result.data);
+    setEditorialName(result.editorialName);
+    setEditorialError(result.editorialError);
+    setUserNames(result.userNames);
+    setCatalogs(result.catalogs);
+  };
+
+  const applyDetailError = (err) => {
+    console.error("Error loading journal detail:", err);
+    setError(err.message || "No se pudo cargar la información de la revista.");
+  };
+
+  // Recarga explícita tras una acción: muestra el estado de carga.
   const loadDetail = async () => {
     setLoading(true);
     setError(null);
     setEditorialName("");
     setEditorialError(null);
     try {
-      const [data, catData, licData] = await Promise.all([
-        journalService.getJournalById(journalId),
-        journalService.loadFormCatalogs(),
-        journalService.getLicenses().catch(() => []),
-      ]);
-
-      const editorialId =
-        typeof data.editorial === "object" && data.editorial !== null
-          ? data.editorial.id ?? data.editorial.pk
-          : data.editorial;
-      let resolvedEditorialName = "";
-      let editorialRequestError = null;
-
-      if (editorialId !== null && editorialId !== undefined && editorialId !== "") {
-        try {
-          const editorialData = await journalService.getEditorialById(editorialId);
-          resolvedEditorialName =
-            typeof editorialData?.name === "string" ? editorialData.name.trim() : "";
-
-          if (!resolvedEditorialName) {
-            editorialRequestError =
-              "La respuesta de la editorial no contiene un nombre válido.";
-          }
-        } catch (editorialErr) {
-          console.error("[JournalDetail] Editorial request failed:", editorialErr);
-          editorialRequestError =
-            editorialErr?.message || "No se pudo cargar el nombre de la editorial.";
-        }
-      }
-
-      const auditUserIds = [...new Set(
-        ["created_by", "updated_by", "validated_by", "deleted_by"]
-          .map((field) => data[field])
-          .filter((value) => value !== null && value !== undefined && value !== "" && typeof value !== "object")
-      )];
-      const resolvedUsers = await Promise.all(
-        auditUserIds.map(async (id) => {
-          try {
-            return [String(id), getUserDisplayName(await userService.getUserById(id))];
-          } catch {
-            return [String(id), "—"];
-          }
-        })
-      );
-
-      setJournal(data);
-      setEditorialName(resolvedEditorialName);
-      setEditorialError(editorialRequestError);
-      setUserNames(Object.fromEntries(resolvedUsers));
-      setCatalogs({
-        ...catData,
-        licenses: Array.isArray(licData) ? licData : [],
-      });
+      applyDetail(await fetchDetailData());
     } catch (err) {
-      console.error("Error loading journal detail:", err);
-      setError(err.message || "No se pudo cargar la información de la revista.");
+      applyDetailError(err);
     } finally {
       setLoading(false);
     }
   };
 
+  // Carga inicial (`loading` arranca en true): el estado solo se actualiza
+  // dentro de los callbacks de la petición.
   useEffect(() => {
-    if (journalId) {
-      loadDetail();
-    }
+    if (!journalId) return undefined;
+    let active = true;
+    fetchDetailData()
+      .then((result) => {
+        if (active) applyDetail(result);
+      })
+      .catch((err) => {
+        if (active) applyDetailError(err);
+      })
+      .finally(() => {
+        if (active) setLoading(false);
+      });
+    return () => {
+      active = false;
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [journalId]);
 
   const showToast = (msg) => {
     setActionMessage(msg);
     setTimeout(() => setActionMessage(null), 4000);
+  };
+
+  // Verifica las URLs de todas las asociaciones y refresca su estado.
+  const handleVerifyLinks = async () => {
+    setCheckingLinks(true);
+    setLinkCheckError(null);
+    try {
+      const result = await journalService.checkJournalLinks(journalId);
+      setJournal((current) => (current ? { ...current, platforms: result?.platforms ?? current.platforms } : current));
+      showToast(
+        result?.publishable
+          ? "Enlaces verificados: al menos una plataforma publicada cuenta para publicar."
+          : "Enlaces verificados: ninguna asociación cuenta para publicar todavía."
+      );
+    } catch (err) {
+      setLinkCheckError(err.message || "No se pudieron verificar los enlaces.");
+    } finally {
+      setCheckingLinks(false);
+    }
   };
 
   const handleDeactivate = async () => {
@@ -492,12 +550,35 @@ export default function JournalDetail({ journalId }) {
           {/* Indexación / Bases de datos */}
           <Card className="rounded-2xl border-gray-200/80 shadow-xs bg-white">
             <CardHeader className="border-b border-gray-100 pb-4">
-              <CardTitle className="text-base font-bold text-gray-900 flex items-center gap-2">
-                <Database className="w-4 h-4 text-[#7f1218]" />
-                Indexación / Bases de Datos
-              </CardTitle>
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <CardTitle className="text-base font-bold text-gray-900 flex items-center gap-2">
+                  <Database className="w-4 h-4 text-[#7f1218]" />
+                  Indexación / Bases de Datos
+                </CardTitle>
+                {canCheckLinks && associatedPlatforms.length > 0 && (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={handleVerifyLinks}
+                    disabled={checkingLinks}
+                    className="text-xs gap-1.5 cursor-pointer"
+                  >
+                    <RefreshCw className={`w-3.5 h-3.5 ${checkingLinks ? "animate-spin" : ""}`} aria-hidden="true" />
+                    {checkingLinks ? "Verificando..." : "Verificar enlaces"}
+                  </Button>
+                )}
+              </div>
+              <p className="text-[11px] text-gray-500 mt-1">
+                Para publicar, al menos una plataforma publicada debe tener disponibles su URL pública y la URL de la revista.
+              </p>
             </CardHeader>
             <CardContent className="pt-6">
+              {linkCheckError && (
+                <p role="alert" className="mb-4 text-xs text-rose-700 bg-rose-50 border border-rose-200 rounded-lg p-2">
+                  {linkCheckError}
+                </p>
+              )}
               {associatedPlatforms.length === 0 ? (
                 <div className="py-6 text-center text-gray-400 text-xs">
                   Sin plataformas asociadas.
@@ -520,6 +601,11 @@ export default function JournalDetail({ journalId }) {
                             <p className="text-sm font-bold text-slate-900 mt-0.5">
                               {resolvePlatformName(entry)}
                             </p>
+                            <div className="flex flex-wrap gap-1.5 mt-2">
+                              <LinkStatusBadge label="URL pública" status={entry.public_url_status} />
+                              <LinkStatusBadge label="URL de la revista" status={entry.journal_url_status} />
+                              <ServingBadge serving={entry.is_serving === true} />
+                            </div>
                           </div>
                           <span
                             className={`inline-block px-2.5 py-1 rounded-md text-xs font-semibold ${

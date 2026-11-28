@@ -105,6 +105,16 @@ export const journalService = {
   },
 
   /**
+   * Verifica los enlaces de todas las asociaciones de la revista
+   * (POST /api/journals/{id}/check-links/). Responde
+   * { journal, publishable, platforms: [{ relation_id, public_url_status,
+   * journal_url_status, is_serving, ... }] }. Requiere platforms.check_link.
+   */
+  checkJournalLinks: async (id) => {
+    return apiClient.post(`/api/journals/${id}/check-links/`, {});
+  },
+
+  /**
    * Lifecycle endpoints
    */
   markObsoleteJournal: async (id) => {

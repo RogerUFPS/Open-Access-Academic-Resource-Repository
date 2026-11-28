@@ -34,3 +34,33 @@ test("journal publication checklist requires an image URL", () => {
   assert.equal(completedImageRequirement.done, true);
   assert.equal(isChecklistComplete(checklistWithImage), true);
 });
+
+test("journal checklist requires a published platform with the journal URL", () => {
+  const platformsItem = (platforms) =>
+    buildJournalChecklist({ ...journalRequirements, platforms }).find((item) => item.key === "platforms");
+
+  assert.equal(platformsItem([{ platform: 1, published: false, hasUrl: true }]).done, false);
+  assert.equal(platformsItem([{ platform: 1, published: true, hasUrl: false }]).done, false);
+  assert.equal(
+    platformsItem([
+      { platform: 1, published: false, hasUrl: true },
+      { platform: 2, published: true, hasUrl: true },
+    ]).done,
+    true
+  );
+});
+
+test("journal checklist explains link verification state", () => {
+  const hint = (platforms) =>
+    buildJournalChecklist({ ...journalRequirements, platforms }).find((item) => item.key === "platforms").hint;
+
+  assert.match(hint([{ platform: 1, published: true, hasUrl: true, serving: false }]), /se verificarán al publicar/);
+  assert.match(
+    hint([
+      { platform: 1, published: true, hasUrl: true, serving: true },
+      { platform: 2, published: true, hasUrl: true, serving: false },
+    ]),
+    /^1 asociación/
+  );
+  assert.match(hint([{ platform: 1, published: false, hasUrl: true }]), /Ninguna de las plataformas/);
+});

@@ -7,6 +7,8 @@ const LABELS = {
   platforms: "Plataformas", harvesting: "Cosecha", accounts: "Cuentas",
   indicators: "Indicadores", agent: "Módulo de IA",
   logs: "Registros de auditoría", institutions: "Instituciones", languages: "Idiomas",
+  "archived-logs": "Auditoría archivada", "archived-superadmin-events": "Eventos de superadmin archivados",
+  "archive-anomalies": "Anomalías de archivado", resolve: "Resolver",
   countries: "Países", "material-types": "Tipos de material", editorials: "Editoriales",
   "knowledge-areas": "Áreas de conocimiento", "academic-programs": "Programas académicos",
   "valid-sintaxis": "Sintaxis válidas", "link-check-logs": "Registros de verificación de enlaces",

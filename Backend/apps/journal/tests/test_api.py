@@ -269,6 +269,9 @@ class JournalAPITests(APITestCase):
             "http://localhost:9000/imagenes/journals/logo.png",
         )
         self.assertEqual(journal.updated_by_id, self.system.pk)
+        # Cambiar la imagen es editar la ficha: la revista activa debe validarse de nuevo.
+        self.assertFalse(journal.active)
+        self.assertIsNone(journal.validated_at)
 
     def test_changing_journal_image_url_clears_outdated_thumbnail(self):
         journal = self._create_journal(
@@ -310,6 +313,7 @@ class JournalAPITests(APITestCase):
 
         journal.refresh_from_db()
         self.assertIsNone(journal.url_image)
+        self.assertFalse(journal.active)
         delete_image_by_url.assert_called_once_with(
             "http://localhost:9000/imagenes/journals/logo.png"
         )

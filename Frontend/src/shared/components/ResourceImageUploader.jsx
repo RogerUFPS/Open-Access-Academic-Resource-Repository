@@ -14,6 +14,11 @@ export function ResourceImageUploader({
   deleteImage,
   onImageChange,
   onPendingFileChange,
+  // Si se indica, se pide confirmación antes de cambiar la imagen de un
+  // recurso ya guardado (por ejemplo, porque eso lo despublica).
+  confirmChange,
+  // Recibe el recurso completo devuelto por el Backend tras subir o borrar.
+  onRecordChange,
 }) {
   const inputRef = useRef(null);
   const objectUrlRef = useRef(null);
@@ -46,6 +51,10 @@ export function ResourceImageUploader({
       setError("La imagen supera el tamaño máximo permitido (5 MB).");
       return;
     }
+    if (resourceId && uploadImage && confirmChange && !window.confirm(confirmChange)) {
+      event.target.value = "";
+      return;
+    }
     if (objectUrlRef.current) URL.revokeObjectURL(objectUrlRef.current);
     const objectUrl = URL.createObjectURL(file);
     objectUrlRef.current = objectUrl;
@@ -62,6 +71,7 @@ export function ResourceImageUploader({
         setPreview(updated.url_image || null);
         setSelectedFile(null);
         onImageChange?.(updated.url_image || null);
+        onRecordChange?.(updated);
         onPendingFileChange?.(null);
       } catch (err) {
         setError(imageErrorMessage(err));
@@ -81,6 +91,7 @@ export function ResourceImageUploader({
       onImageChange?.(null);
       return;
     }
+    if (confirmChange && !window.confirm(confirmChange)) return;
     setUploading(true);
     setError("");
     try {
@@ -88,6 +99,7 @@ export function ResourceImageUploader({
       setPreview(updated.url_image || null);
       setSelectedFile(null);
       onImageChange?.(updated.url_image || null);
+      onRecordChange?.(updated);
     } catch (err) {
       setError(imageErrorMessage(err));
     } finally {

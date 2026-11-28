@@ -16,9 +16,16 @@ import {
   CheckCircle2,
 } from "lucide-react";
 
+// El contenido se monta solo mientras el modal está abierto: cada apertura
+// arranca con el formulario limpio, sin reiniciar estado dentro de un efecto.
 export default function LicenseManagerModal({ isOpen, onClose, onLicensesUpdated }) {
+  if (!isOpen) return null;
+  return <LicenseManagerDialog onClose={onClose} onLicensesUpdated={onLicensesUpdated} />;
+}
+
+function LicenseManagerDialog({ onClose, onLicensesUpdated }) {
   const [licenses, setLicenses] = useState([]);
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [successMsg, setSuccessMsg] = useState(null);
 
@@ -55,15 +62,25 @@ export default function LicenseManagerModal({ isOpen, onClose, onLicensesUpdated
     }
   }, []);
 
+  // Carga inicial al abrir: el estado solo se actualiza al responder.
   useEffect(() => {
-    if (isOpen) {
-      fetchLicenses();
-      setNewName("");
-      setEditingId(null);
-      setDeletingLic(null);
-      setError(null);
-    }
-  }, [isOpen, fetchLicenses]);
+    let active = true;
+    journalService
+      .getLicenses()
+      .then((data) => {
+        if (active) setLicenses(Array.isArray(data) ? data : []);
+      })
+      .catch((err) => {
+        console.error("Error fetching licenses:", err);
+        if (active) setError(err.message || "Error al cargar las licencias.");
+      })
+      .finally(() => {
+        if (active) setLoading(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
 
   const handleCreate = async (e) => {
     e.preventDefault();
@@ -142,7 +159,6 @@ export default function LicenseManagerModal({ isOpen, onClose, onLicensesUpdated
     }
   };
 
-  if (!isOpen) return null;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-xs">

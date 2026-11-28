@@ -16,25 +16,27 @@ function NewJournalPageInner() {
     publishErrors = null;
   }
 
-  const [journalData, setJournalData] = useState(null);
-  const [loading, setLoading] = useState(isEdit);
-  const [error, setError] = useState(null);
+  // Resultado de la carga junto con el id que lo produjo: si el id de la URL
+  // cambia, la carga se deriva sin reiniciar estado dentro del efecto.
+  const [loaded, setLoaded] = useState({ id: null, data: null, error: null });
+  const loading = isEdit && loaded.id !== journalId;
+  const journalData = loaded.data;
+  const error = loaded.id === journalId ? loaded.error : null;
 
   useEffect(() => {
-    if (isEdit && journalId) {
-      setLoading(true);
-      journalService
-        .getJournalById(journalId)
-        .then((data) => {
-          setJournalData(data);
-        })
-        .catch((err) => {
-          setError(err.message);
-        })
-        .finally(() => {
-          setLoading(false);
-        });
-    }
+    if (!(isEdit && journalId)) return undefined;
+    let active = true;
+    journalService
+      .getJournalById(journalId)
+      .then((data) => {
+        if (active) setLoaded({ id: journalId, data, error: null });
+      })
+      .catch((err) => {
+        if (active) setLoaded({ id: journalId, data: null, error: err.message });
+      });
+    return () => {
+      active = false;
+    };
   }, [isEdit, journalId]);
 
   if (isEdit) {

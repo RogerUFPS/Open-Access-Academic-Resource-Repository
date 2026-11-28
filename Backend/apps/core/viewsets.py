@@ -58,6 +58,13 @@ class ResourceImageMixin:
     cosecha) nunca se eliminan del almacenamiento.
     """
 
+    def image_changed(self, instance, request):
+        """Se ejecuta tras subir o borrar la imagen, antes de responder.
+
+        Cada ViewSet aplica aquí su regla de negocio (por ejemplo, que una
+        ficha publicada modificada deba validarse de nuevo).
+        """
+
     image_folder = ""
 
     def _upload_resource_image(self, request):
@@ -103,6 +110,8 @@ class ResourceImageMixin:
         if previous_thumbnail_url and previous_thumbnail_url != stored.thumbnail_url:
             delete_image_by_url(previous_thumbnail_url)
 
+        self.image_changed(instance, request)
+
         return Response(
             self.get_serializer(instance).data,
             status=status.HTTP_200_OK,
@@ -130,6 +139,8 @@ class ResourceImageMixin:
             delete_image_by_url(previous_url)
         if previous_thumbnail_url:
             delete_image_by_url(previous_thumbnail_url)
+
+        self.image_changed(instance, request)
 
         return Response(
             self.get_serializer(instance).data,

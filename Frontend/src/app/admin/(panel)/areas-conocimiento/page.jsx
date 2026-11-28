@@ -343,7 +343,6 @@ function LinksDrawer({ areas, programs, onClose, onDone }) {
 
 /* ───────────── Página ───────────── */
 export default function Page() {
-  const [mounted, setMounted] = useState(false);
   const [data, setData] = useState({ areas: [], programs: [], areasDel: [], programsDel: [] });
   const [status, setStatus] = useState("loading");
   const [loadError, setLoadError] = useState("");
@@ -356,10 +355,6 @@ export default function Page() {
 
   const [dialog, setDialog] = useState(null);
   const [toast, setToast] = useState("");
-
-  useEffect(() => {
-    setMounted(true);
-  }, []);
 
   const load = useCallback(async ({ silent = false } = {}) => {
     if (!silent) setStatus("loading");
@@ -375,9 +370,26 @@ export default function Page() {
     }
   }, []);
 
+  // Carga inicial: el estado ya arranca en "loading" y solo se actualiza
+  // cuando responde la petición.
   useEffect(() => {
-    load();
-  }, [load]);
+    let active = true;
+    fetchCatalog()
+      .then((result) => {
+        if (!active) return;
+        setData(result);
+        setLoadError("");
+        setStatus("ready");
+      })
+      .catch((err) => {
+        if (!active) return;
+        setLoadError(err.message);
+        setStatus("error");
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
 
   useEffect(() => {
     if (!toast) return;
@@ -450,7 +462,7 @@ export default function Page() {
     .sort((a, b) => a.name.localeCompare(b.name, "es") * (desc ? -1 : 1));
 
   // ready depende de que el componente ya esté montado en el cliente
-  const ready = Boolean(mounted && status === "ready");
+  const ready = status === "ready";
   const sinProgramas = areasView.filter((a) => a.rel.length === 0).length;
   const archivedCount = (tab === "areas" ? data.areasDel : data.programsDel).length;
   const hasFilters = search || onlyEmpty;
@@ -604,7 +616,7 @@ export default function Page() {
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
-              {(!mounted || status === "loading") && (
+              {status === "loading" && (
                 <tr>
                   <td colSpan={3} className="px-5 py-10 text-center text-slate-600" aria-live="polite">
                     <p>Cargando áreas y programas…</p>
